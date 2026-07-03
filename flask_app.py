@@ -69,6 +69,7 @@ TITAN_GATEWAY_TOKEN = os.environ.get("TITAN_GATEWAY_TOKEN", TITAN_ADMIN_TOKEN).s
 TITAN_SECURITY_DISABLED = str(os.environ.get("TITAN_SECURITY_DISABLED", "0")).strip().lower() in ("1", "true", "yes", "on")
 TITAN_SECURITY_STRICT = bool(TITAN_ADMIN_TOKEN) and not TITAN_SECURITY_DISABLED
 TITAN_COOKIE_SECURE = str(os.environ.get("TITAN_COOKIE_SECURE", "0")).strip().lower() in ("1", "true", "yes", "on")
+TITAN_ALLOW_QUERY_TOKEN = str(os.environ.get("TITAN_ALLOW_QUERY_TOKEN", "0")).strip().lower() in ("1", "true", "yes", "on")
 FIREBASE_LAST_LOAD_META = {"status": "unchecked", "message": "not loaded yet"}
 
 @app.after_request
@@ -179,14 +180,17 @@ def _request_token():
     auth = str(request.headers.get("Authorization") or "")
     if auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
-    return (
+    token = (
         request.headers.get("X-Titan-Admin-Token")
         or request.headers.get("X-Titan-Gateway-Token")
-        or request.args.get("admin_token")
-        or request.args.get("token")
         or request.cookies.get("titan_admin_token")
         or ""
-    ).strip()
+    )
+    if not token and TITAN_ALLOW_QUERY_TOKEN:
+        # Query-string tokens leak through browser history, access logs and referrers;
+        # keep them off by default and allow only for explicit legacy deployments.
+        token = request.args.get("admin_token") or request.args.get("token") or ""
+    return str(token).strip()
 
 
 def _admin_authorized():
@@ -315,7 +319,7 @@ def api_admin_login():
     if not _constant_time_equal(token, TITAN_ADMIN_TOKEN):
         return jsonify({"status": "error", "message": "Invalid admin token", "securityLockdown": True}), 401
     resp = jsonify({"status": "success", "message": "Admin unlocked", "securityLockdown": True, "version": SECURITY_LOCKDOWN_VERSION})
-    resp.set_cookie('titan_admin_token', token, max_age=60*60*24*30, httponly=False, secure=TITAN_COOKIE_SECURE, samesite='Lax')
+    resp.set_cookie('titan_admin_token', token, max_age=60*60*24*30, httponly=True, secure=TITAN_COOKIE_SECURE, samesite='Lax')
     return resp
 
 
@@ -4383,17 +4387,29 @@ def save():
     )
 
     if is_master_saving:
-        # v41 Base-file manual overwrite:
-        # Same intent as the user's base flask_app.py: admin payload wins.
-        # Removed Firebase Guard/source-of-truth merge from this route.
-        saved = save_to_firebase(incoming, "base_file_manual_overwrite_v41")
+        # v42 Ledger render/source fix:
+        # Admin settings/market add-delete still come from the current UI payload, but
+        # ledger card records are also written through /api/ledger_card_update child PUTs.
+        # Before a full /save, merge against the latest Firebase snapshot so an older
+        # browser render cannot restore duplicate/old ledger records after the user
+        # manually adds, clears, resets, PASS/FAILs, or deletes card content.
+        try:
+            latest = load_from_firebase()
+            if isinstance(latest, dict) and latest.get('profiles'):
+                _merge_ledger_records_source_of_truth(incoming, latest)
+                _preserve_server_ledger_auto_marks(incoming, latest)
+                incoming.setdefault('ledgerRenderSyncGuard', {})['lastMergedAt'] = _now_iso_local()
+                incoming['ledgerRenderSyncGuard']['mode'] = 'full-save-preserves-newest-manual-ledger-edits'
+        except Exception as merge_err:
+            _obs_exception('ledger_render_sync_guard_merge_failed', merge_err, {'route': '/save'})
+        saved = save_to_firebase(incoming, "ledger_render_sync_guard_v42")
         if not saved:
             return jsonify({"status": "error", "message": "Firebase manual overwrite save failed.", "manualOverwrite": True}), 500
         return jsonify({
             "status": "success",
             "manualOverwrite": True,
-            "firebaseGuardDisabled": True,
-            "source": "base_flask_app_save_logic_v41"
+            "ledgerRenderSyncGuard": True,
+            "source": "ledger_render_sync_guard_v42"
         })
     else:
         return jsonify({"status": "rejected", "msg": "Client app is restricted to Read-Only mode."})
@@ -7712,6 +7728,28 @@ HTML_TEMPLATE = """
             .native-card { border-radius: 14px; }
         }
 
+        /* ── LEDGER MOBILE COMPACT v43 ── */
+        .ledger-compact { padding-left: 8px !important; padding-right: 8px !important; }
+        .ledger-compact .native-card { margin-bottom: 6px; border-radius: 14px; }
+        .ledger-card-head { padding: 8px 10px; min-height: 38px; }
+        .ledger-card-body { padding: 10px; }
+        .ledger-main-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(82px, .8fr); gap: 8px; margin-bottom: 8px; }
+        .ledger-actions { display: grid; grid-template-columns: 1fr 1fr 46px; gap: 8px; margin-bottom: 8px; }
+        .ledger-actions button { padding-top: 9px; padding-bottom: 9px; border-radius: 11px; box-shadow: none !important; }
+        .ledger-more { border-top: 1px solid var(--border); padding-top: 8px; }
+        .ledger-more > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
+        .ledger-more > summary::-webkit-details-marker { display: none; }
+        .ledger-more > summary::after { content: 'More'; color: var(--primary); font-size: 9px; }
+        .ledger-more[open] > summary::after { content: 'Hide'; color: var(--rose); }
+        .ledger-more-body { margin-top: 8px; }
+        .ledger-compact .native-input { padding: 10px 9px; font-size: 15px; border-radius: 11px; }
+        .ledger-compact .stat-lbl { margin-bottom: 2px; }
+        @media (max-width: 380px) {
+            .ledger-main-grid { grid-template-columns: minmax(0, 1.35fr) minmax(76px, .75fr); gap: 6px; }
+            .ledger-actions { grid-template-columns: 1fr 1fr 42px; gap: 6px; }
+            .ledger-card-body { padding: 9px; }
+        }
+
 
         /* ── v14 ADMIN MOBILE POLISH ── */
         .v14-admin-fab {
@@ -8190,11 +8228,11 @@ HTML_TEMPLATE = """
             return total;
         }
         function marketNormalizeOrderName(v){
-            return String(v || '').trim().toUpperCase().replace(/\s+/g,' ').replace(/SRIDEVI DAY/g,'SRIDEV DAY');
+            return String(v || '').trim().toUpperCase().replace(/\\s+/g,' ').replace(/SRIDEVI DAY/g,'SRIDEV DAY');
         }
         function marketStageBaseName(v){
             let n = marketNormalizeOrderName(v);
-            n = n.replace(/\s+(OPEN|CLOSE)$/,'').trim();
+            n = n.replace(/\\s+(OPEN|CLOSE)$/,'').trim();
             return n;
         }
         function isStartMarketName(v){
@@ -11982,6 +12020,17 @@ TOTAL: 300</pre>
             });
         }
 
+        const titanLedgerMoreOpenState = {};
+        function titanLedgerMoreStateKey(type, cardKey){ return [currentDate || '', appState.activeId || 'admin1', type || '', cardKey || ''].join('|'); }
+        function titanLedgerMoreIsOpen(type, cardKey){ return titanLedgerMoreOpenState[titanLedgerMoreStateKey(type, cardKey)] === true; }
+        function titanRememberLedgerMore(ev, type, cardKey){
+            try {
+                if(ev) ev.stopPropagation();
+                const el = ev && ev.currentTarget;
+                titanLedgerMoreOpenState[titanLedgerMoreStateKey(type, cardKey)] = !!(el && el.open);
+            } catch(e) {}
+        }
+
         function titanLedgerBaseStatusMeta(status){
             status = String(status || 'WAIT').toUpperCase();
             if(status === 'PASS') return {bg:'border-l-4 border-l-[var(--green)]', lbl:'text-[var(--green)]', icon:'fa-check-circle', txt:'PASS'};
@@ -12011,15 +12060,17 @@ TOTAL: 300</pre>
                 <button id="scrape-btn-${type}-${i}" onclick="scrapeMarket('${type}', ${i}, ${jsArg(m.n)}, ${cardKeyJS})" class="flex items-center gap-1 text-[var(--primary)] bg-[rgba(42,171,238,0.1)] border border-[rgba(42,171,238,0.2)] px-2.5 py-1 rounded-lg active:scale-95 text-[9px] font-bold uppercase"><i class="fas fa-satellite-dish"></i> Scrape</button>
                 <button onclick="fetchCombinedScrape(this, '${type}', ${i}, ${cardKeyJS})" class="bg-[#00C26F] text-white px-3 py-1 rounded-lg text-[10px] font-bold uppercase active:scale-95">Combo</button>
                 <button onclick="resetCard('${type}', ${i}, ${cardKeyJS})" class="text-[var(--text-muted)] hover:text-[var(--rose)] active:scale-95 ml-1"><i class="fas fa-eraser"></i></button>` : '';
+            const moreKey = ledgerMarketKeyForCard(type, m);
+            const moreOpen = titanLedgerMoreIsOpen(type, moreKey);
             return `
-                <div class="flex justify-between items-center px-4 py-2.5 border-b border-[var(--border)]">
+                <div class="ledger-card-head flex justify-between items-center border-b border-[var(--border)]">
                     <div class="flex items-center min-w-0">
-                        <span class="text-[12px] font-bold uppercase ${trackColor} truncate">${m.n}</span> ${trickBadge} ${memoryBadge}
+                        <span class="text-[11px] font-black uppercase ${trackColor} truncate">${m.n}</span> ${trickBadge} ${memoryBadge}
                     </div>
-                    <div class="flex items-center gap-2 shrink-0">${scrapeButtons}</div>
+                    <div class="flex items-center gap-1.5 shrink-0">${scrapeButtons}</div>
                 </div>
-                <div class="p-4">
-                    <div class="grid grid-cols-2 gap-3 mb-3">
+                <div class="ledger-card-body">
+                    <div class="ledger-main-grid">
                         <div class="relative flex flex-col">
                             <label class="absolute -top-2 left-3 z-10 bg-[var(--surface)] px-1 text-[8px] font-bold text-[var(--text-muted)] uppercase">Digits</label>
                             <input id="in-d-${type}-${i}" onfocus="titanMarkLedgerDirty()" oninput="updateMarket('${type}', ${i}, 'd', this.value, ${cardKeyJS})" value="${d.d || ''}" placeholder="${type === 'jodi' ? 'Jodi' : 'Values'}" class="native-input text-[var(--amber)]">
@@ -12038,17 +12089,22 @@ TOTAL: 300</pre>
                             <input id="in-r-${type}-${i}" type="number" onfocus="titanMarkLedgerDirty()" oninput="updateMarket('${type}', ${i}, 'r', this.value, ${cardKeyJS})" value="${d.r || ''}" placeholder="Amount" class="native-input text-white">
                         </div>
                     </div>
-                    <div class="flex gap-2 mb-3">
-                        <button onclick="act('${type}', ${i}, 'PASS', ${cardKeyJS})" class="flex-1 bg-[var(--green)] text-white py-3 rounded-xl font-black text-[11px] uppercase active:scale-95 shadow-[0_4px_0_rgba(0,160,94,1)] active:translate-y-1 active:shadow-none">PASS</button>
-                        <button onclick="act('${type}', ${i}, 'FAIL', ${cardKeyJS})" class="flex-1 bg-[var(--rose)] text-white py-3 rounded-xl font-black text-[11px] uppercase active:scale-95 shadow-[0_4px_0_rgba(200,40,40,1)] active:translate-y-1 active:shadow-none">FAIL</button>
-                        <button onclick="act('${type}', ${i}, 'SKIP', ${cardKeyJS})" class="w-14 bg-[var(--surface-light)] text-[var(--text-muted)] py-3 rounded-xl font-bold text-[11px] uppercase active:scale-95 border border-[var(--border)]"><i class="fas fa-forward"></i></button>
+                    <div class="ledger-actions">
+                        <button onclick="act('${type}', ${i}, 'PASS', ${cardKeyJS})" class="bg-[var(--green)] text-white font-black text-[10px] uppercase active:scale-95">PASS</button>
+                        <button onclick="act('${type}', ${i}, 'FAIL', ${cardKeyJS})" class="bg-[var(--rose)] text-white font-black text-[10px] uppercase active:scale-95">FAIL</button>
+                        <button onclick="act('${type}', ${i}, 'SKIP', ${cardKeyJS})" class="bg-[var(--surface-light)] text-[var(--text-muted)] font-bold text-[10px] uppercase active:scale-95 border border-[var(--border)]"><i class="fas fa-forward"></i></button>
                     </div>
-                    ${titanLedgerBaseScheduleCompact(type, i, cardKeyJS, d)}
-                    <div class="grid grid-cols-3 gap-2 border-t border-[var(--border)] pt-3">
-                        <button onclick="copyIntel('${type}', ${i}, this, ${cardKeyJS})" class="text-[var(--primary)] bg-[rgba(42,171,238,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(42,171,238,0.15)]"><i class="fas fa-copy"></i> Copy</button>
-                        <button onclick="prepShare('${type}', ${i}, 'GUIDE', ${cardKeyJS})" class="text-[var(--amber)] bg-[rgba(250,199,72,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(250,199,72,0.15)]"><i class="fas fa-lightbulb"></i> Intel</button>
-                        <button onclick="prepShare('${type}', ${i}, 'STATUS', ${cardKeyJS})" class="text-[var(--green)] bg-[rgba(0,194,111,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(0,194,111,0.15)]"><i class="fas fa-paper-plane"></i> Result</button>
-                    </div>
+                    <details class="ledger-more" ${moreOpen ? 'open' : ''} ontoggle="titanRememberLedgerMore(event, '${type}', ${cardKeyJS})" onclick="event.stopPropagation()">
+                        <summary onclick="event.stopPropagation()"><span><i class="fas fa-sliders-h mr-1"></i> Schedule / Share</span></summary>
+                        <div class="ledger-more-body">
+                            ${titanLedgerBaseScheduleCompact(type, i, cardKeyJS, d)}
+                            <div class="grid grid-cols-3 gap-2">
+                                <button onclick="copyIntel('${type}', ${i}, this, ${cardKeyJS})" class="text-[var(--primary)] bg-[rgba(42,171,238,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(42,171,238,0.15)]"><i class="fas fa-copy"></i> Copy</button>
+                                <button onclick="prepShare('${type}', ${i}, 'GUIDE', ${cardKeyJS})" class="text-[var(--amber)] bg-[rgba(250,199,72,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(250,199,72,0.15)]"><i class="fas fa-lightbulb"></i> Intel</button>
+                                <button onclick="prepShare('${type}', ${i}, 'STATUS', ${cardKeyJS})" class="text-[var(--green)] bg-[rgba(0,194,111,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(0,194,111,0.15)]"><i class="fas fa-paper-plane"></i> Result</button>
+                            </div>
+                        </div>
+                    </details>
                 </div>`;
         }
 
@@ -12056,7 +12112,7 @@ TOTAL: 300</pre>
         function createLedgerList(type, arr, dictName) {
             ensureDataStruct();
             const list = document.createElement('div');
-            list.className = 'px-3 pb-4 pt-1';
+            list.className = 'ledger-compact px-2 pb-3 pt-1';
             let dayRec = state.dayRecords[currentDate];
             if(!dayRec) {
                 ensureDataStruct();
@@ -12074,7 +12130,10 @@ TOTAL: 300</pre>
                 const memoryBadge = boostPercent > 0 ? `<span class="text-[8px] bg-[var(--rose)] text-white px-1.5 py-0.5 rounded font-bold uppercase ml-2">+${boostPercent}%</span>` : '';
                 const cardKey = ledgerMarketKeyForCard(type, m);
                 const cardKeyJS = jsArg(cardKey);
-                const op = ensureLedgerRecordBoundForProfile(state, appState.activeId || 'admin1', type, i, cardKey, true);
+                // Rendering must be read-mostly. Creating blank records for every
+                // visible card during render made old/duplicate records reappear in
+                // Firebase after a later full save. Only real user actions create records.
+                const op = ensureLedgerRecordBoundForProfile(state, appState.activeId || 'admin1', type, i, cardKey, false);
                 const d = op.rec || {s:'WAIT', d:'', r:''};
                 const status = titanLedgerBaseStatusMeta(d.s);
                 const trickBadge = d.trick ? `<span class="text-[8px] bg-[var(--purple)] text-white px-1.5 py-0.5 rounded font-black uppercase ml-2">${d.trick}</span>` : '';
