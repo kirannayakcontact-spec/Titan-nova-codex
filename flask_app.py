@@ -69,6 +69,7 @@ TITAN_GATEWAY_TOKEN = os.environ.get("TITAN_GATEWAY_TOKEN", TITAN_ADMIN_TOKEN).s
 TITAN_SECURITY_DISABLED = str(os.environ.get("TITAN_SECURITY_DISABLED", "0")).strip().lower() in ("1", "true", "yes", "on")
 TITAN_SECURITY_STRICT = bool(TITAN_ADMIN_TOKEN) and not TITAN_SECURITY_DISABLED
 TITAN_COOKIE_SECURE = str(os.environ.get("TITAN_COOKIE_SECURE", "0")).strip().lower() in ("1", "true", "yes", "on")
+TITAN_ALLOW_QUERY_TOKEN = str(os.environ.get("TITAN_ALLOW_QUERY_TOKEN", "0")).strip().lower() in ("1", "true", "yes", "on")
 FIREBASE_LAST_LOAD_META = {"status": "unchecked", "message": "not loaded yet"}
 
 @app.after_request
@@ -179,14 +180,17 @@ def _request_token():
     auth = str(request.headers.get("Authorization") or "")
     if auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
-    return (
+    token = (
         request.headers.get("X-Titan-Admin-Token")
         or request.headers.get("X-Titan-Gateway-Token")
-        or request.args.get("admin_token")
-        or request.args.get("token")
         or request.cookies.get("titan_admin_token")
         or ""
-    ).strip()
+    )
+    if not token and TITAN_ALLOW_QUERY_TOKEN:
+        # Query-string tokens leak through browser history, access logs and referrers;
+        # keep them off by default and allow only for explicit legacy deployments.
+        token = request.args.get("admin_token") or request.args.get("token") or ""
+    return str(token).strip()
 
 
 def _admin_authorized():
@@ -315,7 +319,7 @@ def api_admin_login():
     if not _constant_time_equal(token, TITAN_ADMIN_TOKEN):
         return jsonify({"status": "error", "message": "Invalid admin token", "securityLockdown": True}), 401
     resp = jsonify({"status": "success", "message": "Admin unlocked", "securityLockdown": True, "version": SECURITY_LOCKDOWN_VERSION})
-    resp.set_cookie('titan_admin_token', token, max_age=60*60*24*30, httponly=False, secure=TITAN_COOKIE_SECURE, samesite='Lax')
+    resp.set_cookie('titan_admin_token', token, max_age=60*60*24*30, httponly=True, secure=TITAN_COOKIE_SECURE, samesite='Lax')
     return resp
 
 
@@ -8190,11 +8194,11 @@ HTML_TEMPLATE = """
             return total;
         }
         function marketNormalizeOrderName(v){
-            return String(v || '').trim().toUpperCase().replace(/\s+/g,' ').replace(/SRIDEVI DAY/g,'SRIDEV DAY');
+            return String(v || '').trim().toUpperCase().replace(/\\s+/g,' ').replace(/SRIDEVI DAY/g,'SRIDEV DAY');
         }
         function marketStageBaseName(v){
             let n = marketNormalizeOrderName(v);
-            n = n.replace(/\s+(OPEN|CLOSE)$/,'').trim();
+            n = n.replace(/\\s+(OPEN|CLOSE)$/,'').trim();
             return n;
         }
         function isStartMarketName(v){

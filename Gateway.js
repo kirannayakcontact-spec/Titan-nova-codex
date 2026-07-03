@@ -29,6 +29,8 @@ const {
 } = require("@whiskeysockets/baileys");
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || process.env.TITAN_GATEWAY_HOST || "127.0.0.1";
+const TITAN_ALLOW_QUERY_TOKEN = ["1","true","yes","on"].includes(String(process.env.TITAN_ALLOW_QUERY_TOKEN || "0").toLowerCase());
 const DEFAULT_FIREBASE_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/titan_master_data.json";
 const FIREBASE_URL = (process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || DEFAULT_FIREBASE_URL).replace(/\/$/, "");
 const FIREBASE_URL_FROM_ENV = !!(process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL);
@@ -4892,14 +4894,12 @@ function constantTimeTokenOk(a, b){
 function requestAuthToken(req){
   const auth = String(req.headers.authorization || "");
   if(auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
-  return String(
-    req.headers["x-titan-gateway-token"] ||
-    req.headers["x-titan-admin-token"] ||
-    req.query.gateway_token ||
-    req.query.admin_token ||
-    req.query.token ||
-    ""
-  ).trim();
+  let token = req.headers["x-titan-gateway-token"] || req.headers["x-titan-admin-token"] || "";
+  if(!token && TITAN_ALLOW_QUERY_TOKEN){
+    // Query-string secrets leak via logs/history/referrers; allow only for explicit legacy deployments.
+    token = req.query.gateway_token || req.query.admin_token || req.query.token || "";
+  }
+  return String(token || "").trim();
 }
 function gatewayAuthMiddleware(req, res, next){
   if(!TITAN_GATEWAY_AUTH_ENFORCED) return next();
@@ -5499,7 +5499,7 @@ app.get('/realtime_sync_status', gatewayAuthMiddleware, async (req,res)=>{
   });
 });
 
-app.listen(PORT, () => { console.log(`🚀 Titan Gateway running: http://127.0.0.1:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {port:PORT, timezone:APP_TZ}); });
+app.listen(PORT, HOST, () => { console.log(`🚀 Titan Gateway running: http://${HOST}:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {host:HOST, port:PORT, timezone:APP_TZ}); });
 startWhatsApp().catch(e => console.error("WA start error", e));
 setInterval(scheduleTick, TITAN_SCHEDULE_POLL_MS);
 setInterval(resultTick, TITAN_RESULT_POLL_MS);
