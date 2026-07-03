@@ -7728,6 +7728,28 @@ HTML_TEMPLATE = """
             .native-card { border-radius: 14px; }
         }
 
+        /* ── LEDGER MOBILE COMPACT v43 ── */
+        .ledger-compact { padding-left: 8px !important; padding-right: 8px !important; }
+        .ledger-compact .native-card { margin-bottom: 6px; border-radius: 14px; }
+        .ledger-card-head { padding: 8px 10px; min-height: 38px; }
+        .ledger-card-body { padding: 10px; }
+        .ledger-main-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(82px, .8fr); gap: 8px; margin-bottom: 8px; }
+        .ledger-actions { display: grid; grid-template-columns: 1fr 1fr 46px; gap: 8px; margin-bottom: 8px; }
+        .ledger-actions button { padding-top: 9px; padding-bottom: 9px; border-radius: 11px; box-shadow: none !important; }
+        .ledger-more { border-top: 1px solid var(--border); padding-top: 8px; }
+        .ledger-more > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
+        .ledger-more > summary::-webkit-details-marker { display: none; }
+        .ledger-more > summary::after { content: 'More'; color: var(--primary); font-size: 9px; }
+        .ledger-more[open] > summary::after { content: 'Hide'; color: var(--rose); }
+        .ledger-more-body { margin-top: 8px; }
+        .ledger-compact .native-input { padding: 10px 9px; font-size: 15px; border-radius: 11px; }
+        .ledger-compact .stat-lbl { margin-bottom: 2px; }
+        @media (max-width: 380px) {
+            .ledger-main-grid { grid-template-columns: minmax(0, 1.35fr) minmax(76px, .75fr); gap: 6px; }
+            .ledger-actions { grid-template-columns: 1fr 1fr 42px; gap: 6px; }
+            .ledger-card-body { padding: 9px; }
+        }
+
 
         /* ── v14 ADMIN MOBILE POLISH ── */
         .v14-admin-fab {
@@ -12028,14 +12050,14 @@ TOTAL: 300</pre>
                 <button onclick="fetchCombinedScrape(this, '${type}', ${i}, ${cardKeyJS})" class="bg-[#00C26F] text-white px-3 py-1 rounded-lg text-[10px] font-bold uppercase active:scale-95">Combo</button>
                 <button onclick="resetCard('${type}', ${i}, ${cardKeyJS})" class="text-[var(--text-muted)] hover:text-[var(--rose)] active:scale-95 ml-1"><i class="fas fa-eraser"></i></button>` : '';
             return `
-                <div class="flex justify-between items-center px-4 py-2.5 border-b border-[var(--border)]">
+                <div class="ledger-card-head flex justify-between items-center border-b border-[var(--border)]">
                     <div class="flex items-center min-w-0">
-                        <span class="text-[12px] font-bold uppercase ${trackColor} truncate">${m.n}</span> ${trickBadge} ${memoryBadge}
+                        <span class="text-[11px] font-black uppercase ${trackColor} truncate">${m.n}</span> ${trickBadge} ${memoryBadge}
                     </div>
-                    <div class="flex items-center gap-2 shrink-0">${scrapeButtons}</div>
+                    <div class="flex items-center gap-1.5 shrink-0">${scrapeButtons}</div>
                 </div>
-                <div class="p-4">
-                    <div class="grid grid-cols-2 gap-3 mb-3">
+                <div class="ledger-card-body">
+                    <div class="ledger-main-grid">
                         <div class="relative flex flex-col">
                             <label class="absolute -top-2 left-3 z-10 bg-[var(--surface)] px-1 text-[8px] font-bold text-[var(--text-muted)] uppercase">Digits</label>
                             <input id="in-d-${type}-${i}" onfocus="titanMarkLedgerDirty()" oninput="updateMarket('${type}', ${i}, 'd', this.value, ${cardKeyJS})" value="${d.d || ''}" placeholder="${type === 'jodi' ? 'Jodi' : 'Values'}" class="native-input text-[var(--amber)]">
@@ -12054,17 +12076,22 @@ TOTAL: 300</pre>
                             <input id="in-r-${type}-${i}" type="number" onfocus="titanMarkLedgerDirty()" oninput="updateMarket('${type}', ${i}, 'r', this.value, ${cardKeyJS})" value="${d.r || ''}" placeholder="Amount" class="native-input text-white">
                         </div>
                     </div>
-                    <div class="flex gap-2 mb-3">
-                        <button onclick="act('${type}', ${i}, 'PASS', ${cardKeyJS})" class="flex-1 bg-[var(--green)] text-white py-3 rounded-xl font-black text-[11px] uppercase active:scale-95 shadow-[0_4px_0_rgba(0,160,94,1)] active:translate-y-1 active:shadow-none">PASS</button>
-                        <button onclick="act('${type}', ${i}, 'FAIL', ${cardKeyJS})" class="flex-1 bg-[var(--rose)] text-white py-3 rounded-xl font-black text-[11px] uppercase active:scale-95 shadow-[0_4px_0_rgba(200,40,40,1)] active:translate-y-1 active:shadow-none">FAIL</button>
-                        <button onclick="act('${type}', ${i}, 'SKIP', ${cardKeyJS})" class="w-14 bg-[var(--surface-light)] text-[var(--text-muted)] py-3 rounded-xl font-bold text-[11px] uppercase active:scale-95 border border-[var(--border)]"><i class="fas fa-forward"></i></button>
+                    <div class="ledger-actions">
+                        <button onclick="act('${type}', ${i}, 'PASS', ${cardKeyJS})" class="bg-[var(--green)] text-white font-black text-[10px] uppercase active:scale-95">PASS</button>
+                        <button onclick="act('${type}', ${i}, 'FAIL', ${cardKeyJS})" class="bg-[var(--rose)] text-white font-black text-[10px] uppercase active:scale-95">FAIL</button>
+                        <button onclick="act('${type}', ${i}, 'SKIP', ${cardKeyJS})" class="bg-[var(--surface-light)] text-[var(--text-muted)] font-bold text-[10px] uppercase active:scale-95 border border-[var(--border)]"><i class="fas fa-forward"></i></button>
                     </div>
-                    ${titanLedgerBaseScheduleCompact(type, i, cardKeyJS, d)}
-                    <div class="grid grid-cols-3 gap-2 border-t border-[var(--border)] pt-3">
-                        <button onclick="copyIntel('${type}', ${i}, this, ${cardKeyJS})" class="text-[var(--primary)] bg-[rgba(42,171,238,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(42,171,238,0.15)]"><i class="fas fa-copy"></i> Copy</button>
-                        <button onclick="prepShare('${type}', ${i}, 'GUIDE', ${cardKeyJS})" class="text-[var(--amber)] bg-[rgba(250,199,72,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(250,199,72,0.15)]"><i class="fas fa-lightbulb"></i> Intel</button>
-                        <button onclick="prepShare('${type}', ${i}, 'STATUS', ${cardKeyJS})" class="text-[var(--green)] bg-[rgba(0,194,111,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(0,194,111,0.15)]"><i class="fas fa-paper-plane"></i> Result</button>
-                    </div>
+                    <details class="ledger-more">
+                        <summary><span><i class="fas fa-sliders-h mr-1"></i> Schedule / Share</span></summary>
+                        <div class="ledger-more-body">
+                            ${titanLedgerBaseScheduleCompact(type, i, cardKeyJS, d)}
+                            <div class="grid grid-cols-3 gap-2">
+                                <button onclick="copyIntel('${type}', ${i}, this, ${cardKeyJS})" class="text-[var(--primary)] bg-[rgba(42,171,238,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(42,171,238,0.15)]"><i class="fas fa-copy"></i> Copy</button>
+                                <button onclick="prepShare('${type}', ${i}, 'GUIDE', ${cardKeyJS})" class="text-[var(--amber)] bg-[rgba(250,199,72,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(250,199,72,0.15)]"><i class="fas fa-lightbulb"></i> Intel</button>
+                                <button onclick="prepShare('${type}', ${i}, 'STATUS', ${cardKeyJS})" class="text-[var(--green)] bg-[rgba(0,194,111,0.1)] py-2.5 rounded-lg font-bold text-[9px] uppercase active:scale-95 flex justify-center items-center gap-1 border border-[rgba(0,194,111,0.15)]"><i class="fas fa-paper-plane"></i> Result</button>
+                            </div>
+                        </div>
+                    </details>
                 </div>`;
         }
 
@@ -12072,7 +12099,7 @@ TOTAL: 300</pre>
         function createLedgerList(type, arr, dictName) {
             ensureDataStruct();
             const list = document.createElement('div');
-            list.className = 'px-3 pb-4 pt-1';
+            list.className = 'ledger-compact px-2 pb-3 pt-1';
             let dayRec = state.dayRecords[currentDate];
             if(!dayRec) {
                 ensureDataStruct();
