@@ -12104,6 +12104,8 @@ TOTAL: 300</pre>
                     </div>
                     <details class="ledger-more" ${moreOpen ? 'open' : ''} ontoggle="titanRememberLedgerMore(event, '${type}', ${cardKeyJS})" onclick="event.stopPropagation()">
                         <summary onclick="event.stopPropagation()"><span><i class="fas fa-sliders-h mr-1"></i> Schedule / Share</span></summary>
+                    <details class="ledger-more">
+                        <summary><span><i class="fas fa-sliders-h mr-1"></i> Schedule / Share</span></summary>
                         <div class="ledger-more-body">
                             ${titanLedgerBaseScheduleCompact(type, i, cardKeyJS, d)}
                             <div class="grid grid-cols-3 gap-2">
