@@ -4057,7 +4057,11 @@ def _merge_ledger_records_source_of_truth(incoming, existing):
         old_days = old_prof.get('dayRecords', {}) if isinstance(old_prof.get('dayRecords'), dict) else {}
         if not old_days:
             continue
-        in_prof = in_profiles.setdefault(pid, _safe_deepcopy(old_prof))
+        # If the current admin payload intentionally removed a VIP profile, do not
+        # resurrect it while preserving ledger records from the latest Firebase snapshot.
+        if pid not in in_profiles:
+            continue
+        in_prof = in_profiles.get(pid)
         if not isinstance(in_prof, dict):
             continue
         in_days = in_prof.setdefault('dayRecords', {}) if isinstance(in_prof.get('dayRecords'), dict) else {}
@@ -4138,7 +4142,11 @@ def _preserve_server_ledger_auto_marks(incoming, existing):
         old_days = old_prof.get('dayRecords', {}) if isinstance(old_prof.get('dayRecords'), dict) else {}
         if not old_days:
             continue
-        in_prof = in_profiles.setdefault(pid, _safe_deepcopy(old_prof))
+        # Deleted VIP profiles must stay deleted; auto-mark preservation should only
+        # run for profiles still present in the incoming admin state.
+        if pid not in in_profiles:
+            continue
+        in_prof = in_profiles.get(pid)
         if not isinstance(in_prof, dict):
             continue
         in_days = in_prof.setdefault('dayRecords', {}) if isinstance(in_prof.get('dayRecords'), dict) else {}
@@ -13974,7 +13982,21 @@ TOTAL: 300</pre>
 
         async function importContacts() { if (!('contacts' in navigator)) return showRealNotification('⚠️ Not Supported', 'Direct import support nahi karta.', 'danger'); try { const contacts = await navigator.contacts.select(['name', 'tel'], { multiple: false }); if (contacts.length) { const n = contacts[0].name[0]; let p = contacts[0].tel[0].replace(/\\D/g, ''); if (p.length >= 10) { const pid = 'client_' + Date.now(); appState.profiles[pid] = buildNewProfile(n, p.slice(-10)); autoSave(); render(true); } else showRealNotification('⚠️ Error', 'Phone support nahi mila!', 'danger'); } } catch (e) {} }
         function addVIP() { const n = document.getElementById('c-name').value.trim(); const p = document.getElementById('c-phone').value.replace(/\\D/g, ''); if(n) { const pid = 'client_' + Date.now(); appState.profiles[pid] = buildNewProfile(n, p.slice(-10)); autoSave(); render(true); } else showRealNotification('⚠️ Error', 'Valid Name chahiye.', 'danger'); }
-        function deleteProfile(pid) { if(pid === 'client_dummy') return showRealNotification('⚠️ Error', 'Cannot delete Default Dummy Profile.', 'danger'); if(confirm("Bhai, kya sachme is VIP ka pura ledger delete karna hai?")) { delete appState.profiles[pid]; autoSave(); render(true); } }
+        function deleteProfile(pid) {
+            if(pid === 'client_dummy') return showRealNotification('⚠️ Error', 'Cannot delete Default Dummy Profile.', 'danger');
+            if(String(pid || '').startsWith('admin')) return showRealNotification('⚠️ Error', 'Admin profile delete nahi ho sakta.', 'danger');
+            if(confirm("Bhai, kya sachme is VIP ka pura ledger delete karna hai?")) {
+                delete appState.profiles[pid];
+                if(appState.activeId === pid) { appState.activeId = 'admin1'; state = appState.profiles.admin1; }
+                if(appState.ledgerSchedules && typeof appState.ledgerSchedules === 'object') {
+                    Object.keys(appState.ledgerSchedules).forEach(k => { if(String(k).startsWith(pid + '|')) delete appState.ledgerSchedules[k]; });
+                }
+                if(appState.wallets && typeof appState.wallets === 'object') delete appState.wallets[pid];
+                if(Array.isArray(appState.walletTransactions)) appState.walletTransactions = appState.walletTransactions.filter(x => String((x && x.userId) || '') !== String(pid));
+                titanMarkUiLocalWrite('vip_delete', 9000);
+                saveMaster(true, true).then(() => { showRealNotification('🗑️ VIP Deleted', 'VIP profile Firebase se delete ho gaya.', 'success'); render(true); });
+            }
+        }
 
         function openClient(pid) {
             if(!IS_MASTER) return;
