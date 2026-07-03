@@ -69,6 +69,7 @@ TITAN_GATEWAY_TOKEN = os.environ.get("TITAN_GATEWAY_TOKEN", TITAN_ADMIN_TOKEN).s
 TITAN_SECURITY_DISABLED = str(os.environ.get("TITAN_SECURITY_DISABLED", "0")).strip().lower() in ("1", "true", "yes", "on")
 TITAN_SECURITY_STRICT = bool(TITAN_ADMIN_TOKEN) and not TITAN_SECURITY_DISABLED
 TITAN_COOKIE_SECURE = str(os.environ.get("TITAN_COOKIE_SECURE", "0")).strip().lower() in ("1", "true", "yes", "on")
+TITAN_ALLOW_QUERY_TOKEN = str(os.environ.get("TITAN_ALLOW_QUERY_TOKEN", "0")).strip().lower() in ("1", "true", "yes", "on")
 FIREBASE_LAST_LOAD_META = {"status": "unchecked", "message": "not loaded yet"}
 
 @app.after_request
@@ -179,14 +180,17 @@ def _request_token():
     auth = str(request.headers.get("Authorization") or "")
     if auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
-    return (
+    token = (
         request.headers.get("X-Titan-Admin-Token")
         or request.headers.get("X-Titan-Gateway-Token")
-        or request.args.get("admin_token")
-        or request.args.get("token")
         or request.cookies.get("titan_admin_token")
         or ""
-    ).strip()
+    )
+    if not token and TITAN_ALLOW_QUERY_TOKEN:
+        # Query-string tokens leak through browser history, access logs and referrers;
+        # keep them off by default and allow only for explicit legacy deployments.
+        token = request.args.get("admin_token") or request.args.get("token") or ""
+    return str(token).strip()
 
 
 def _admin_authorized():
@@ -315,7 +319,7 @@ def api_admin_login():
     if not _constant_time_equal(token, TITAN_ADMIN_TOKEN):
         return jsonify({"status": "error", "message": "Invalid admin token", "securityLockdown": True}), 401
     resp = jsonify({"status": "success", "message": "Admin unlocked", "securityLockdown": True, "version": SECURITY_LOCKDOWN_VERSION})
-    resp.set_cookie('titan_admin_token', token, max_age=60*60*24*30, httponly=False, secure=TITAN_COOKIE_SECURE, samesite='Lax')
+    resp.set_cookie('titan_admin_token', token, max_age=60*60*24*30, httponly=True, secure=TITAN_COOKIE_SECURE, samesite='Lax')
     return resp
 
 
@@ -4383,17 +4387,29 @@ def save():
     )
 
     if is_master_saving:
-        # v41 Base-file manual overwrite:
-        # Same intent as the user's base flask_app.py: admin payload wins.
-        # Removed Firebase Guard/source-of-truth merge from this route.
-        saved = save_to_firebase(incoming, "base_file_manual_overwrite_v41")
+        # v42 Ledger render/source fix:
+        # Admin settings/market add-delete still come from the current UI payload, but
+        # ledger card records are also written through /api/ledger_card_update child PUTs.
+        # Before a full /save, merge against the latest Firebase snapshot so an older
+        # browser render cannot restore duplicate/old ledger records after the user
+        # manually adds, clears, resets, PASS/FAILs, or deletes card content.
+        try:
+            latest = load_from_firebase()
+            if isinstance(latest, dict) and latest.get('profiles'):
+                _merge_ledger_records_source_of_truth(incoming, latest)
+                _preserve_server_ledger_auto_marks(incoming, latest)
+                incoming.setdefault('ledgerRenderSyncGuard', {})['lastMergedAt'] = _now_iso_local()
+                incoming['ledgerRenderSyncGuard']['mode'] = 'full-save-preserves-newest-manual-ledger-edits'
+        except Exception as merge_err:
+            _obs_exception('ledger_render_sync_guard_merge_failed', merge_err, {'route': '/save'})
+        saved = save_to_firebase(incoming, "ledger_render_sync_guard_v42")
         if not saved:
             return jsonify({"status": "error", "message": "Firebase manual overwrite save failed.", "manualOverwrite": True}), 500
         return jsonify({
             "status": "success",
             "manualOverwrite": True,
-            "firebaseGuardDisabled": True,
-            "source": "base_flask_app_save_logic_v41"
+            "ledgerRenderSyncGuard": True,
+            "source": "ledger_render_sync_guard_v42"
         })
     else:
         return jsonify({"status": "rejected", "msg": "Client app is restricted to Read-Only mode."})
@@ -8190,11 +8206,11 @@ HTML_TEMPLATE = """
             return total;
         }
         function marketNormalizeOrderName(v){
-            return String(v || '').trim().toUpperCase().replace(/\s+/g,' ').replace(/SRIDEVI DAY/g,'SRIDEV DAY');
+            return String(v || '').trim().toUpperCase().replace(/\\s+/g,' ').replace(/SRIDEVI DAY/g,'SRIDEV DAY');
         }
         function marketStageBaseName(v){
             let n = marketNormalizeOrderName(v);
-            n = n.replace(/\s+(OPEN|CLOSE)$/,'').trim();
+            n = n.replace(/\\s+(OPEN|CLOSE)$/,'').trim();
             return n;
         }
         function isStartMarketName(v){
@@ -12074,7 +12090,10 @@ TOTAL: 300</pre>
                 const memoryBadge = boostPercent > 0 ? `<span class="text-[8px] bg-[var(--rose)] text-white px-1.5 py-0.5 rounded font-bold uppercase ml-2">+${boostPercent}%</span>` : '';
                 const cardKey = ledgerMarketKeyForCard(type, m);
                 const cardKeyJS = jsArg(cardKey);
-                const op = ensureLedgerRecordBoundForProfile(state, appState.activeId || 'admin1', type, i, cardKey, true);
+                // Rendering must be read-mostly. Creating blank records for every
+                // visible card during render made old/duplicate records reappear in
+                // Firebase after a later full save. Only real user actions create records.
+                const op = ensureLedgerRecordBoundForProfile(state, appState.activeId || 'admin1', type, i, cardKey, false);
                 const d = op.rec || {s:'WAIT', d:'', r:''};
                 const status = titanLedgerBaseStatusMeta(d.s);
                 const trickBadge = d.trick ? `<span class="text-[8px] bg-[var(--purple)] text-white px-1.5 py-0.5 rounded font-black uppercase ml-2">${d.trick}</span>` : '';
