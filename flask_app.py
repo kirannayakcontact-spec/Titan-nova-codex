@@ -11361,6 +11361,8 @@ TOTAL: 300</pre>
             // Trick indexes are user-facing positions: 1-9 are first-to-ninth, 0 means the 10th digit.
             else if (trickNum === 3) { res = digits.filter((_, idx) => ![0, 3, 6, 9].includes(idx)); }
             else if (trickNum === 4) { res = digits.filter((_, idx) => ![1, 4, 5, 8].includes(idx)); }
+            else if (trickNum === 3) { res = digits.filter((_, idx) => ![1, 4, 7, 0].includes(idx)); }
+            else if (trickNum === 4) { res = digits.filter((_, idx) => ![2, 5, 6, 9].includes(idx)); }
             const formatted = res.join(', ');
 
             op.rec.d = formatted;
