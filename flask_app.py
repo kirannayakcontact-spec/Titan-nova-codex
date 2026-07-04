@@ -11293,8 +11293,8 @@ TOTAL: 300</pre>
 
         // ==========================================
         // AUTO-TRICK LOGIC WITH ADMIN SYNC
-        // v42 fix: T1/T2/T3 always run from the saved original 10-digit source.
-        // This makes trick switching idempotent: T1 -> T2 -> T3 can be changed anytime
+        // v42 fix: T1/T2/T3/T4 always run from the saved original 10-digit source.
+        // This makes trick switching idempotent: T1 -> T2 -> T3 -> T4 can be changed anytime
         // without pressing Undo and without using the already-filtered 5 digits as input.
         // ==========================================
         function titanDigitList(value){ return (String(value || '').match(/\\d/g) || []); }
@@ -11358,7 +11358,8 @@ TOTAL: 300</pre>
             let res = [];
             if (trickNum === 1) { res = [digits[1], digits[3], digits[5], digits[7], digits[9]]; }
             else if (trickNum === 2) { res = [digits[0], digits[2], digits[4], digits[6], digits[8]]; }
-            else if (trickNum === 3) { res = [digits[1], digits[2], digits[3], digits[6], digits[7], digits[8]]; }
+            else if (trickNum === 3) { res = digits.filter((_, idx) => ![1, 4, 7, 0].includes(idx)); }
+            else if (trickNum === 4) { res = digits.filter((_, idx) => ![2, 5, 6, 9].includes(idx)); }
             const formatted = res.join(', ');
 
             op.rec.d = formatted;
@@ -11463,6 +11464,7 @@ TOTAL: 300</pre>
                         if (trick === 'T1') tColor = 'bg-[rgba(123,143,255,0.1)] text-[var(--purple)] border-[rgba(123,143,255,0.2)]';
                         else if (trick === 'T2') tColor = 'bg-[rgba(250,199,72,0.1)] text-[var(--amber)] border-[rgba(250,199,72,0.2)]';
                         else if (trick === 'T3') tColor = 'bg-[rgba(0,194,111,0.1)] text-[var(--green)] border-[rgba(0,194,111,0.2)]';
+                        else if (trick === 'T4') tColor = 'bg-[rgba(42,171,238,0.1)] text-[var(--primary)] border-[rgba(42,171,238,0.2)]';
                     }
                 }
                 let dayName = pastDate.toLocaleDateString('en-US', {weekday: 'short'}).toUpperCase();
@@ -12087,6 +12089,7 @@ TOTAL: 300</pre>
                                 <button onclick="applyTrick('${type}', ${i}, 1, ${cardKeyJS})" class="flex-1 text-[9px] bg-[rgba(123,143,255,0.1)] border border-[rgba(123,143,255,0.2)] text-[var(--purple)] py-1.5 rounded font-black active:scale-90 shadow-sm">T1</button>
                                 <button onclick="applyTrick('${type}', ${i}, 2, ${cardKeyJS})" class="flex-1 text-[9px] bg-[rgba(250,199,72,0.1)] border border-[rgba(250,199,72,0.2)] text-[var(--amber)] py-1.5 rounded font-black active:scale-90 shadow-sm">T2</button>
                                 <button onclick="applyTrick('${type}', ${i}, 3, ${cardKeyJS})" class="flex-1 text-[9px] bg-[rgba(0,194,111,0.1)] border border-[rgba(0,194,111,0.2)] text-[var(--green)] py-1.5 rounded font-black active:scale-90 shadow-sm">T3</button>
+                                <button onclick="applyTrick('${type}', ${i}, 4, ${cardKeyJS})" class="flex-1 text-[9px] bg-[rgba(42,171,238,0.1)] border border-[rgba(42,171,238,0.2)] text-[var(--primary)] py-1.5 rounded font-black active:scale-90 shadow-sm">T4</button>
                                 ${d.trick ? `<button onclick="undoTrick('${type}', ${i}, ${cardKeyJS})" class="flex-none px-2.5 text-[10px] bg-[rgba(255,93,93,0.1)] border border-[rgba(255,93,93,0.2)] text-[var(--rose)] py-1.5 rounded font-black active:scale-90 shadow-sm"><i class="fas fa-undo"></i></button>` : ''}
                             </div>
                             ${getTrickHistoryHTML(type, i)}
