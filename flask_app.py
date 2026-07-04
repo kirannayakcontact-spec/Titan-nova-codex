@@ -8661,18 +8661,35 @@ HTML_TEMPLATE = """
         let titanDeferredRenderTimer = null;
         let titanDeferredTargetPickerRender = false;
         let titanDeferredTargetPickerTimer = null;
+        let titanInteractiveInputHoldUntil = 0;
+        const TITAN_INTERACTIVE_INPUT_HOLD_MS = 3500;
+        function titanMarkInteractiveInputHold(reason, holdMs){
+            titanInteractiveInputHoldUntil = Math.max(titanInteractiveInputHoldUntil || 0, titanNowMs() + (holdMs || TITAN_INTERACTIVE_INPUT_HOLD_MS));
+        }
         function titanEditableInput(el){
             if(!el) return false;
             const tag = String(el.tagName || '').toUpperCase();
-            if(tag === 'TEXTAREA') return true;
+            if(tag === 'TEXTAREA' || tag === 'SELECT') return true;
             if(el.isContentEditable) return true;
             if(tag !== 'INPUT') return false;
             const typ = String(el.type || 'text').toLowerCase();
-            return !['checkbox','radio','button','submit','reset','file','range','color','date','time','datetime-local','month','week','hidden'].includes(typ);
+            // LEDGER_INPUT_STABILITY_v51: date/time pickers are real editing sessions too.
+            // Excluding them allowed live-sync/render() to rebuild the Ledger DOM while the
+            // native picker was open, so the picker disappeared and nearby fields looked blank.
+            return !['checkbox','radio','button','submit','reset','file','range','color','hidden'].includes(typ);
         }
         function titanTypingActive(){
-            try { return titanEditableInput(document.activeElement); } catch(e){ return false; }
+            try { return titanEditableInput(document.activeElement) || titanNowMs() < (titanInteractiveInputHoldUntil || 0); } catch(e){ return titanNowMs() < (titanInteractiveInputHoldUntil || 0); }
         }
+        document.addEventListener('focusin', function(ev){
+            try { if(titanEditableInput(ev && ev.target)) titanMarkInteractiveInputHold('focusin'); } catch(e){}
+        }, true);
+        document.addEventListener('input', function(ev){
+            try { if(titanEditableInput(ev && ev.target)) titanMarkInteractiveInputHold('input'); } catch(e){}
+        }, true);
+        document.addEventListener('pointerdown', function(ev){
+            try { if(titanEditableInput(ev && ev.target)) titanMarkInteractiveInputHold('pointerdown'); } catch(e){}
+        }, true);
         function titanQueueRenderAfterTyping(keepScroll){
             titanDeferredRenderArgs = {keepScroll: keepScroll !== false};
             clearTimeout(titanDeferredRenderTimer);
@@ -12095,7 +12112,7 @@ TOTAL: 300</pre>
                         <div class="text-[8px] text-[var(--text-muted)] truncate max-w-[55%]">${titanTargetsText(d)}</div>
                     </div>
                     <div class="grid grid-cols-3 gap-2">
-                        <input type="time" value="${d.schTime || ''}" onchange="setScheduleTime('${type}', ${idx}, this.value, ${cardKeyJS})" class="native-input text-[13px] py-2.5 text-[var(--green)]">
+                        <input type="time" value="${d.schTime || ''}" onfocus="titanMarkInteractiveInputHold('schedule_time_focus', 8000)" oninput="titanMarkInteractiveInputHold('schedule_time_input', 8000)" onchange="titanMarkInteractiveInputHold('schedule_time_change', 8000); setScheduleTime('${type}', ${idx}, this.value, ${cardKeyJS})" class="native-input text-[13px] py-2.5 text-[var(--green)]">
                         <button onclick="openLedgerTargetPicker('${type}', ${idx}, ${cardKeyJS})" class="bg-[rgba(42,171,238,0.12)] border border-[rgba(42,171,238,0.25)] text-[var(--primary)] py-2.5 rounded-xl font-black text-[9px] uppercase active:scale-95"><i class="fab fa-whatsapp mr-1"></i> Targets</button>
                         <button onclick="clearCardTargets('${type}', ${idx}, ${cardKeyJS})" class="bg-[rgba(255,93,93,0.08)] border border-[rgba(255,93,93,0.18)] text-[var(--rose)] py-2.5 rounded-xl font-black text-[9px] uppercase active:scale-95"><i class="fas fa-trash mr-1"></i> Clear</button>
                     </div>
