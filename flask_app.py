@@ -7736,6 +7736,38 @@ HTML_TEMPLATE = """
             .native-card { border-radius: 14px; }
         }
 
+
+
+        /* ── MARKET MANAGER MOBILE COMPACT ── */
+        .market-manager-wrap { padding-left: 10px !important; padding-right: 10px !important; }
+        .market-quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .market-card-compact { padding: 12px !important; border-radius: 16px; }
+        .market-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+        .market-card-title { font-size: 12px; line-height: 1.15; }
+        .market-card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; min-width: 112px; }
+        .market-card-actions button { padding: 8px 7px; border-radius: 11px; font-size: 8px; line-height: 1; }
+        .market-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 8px; }
+        .market-field-grid .native-input, .market-chart-row .native-input { padding: 9px 8px; font-size: 10px; border-radius: 11px; }
+        .market-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; font-size: 8px; }
+        .market-toggle-grid label { padding: 8px 7px; border-radius: 11px; gap: 6px; }
+        .market-toggle-grid span { line-height: 1.1; }
+        .market-toggle-grid input[type=checkbox] { width: 16px; height: 16px; flex: 0 0 auto; }
+        .market-chart-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 7px; margin-top: 8px; }
+        .market-route-box { margin-top: 8px; padding: 10px !important; border-radius: 14px; }
+        .market-route-box p { line-height: 1.25; }
+        @media (max-width: 390px) {
+            .market-manager-wrap { padding-left: 8px !important; padding-right: 8px !important; }
+            .market-card-compact { padding: 10px !important; margin-bottom: 7px; }
+            .market-card-head { gap: 8px; margin-bottom: 8px; }
+            .market-card-title { font-size: 11px; }
+            .market-card-actions { min-width: 96px; gap: 5px; }
+            .market-card-actions button { padding: 7px 5px; font-size: 7.5px; }
+            .market-toggle-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+            .market-field-grid { gap: 6px; }
+            .market-chart-row { grid-template-columns: minmax(0, 1fr) 78px; gap: 6px; }
+        }
+
+
         /* ── LEDGER MOBILE COMPACT v43 ── */
         .ledger-compact { padding-left: 8px !important; padding-right: 8px !important; }
         .ledger-compact .native-card { margin-bottom: 6px; border-radius: 14px; }
@@ -12963,36 +12995,36 @@ TOTAL: 300</pre>
             const resultCount = marketItemsForPurpose('result').length;
             const card = item => {
                 const off = item.enabled === false || item.archived === true;
-                return `<div class="native-card p-4 mb-2 ${off ? 'opacity-70' : ''}">
-                    <div class="flex items-start justify-between gap-3 mb-3">
+                return `<div class="native-card market-card-compact mb-2 ${off ? 'opacity-70' : ''}">
+                    <div class="market-card-head">
                         <div class="min-w-0">
-                            <h3 class="text-white font-black text-[13px] uppercase truncate">${htmlEscape(item.displayName || item.name)}</h3>
+                            <h3 class="market-card-title text-white font-black uppercase truncate">${htmlEscape(item.displayName || item.name)}</h3>
                             <p class="text-[9px] text-[var(--text-muted)] mt-1 truncate">Website: ${htmlEscape(item.websiteName || item.name)}</p>
                             ${item.settingsLocked ? '<p class="text-[8px] text-[var(--green)] font-black uppercase mt-1"><i class="fas fa-lock mr-1"></i>Saved · Manual change only</p>' : ''}
                             <div class="flex gap-1 flex-wrap mt-2">${marketBadge(item.enabled !== false && !item.archived, 'ACTIVE', 'DISABLED')}${marketBadge(item.ledgerEnabled !== false, 'LEDGER', 'NO LEDGER')}${marketBadge(item.resultEnabled !== false, 'RESULTS', 'NO RESULTS')}${marketBadge(item.autoPassFailEnabled !== false, 'AUTO PF', 'NO PF')}${marketBadge(item.entryEnabled !== false, 'ENTRY', 'NO ENTRY')}</div>
                         </div>
-                        <div class="flex gap-2 shrink-0 flex-wrap justify-end">${off ? `<button onclick="restoreMarket('${attrEscape(item.id)}')" class="bg-[var(--green)] text-white px-3 py-2 rounded-xl font-black text-[9px] uppercase">Restore</button>` : `<button onclick="disableMarket('${attrEscape(item.id)}')" class="bg-[rgba(255,93,93,0.10)] text-[var(--rose)] border border-[rgba(255,93,93,0.22)] px-3 py-2 rounded-xl font-black text-[9px] uppercase">Disable</button>`}<button onclick="deleteMarket('${attrEscape(item.id)}')" class="bg-[rgba(255,93,93,0.14)] text-[var(--rose)] border border-[rgba(255,93,93,0.30)] px-3 py-2 rounded-xl font-black text-[9px] uppercase"><i class="fas fa-trash mr-1"></i>Delete</button></div>
+                        <div class="market-card-actions shrink-0">${off ? `<button onclick="restoreMarket('${attrEscape(item.id)}')" class="bg-[var(--green)] text-white px-3 py-2 rounded-xl font-black text-[9px] uppercase">Restore</button>` : `<button onclick="disableMarket('${attrEscape(item.id)}')" class="bg-[rgba(255,93,93,0.10)] text-[var(--rose)] border border-[rgba(255,93,93,0.22)] px-3 py-2 rounded-xl font-black text-[9px] uppercase">Disable</button>`}<button onclick="deleteMarket('${attrEscape(item.id)}')" class="bg-[rgba(255,93,93,0.14)] text-[var(--rose)] border border-[rgba(255,93,93,0.30)] px-3 py-2 rounded-xl font-black text-[9px] uppercase"><i class="fas fa-trash mr-1"></i>Delete</button></div>
                     </div>
-                    <div class="grid grid-cols-2 gap-2 mb-2">
+                    <div class="market-field-grid">
                         <div><label class="text-[8px] text-[var(--text-muted)] uppercase font-bold ml-1">App Name</label><input class="native-input py-2.5 text-[11px]" value="${attrEscape(item.displayName || item.name)}" onchange="updateMarketText('${attrEscape(item.id)}','displayName',this.value)"></div>
                         <div><label class="text-[8px] text-[var(--text-muted)] uppercase font-bold ml-1">Website Name</label><input class="native-input py-2.5 text-[11px]" value="${attrEscape(item.websiteName || item.name)}" onchange="updateMarketText('${attrEscape(item.id)}','websiteName',this.value)"></div>
                         <div><label class="text-[8px] text-[var(--text-muted)] uppercase font-bold ml-1">Open Time</label><input class="native-input py-2.5 text-[11px]" placeholder="HH:MM" value="${attrEscape((item.times||{}).open || '')}" onchange="updateMarketTime('${attrEscape(item.id)}','open',this.value)"></div>
                         <div><label class="text-[8px] text-[var(--text-muted)] uppercase font-bold ml-1">Close Time</label><input class="native-input py-2.5 text-[11px]" placeholder="HH:MM" value="${attrEscape((item.times||{}).close || '')}" onchange="updateMarketTime('${attrEscape(item.id)}','close',this.value)"></div>
                     </div>
-                    <div class="grid grid-cols-2 gap-2 text-[9px]">
+                    <div class="market-toggle-grid">
                         ${[['enabled','Active'],['ledgerEnabled','Ledger'],['resultEnabled','Results'],['autoPassFailEnabled','Auto P/F'],['scheduleEnabled','Schedule'],['entryEnabled','Entries'],['autoResultEnabled','Auto Result']].map(([key,label]) => `<label class="flex items-center justify-between gap-2 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl px-3 py-2"><span class="font-bold text-[var(--text-muted)] uppercase">${label}</span><input type="checkbox" ${item[key]!==false?'checked':''} onchange="setMarketItemFlag('${attrEscape(item.id)}','${key}',this.checked)"></label>`).join('')}
                         <label class="flex items-center justify-between gap-2 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl px-3 py-2"><span class="font-bold text-[var(--text-muted)] uppercase">Open Stage</span><input type="checkbox" ${(item.stages||{}).open!==false?'checked':''} onchange="setMarketStageFlag('${attrEscape(item.id)}','open',this.checked)"></label>
                         <label class="flex items-center justify-between gap-2 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl px-3 py-2"><span class="font-bold text-[var(--text-muted)] uppercase">Close Stage</span><input type="checkbox" ${(item.stages||{}).close!==false?'checked':''} onchange="setMarketStageFlag('${attrEscape(item.id)}','close',this.checked)"></label>
                     </div>
-                    <div class="grid grid-cols-2 gap-2 mt-2"><input class="native-input py-2.5 text-[10px]" placeholder="Chart URL" value="${attrEscape(item.chartUrl || '')}" onchange="updateMarketText('${attrEscape(item.id)}','chartUrl',this.value)"><button onclick="archiveMarket('${attrEscape(item.id)}')" class="bg-[var(--surface-light)] text-[var(--text-muted)] border border-[var(--border)] rounded-xl font-black text-[9px] uppercase">Archive</button></div><div class="mt-2 bg-[rgba(42,171,238,0.06)] border border-[rgba(42,171,238,0.16)] rounded-xl p-3"><div class="flex items-center justify-between gap-2 mb-2"><div><div class="text-[9px] font-black uppercase text-[var(--primary)]"><i class="fab fa-whatsapp mr-1"></i>WhatsApp Role Routing</div><p class="text-[8px] text-[var(--text-muted)] mt-0.5">Ledger schedule, game entry, results, forward/load sab alag target me set karo. Blank = old/global behavior.</p></div></div><div class="grid grid-cols-1 gap-2">${roleTargetRow(item,'schedule','fa-clock','Intel/ledger schedule kis group me jayega')}${roleTargetRow(item,'entry','fa-gamepad','User game entry sirf is group/private se accept hogi')}${roleTargetRow(item,'result','fa-trophy','Result declaration kis group me jayega')}${roleTargetRow(item,'forward','fa-share-nodes','Load/forward report kis group me jayega')}${roleTargetRow(item,'bookie','fa-user-shield','Bookie/admin work, alerts aur management kis group me rahega')}</div></div>
+                    <div class="market-chart-row"><input class="native-input" placeholder="Chart URL" value="${attrEscape(item.chartUrl || '')}" onchange="updateMarketText('${attrEscape(item.id)}','chartUrl',this.value)"><button onclick="archiveMarket('${attrEscape(item.id)}')" class="bg-[var(--surface-light)] text-[var(--text-muted)] border border-[var(--border)] rounded-xl font-black text-[9px] uppercase">Archive</button></div><div class="market-route-box bg-[rgba(42,171,238,0.06)] border border-[rgba(42,171,238,0.16)]"><div class="flex items-center justify-between gap-2 mb-2"><div><div class="text-[9px] font-black uppercase text-[var(--primary)]"><i class="fab fa-whatsapp mr-1"></i>WhatsApp Role Routing</div><p class="text-[8px] text-[var(--text-muted)] mt-0.5">Ledger schedule, game entry, results, forward/load sab alag target me set karo. Blank = old/global behavior.</p></div></div><div class="grid grid-cols-1 gap-2">${roleTargetRow(item,'schedule','fa-clock','Intel/ledger schedule kis group me jayega')}${roleTargetRow(item,'entry','fa-gamepad','User game entry sirf is group/private se accept hogi')}${roleTargetRow(item,'result','fa-trophy','Result declaration kis group me jayega')}${roleTargetRow(item,'forward','fa-share-nodes','Load/forward report kis group me jayega')}${roleTargetRow(item,'bookie','fa-user-shield','Bookie/admin work, alerts aur management kis group me rahega')}</div></div>
                 </div>`;
             };
-            return `<div class="px-3 py-4">
+            return `<div class="market-manager-wrap px-3 py-4">
                 ${renderMarketProtocolControls()}
                 <p class="sec-header">Market Manager</p>
                 <div class="native-card p-4 mb-3" style="border-color:rgba(42,171,238,0.24);background:rgba(42,171,238,0.04)">
                     <div class="flex items-start gap-3 mb-3"><div class="w-10 h-10 rounded-xl bg-[rgba(42,171,238,0.15)] text-[var(--primary)] flex items-center justify-center"><i class="fas fa-store"></i></div><div><h3 class="text-white font-black text-[14px]">Single Market Visibility Registry</h3><p class="text-[9px] text-[var(--text-muted)] leading-relaxed">Market ON/OFF, Ledger/Results/Auto PF/Schedule visibility sirf yahin se control hoga. Protocol section me duplicate market visibility nahi rahegi.</p></div></div>
-                    <div class="grid grid-cols-4 gap-2"><div class="stat-box"><p class="stat-lbl">Active</p><p class="stat-val">${activeCount}</p></div><div class="stat-box"><p class="stat-lbl">Ledger</p><p class="stat-val">${ledgerCount}</p></div><div class="stat-box"><p class="stat-lbl">Results</p><p class="stat-val">${resultCount}</p></div><div class="stat-box"><p class="stat-lbl">Deleted</p><p class="stat-val text-[var(--rose)]">${deletedCount}</p></div></div>
+                    <div class="market-quick-grid"><div class="stat-box"><p class="stat-lbl">Active</p><p class="stat-val">${activeCount}</p></div><div class="stat-box"><p class="stat-lbl">Ledger</p><p class="stat-val">${ledgerCount}</p></div><div class="stat-box"><p class="stat-lbl">Results</p><p class="stat-val">${resultCount}</p></div><div class="stat-box"><p class="stat-lbl">Deleted</p><p class="stat-val text-[var(--rose)]">${deletedCount}</p></div></div>
                     <div class="grid grid-cols-2 gap-2 mt-3"><button onclick="saveMarketRegistry()" class="bg-[var(--green)] text-white py-3 rounded-xl font-black text-[10px] uppercase"><i class="fas fa-save mr-1"></i>Save Registry</button><button onclick="reloadMarketRegistry()" class="bg-[var(--surface-light)] text-white border border-[var(--border)] py-3 rounded-xl font-black text-[10px] uppercase"><i class="fas fa-rotate mr-1"></i>Reload</button></div>
                 </div>
                 <div class="native-card p-4 mb-3" style="border-color:rgba(250,199,72,0.24);background:rgba(250,199,72,0.04)">
