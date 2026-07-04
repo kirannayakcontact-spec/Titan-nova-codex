@@ -11358,11 +11358,13 @@ TOTAL: 300</pre>
             let res = [];
             if (trickNum === 1) { res = [digits[1], digits[3], digits[5], digits[7], digits[9]]; }
             else if (trickNum === 2) { res = [digits[0], digits[2], digits[4], digits[6], digits[8]]; }
-            // Trick indexes are user-facing positions: 1-9 are first-to-ninth, 0 means the 10th digit.
-            else if (trickNum === 3) { res = digits.filter((_, idx) => ![0, 3, 6, 9].includes(idx)); }
-            else if (trickNum === 4) { res = digits.filter((_, idx) => ![1, 4, 5, 8].includes(idx)); }
-            else if (trickNum === 3) { res = digits.filter((_, idx) => ![1, 4, 7, 0].includes(idx)); }
-            else if (trickNum === 4) { res = digits.filter((_, idx) => ![2, 5, 6, 9].includes(idx)); }
+            else if (trickNum === 3 || trickNum === 4) {
+                // T3/T4 ka rule digit-box ki visible positions par cut karta hai.
+                // User-facing index 1-10 ko JS zero-based index 0-9 me map karke:
+                // T3 cuts positions 1, 4, 7, 10; T4 cuts positions 2, 5, 6, 9.
+                const cutIndexes = trickNum === 3 ? [0, 3, 6, 9] : [1, 4, 5, 8];
+                res = digits.filter((_, idx) => !cutIndexes.includes(idx));
+            }
             const formatted = res.join(', ');
 
             op.rec.d = formatted;
