@@ -1482,6 +1482,7 @@ balance / wallet status
 profile
 history / entries
 payment status
+deposit / pay 500
 withdraw status
 summary
 
@@ -1946,6 +1947,7 @@ const SMART_COMMAND_ALIASES = {
   profile: ["profile", "my profile", "account", "my account", "/profile", "/account"],
   entries: ["history", "my history", "entries", "my entries", "entry history", "last entries", "/history", "/entries"],
   payments: ["payment status", "payments", "my payments", "deposit status", "pay status", "/payments", "/payment_status"],
+  deposit: ["deposit", "payment", "pay", "add money", "recharge", "wallet recharge", "upi", "qr", "/deposit", "/pay", "/recharge"],
   wallet: ["wallet status", "my wallet", "/wallet"],
   withdrawal_status: ["withdraw history", "withdrawal history", "my withdrawals", "/withdrawals", "/withdraw_status"],
   summary: ["summary", "my summary", "today summary", "today", "/summary", "/today"]
@@ -1959,6 +1961,7 @@ function smartUserCommandName(text){
   for(const [name, aliases] of Object.entries(SMART_COMMAND_ALIASES)){
     if(aliases.includes(t)) return name;
   }
+  if(/^(?:deposit|payment|pay|add money|recharge|wallet recharge|upi|qr)(?:\s+(?:rs\.?|inr|₹)?\s*[0-9]+(?:\.[0-9]+)?)?$/i.test(t)) return "deposit";
   return "";
 }
 function smartCommandList(){
@@ -2001,6 +2004,84 @@ function paymentStatusTextSmart(state, userId){
   });
   return `💳 *PAYMENT STATUS*\n━━━━━━━━━━━━━━━━━━━━\n${lines.join("\n")}\n━━━━━━━━━━━━━━━━━━━━\nLatest 5 payments shown.`;
 }
+
+function parseDepositAmount(text){
+  const t = normalizeCommandText(text);
+  const m = t.match(/(?:^|\s)(?:rs\.?|inr|₹)?\s*([0-9]+(?:\.[0-9]+)?)(?:\s|$)/i);
+  if(!m) return 0;
+  const amount = Math.round(Number(m[1] || 0) * 100) / 100;
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+function paymentUpiLink(upi, name, amount, note){
+  const pa = encodeURIComponent(String(upi || '').trim());
+  if(!pa) return '';
+  const pn = encodeURIComponent(String(name || 'TITAN NOVA').trim() || 'TITAN NOVA');
+  const tn = encodeURIComponent(String(note || 'TITAN NOVA DEPOSIT').trim());
+  const am = amount > 0 ? `&am=${encodeURIComponent(String(amount))}` : '';
+  return `upi://pay?pa=${pa}&pn=${pn}${am}&cu=INR&tn=${tn}`;
+}
+function depositInstructionsText(state, userId, amount = 0){
+  const pm = state?.paymentMethods || {};
+  const name = pm.name || 'TITAN NOVA';
+  const upiList = [
+    ['Default UPI', pm.upi],
+    ['PhonePe', pm.phonepeUpi],
+    ['GPay', pm.gpayUpi],
+    ['Paytm', pm.paytmUpi]
+  ].filter(([,v], idx, arr) => v && arr.findIndex(([,x]) => String(x).trim().toLowerCase() === String(v).trim().toLowerCase()) === idx);
+  const lines = [];
+  lines.push('💳 *DEPOSIT / ADD MONEY*');
+  lines.push('━━━━━━━━━━━━━━━━━━━━');
+  if(amount > 0) lines.push(`💵 *Amount:* ${money(amount)}`);
+  lines.push(`👤 *Receiver:* ${name}`);
+  if(pm.phone) lines.push(`📱 *Phone:* ${pm.phone}`);
+  if(upiList.length){
+    lines.push('');
+    lines.push('🏦 *UPI Details:*');
+    for(const [label, upi] of upiList) lines.push(`• *${label}:* ${upi}`);
+    const link = paymentUpiLink(upiList[0][1], name, amount, `TITAN NOVA ${userId || 'USER'} DEPOSIT`);
+    if(link) lines.push(`\n🔗 *Direct UPI Link:*\n${link}`);
+  } else {
+    lines.push('⚠️ Admin ne UPI setup nahi kiya hai. Thodi der baad try karein.');
+  }
+  lines.push('');
+  lines.push('📷 QR image bhi yahin bheja ja raha hai agar admin ne upload kiya hai.');
+  lines.push('✅ Payment ke baad screenshot/UTR app me submit karein ya yahan bhejein: *payment status* se status check hoga.');
+  return lines.join('\n');
+}
+async function replyDepositInstructions(chatJid, state, userId, amount, quoted){
+  const text = depositInstructionsText(state, userId, amount);
+  const pm = state?.paymentMethods || {};
+  const qr = String(pm.qr || '').trim();
+  if(!sock || !connected || !chatJid) return null;
+  if(qr){
+    return safeSendQueueRun(async () => {
+      try{
+        await sendChatPresence(chatJid, 'composing');
+        await guardSleep(350);
+        let image = null;
+        if(/^data:image\//i.test(qr)){
+          const b64 = qr.split(',')[1] || '';
+          image = Buffer.from(b64, 'base64');
+        } else if(/^https?:\/\//i.test(qr)){
+          image = { url: qr };
+        }
+        if(image){
+          const out = await sock.sendMessage(chatJid, { image, caption:text }, quoted ? { quoted } : undefined);
+          await sendChatPresence(chatJid, 'paused');
+          return out;
+        }
+      }catch(e){ console.log('Deposit QR send failed:', e.message); }
+      try{
+        const out = await sock.sendMessage(chatJid, { text:String(text) }, quoted ? { quoted } : undefined);
+        await sendChatPresence(chatJid, 'paused');
+        return out;
+      }catch(e){ console.log('Deposit text fallback failed:', e.message); return null; }
+    });
+  }
+  return replyToMessage(chatJid, text, quoted);
+}
+
 function withdrawalsHistoryText(state, userId){
   const rows = (Array.isArray(state?.withdrawals) ? state.withdrawals : []).filter(w => w && w.userId === userId).slice(-5).reverse();
   if(!rows.length) return "🧾 *WITHDRAWAL HISTORY*\n━━━━━━━━━━━━━━━━━━━━\nAbhi koi withdrawal request nahi mili.";
@@ -2041,6 +2122,7 @@ async function handleSmartUserCommandMessage(m){
     if(cmd === "profile") text = profileSmartText(profile, wallet, found.userId, found);
     else if(cmd === "entries") text = entriesHistoryText(state, found.userId);
     else if(cmd === "payments") text = paymentStatusTextSmart(state, found.userId);
+    else if(cmd === "deposit"){ await replyDepositInstructions(chatJid, state, found.userId, parseDepositAmount(getMessageText(m)), m); return true; }
     else if(cmd === "wallet") text = walletBalanceText(profile, wallet);
     else if(cmd === "withdrawal_status") text = withdrawalsHistoryText(state, found.userId);
     else text = userSummaryText(state, found.userId, profile, wallet);
