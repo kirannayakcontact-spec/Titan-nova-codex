@@ -943,20 +943,55 @@ function canonicalJodiMarket(v, state=null){
   const found = arr.find(m => compactEntryMarket(m.n) === target);
   return found ? found.n : "";
 }
-function parseEntryCard(text, state=null){
-  const raw = String(text || "").replace(/\r/g, "\n");
-  if(!/\bMARKET\s*:/i.test(raw) || !/\bDIGITS?\s*:/i.test(raw)) return { ok:false, silent:true, reason:"not_entry_card" };
+const DEFAULT_ENTRY_FORMAT_TEMPLATE = "MARKET:{market} TYPE:{type} DIGITS:{digits} PAR DIGIT:{parDigit} TOTAL:{total}";
+const ENTRY_FORMAT_PLACEHOLDERS = ["market", "type", "digits", "parDigit", "total"];
+function escapeEntryRegexLiteral(v){ return String(v || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"); }
+function entryFormatTemplate(state=null){
+  const tpl = state?.entrySettings?.entryFormatTemplate;
+  return String(tpl || DEFAULT_ENTRY_FORMAT_TEMPLATE).trim() || DEFAULT_ENTRY_FORMAT_TEMPLATE;
+}
+function parseEntryFieldsByTemplate(raw, template){
+  const parts = String(template || "").split(/(\{(?:market|type|digits|parDigit|total)\})/g).filter(x => x !== "");
+  const seen = new Set();
+  let pattern = "^\\s*";
+  for(let i=0; i<parts.length; i++){
+    const m = /^\{(.+)\}$/.exec(parts[i]);
+    if(m){
+      const name = m[1];
+      if(seen.has(name)) return null;
+      seen.add(name);
+      pattern += `(?<${name}>[\\s\\S]+?)`;
+    }else{
+      pattern += escapeEntryRegexLiteral(parts[i]);
+    }
+  }
+  pattern += "\\s*$";
+  if(ENTRY_FORMAT_PLACEHOLDERS.some(k => !seen.has(k))) return null;
+  const match = new RegExp(pattern, "i").exec(String(raw || ""));
+  if(!match || !match.groups) return null;
   const fields = {};
-  for(const line of raw.split(/\n+/)){
-    const idx = line.indexOf(":");
-    if(idx < 0) continue;
-    const key = line.slice(0, idx).trim().toUpperCase().replace(/\s+/g, " ");
-    const val = line.slice(idx + 1).trim();
-    if(["MARKET"].includes(key)) fields.market = val;
-    else if(["TYPE", "GAME", "GAME TYPE"].includes(key)) fields.type = val;
-    else if(["DIGITS", "DIGIT"].includes(key)) fields.digits = val;
-    else if(["PAR DIGIT", "PER DIGIT", "RATE", "PAR", "AMOUNT"].includes(key)) fields.parDigit = val;
-    else if(["TOTAL", "TOTAL AMOUNT"].includes(key)) fields.total = val;
+  ENTRY_FORMAT_PLACEHOLDERS.forEach(k => { fields[k] = String(match.groups[k] || "").trim(); });
+  return fields;
+}
+function parseEntryCard(text, state=null){
+  const raw = String(text || "").replace(/\r/g, "\n").trim();
+  const template = entryFormatTemplate(state);
+  let fields = parseEntryFieldsByTemplate(raw, template);
+  if(!fields && template !== DEFAULT_ENTRY_FORMAT_TEMPLATE) fields = parseEntryFieldsByTemplate(raw, DEFAULT_ENTRY_FORMAT_TEMPLATE);
+  if(!fields) {
+    if(!/\bMARKET\s*:/i.test(raw) && !/\bDIGITS?\s*:/i.test(raw)) return { ok:false, silent:true, reason:"not_entry_card" };
+    fields = {};
+    for(const line of raw.split(/\n+/)){
+      const idx = line.indexOf(":");
+      if(idx < 0) continue;
+      const key = line.slice(0, idx).trim().toUpperCase().replace(/\s+/g, " ");
+      const val = line.slice(idx + 1).trim();
+      if(["MARKET"].includes(key)) fields.market = val;
+      else if(["TYPE", "GAME", "GAME TYPE"].includes(key)) fields.type = val;
+      else if(["DIGITS", "DIGIT"].includes(key)) fields.digits = val;
+      else if(["PAR DIGIT", "PER DIGIT", "RATE", "PAR", "AMOUNT"].includes(key)) fields.parDigit = val;
+      else if(["TOTAL", "TOTAL AMOUNT"].includes(key)) fields.total = val;
+    }
   }
   const missing = [];
   for(const k of ["market", "type", "digits", "parDigit", "total"]) if(!fields[k]) missing.push(k);
@@ -1002,7 +1037,8 @@ function entrySettings(state){
     requireProfileApproval: s.requireProfileApproval !== false,
     marketTargets: (s.marketTargets && typeof s.marketTargets === 'object') ? s.marketTargets : {},
     marketEntryEnabled: (s.marketEntryEnabled && typeof s.marketEntryEnabled === 'object') ? s.marketEntryEnabled : {},
-    allowUnmappedMarkets: s.allowUnmappedMarkets !== false
+    allowUnmappedMarkets: s.allowUnmappedMarkets !== false,
+    entryFormatTemplate: entryFormatTemplate(state)
   };
 }
 
