@@ -70,6 +70,9 @@ const gatewayObservabilityEvents = [];
 const gatewayObservabilityCounters = {info:0, warning:0, error:0, critical:0};
 const TITAN_GATEWAY_TOKEN = String(process.env.TITAN_GATEWAY_TOKEN || process.env.TITAN_ADMIN_TOKEN || "").trim();
 const TITAN_GATEWAY_AUTH_DISABLED = ["1","true","yes","on"].includes(String(process.env.TITAN_GATEWAY_AUTH_DISABLED || "0").toLowerCase());
+const TITAN_ENV = String(process.env.TITAN_ENV || process.env.NODE_ENV || "").trim().toLowerCase();
+const TITAN_PRODUCTION_MODE = ["prod","production"].includes(TITAN_ENV);
+const TITAN_GATEWAY_SECURITY_MISCONFIGURED = TITAN_PRODUCTION_MODE && (!TITAN_GATEWAY_TOKEN || TITAN_GATEWAY_AUTH_DISABLED);
 const TITAN_GATEWAY_AUTH_ENFORCED = !!TITAN_GATEWAY_TOKEN && !TITAN_GATEWAY_AUTH_DISABLED;
 // Auto result scraper: set RESULT_SCRAPE_ENABLED=0 to disable.
 // RESULT_SCRAPE_URLS can be comma-separated fallback live result pages.
@@ -4823,64 +4826,73 @@ async function startWhatsApp(){
   if(whatsappStartInProgress) return;
   whatsappStartInProgress = true;
   try {
-    if(!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive:true });
-  } catch(e) {}
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
-  sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    browser: Browsers.ubuntu("TitanNova"),
-    logger: pino({ level: "silent" })
-  });
-  whatsappStartInProgress = false;
-  sock.ev.on("creds.update", saveCreds);
-  sock.ev.on("connection.update", async (u) => {
-    const { connection, lastDisconnect, qr } = u;
-    if(qr){ lastQR = qr; lastQRAt = new Date().toISOString(); gatewayHealth.lastWhatsAppEvent = "qr"; gatewayObsEvent("whatsapp_qr_ready", "warning", "WhatsApp QR ready for login", {at:lastQRAt}); qrcode.generate(qr, {small:true}); console.log("📲 Scan QR in WhatsApp > Linked devices"); }
-    if(connection === "open") { connected = true; lastQR = ""; lastQRAt = ""; gatewayHealth.lastWhatsAppEvent = "open"; gatewayObsEvent("whatsapp_connected", "info", "WhatsApp connected", {user:sock?.user || null}); console.log("WhatsApp connected"); await syncTargets(); }
-    if(connection === "close") {
-      connected = false;
-      gatewayHealth.lastWhatsAppEvent = "close";
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      gatewayHealth.lastDisconnectCode = String(statusCode || "");
-      const loggedOut = statusCode === DisconnectReason.loggedOut;
-      gatewayObsEvent("whatsapp_disconnected", loggedOut ? "error" : "warning", "WhatsApp disconnected", {statusCode, loggedOut});
-      console.log("WhatsApp disconnected", statusCode || "");
-      if(!loggedOut) setTimeout(() => startWhatsApp().catch(e => console.error("WA reconnect error", e.message || e)), 3000);
-      else {
-        console.log("Logged out. Auto-clearing auth_info_baileys and generating fresh QR...");
-        await restartWhatsAppFresh("logged_out_auto_reset");
+    try {
+      if(!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive:true });
+    } catch(e) {}
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { version } = await fetchLatestBaileysVersion();
+    sock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      browser: Browsers.ubuntu("TitanNova"),
+      logger: pino({ level: "silent" })
+    });
+    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("connection.update", async (u) => {
+      const { connection, lastDisconnect, qr } = u;
+      if(qr){ lastQR = qr; lastQRAt = new Date().toISOString(); gatewayHealth.lastWhatsAppEvent = "qr"; gatewayObsEvent("whatsapp_qr_ready", "warning", "WhatsApp QR ready for login", {at:lastQRAt}); qrcode.generate(qr, {small:true}); console.log("📲 Scan QR in WhatsApp > Linked devices"); }
+      if(connection === "open") { connected = true; lastQR = ""; lastQRAt = ""; gatewayHealth.lastWhatsAppEvent = "open"; gatewayObsEvent("whatsapp_connected", "info", "WhatsApp connected", {user:sock?.user || null}); console.log("WhatsApp connected"); await syncTargets(); }
+      if(connection === "close") {
+        connected = false;
+        gatewayHealth.lastWhatsAppEvent = "close";
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        gatewayHealth.lastDisconnectCode = String(statusCode || "");
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+        gatewayObsEvent("whatsapp_disconnected", loggedOut ? "error" : "warning", "WhatsApp disconnected", {statusCode, loggedOut});
+        console.log("WhatsApp disconnected", statusCode || "");
+        if(!loggedOut) setTimeout(() => startWhatsApp().catch(e => console.error("WA reconnect error", e.message || e)), 3000);
+        else {
+          console.log("Logged out. Auto-clearing auth_info_baileys and generating fresh QR...");
+          await restartWhatsAppFresh("logged_out_auto_reset");
+        }
       }
-    }
-  });
-  sock.ev.on("groups.update", () => syncTargets().catch(()=>{}));
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    for(const m of (messages || [])) {
-      try {
-        const remote = _jidKey(m?.key?.remoteJid || "");
-        const participant = _jidKey(m?.key?.participant || "");
-        const displayName = m?.pushName || m?.verifiedBizName || "";
-        if(remote.endsWith("@s.whatsapp.net")) rememberPrivateTarget(remote, displayName || remote);
-        if(participant.endsWith("@s.whatsapp.net")) rememberPrivateTarget(participant, displayName || participant);
-      } catch(e) {}
-      if(!m?.message || m.key?.fromMe) continue;
-      if(!rememberIncomingMessage(m)) continue;
-      const complianceHandled = await handleWhatsappComplianceCommandMessage(m);
-      if(complianceHandled) continue;
-      const commandHandled = await handleBotCommandMessage(m);
-      if(commandHandled) continue;
-      const smartCommandHandled = await handleSmartUserCommandMessage(m);
-      if(smartCommandHandled) continue;
-      const stopped = await handleSpamGuardMessage(m);
-      if(!stopped){
-        const withdrawalHandled = await handleIncomingWithdrawalMessage(m);
-        if(!withdrawalHandled) await handleIncomingEntryMessage(m);
+    });
+    sock.ev.on("groups.update", () => syncTargets().catch(()=>{}));
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+      for(const m of (messages || [])) {
+        try {
+          const remote = _jidKey(m?.key?.remoteJid || "");
+          const participant = _jidKey(m?.key?.participant || "");
+          const displayName = m?.pushName || m?.verifiedBizName || "";
+          if(remote.endsWith("@s.whatsapp.net")) rememberPrivateTarget(remote, displayName || remote);
+          if(participant.endsWith("@s.whatsapp.net")) rememberPrivateTarget(participant, displayName || participant);
+        } catch(e) {}
+        if(!m?.message || m.key?.fromMe) continue;
+        if(!rememberIncomingMessage(m)) continue;
+        const complianceHandled = await handleWhatsappComplianceCommandMessage(m);
+        if(complianceHandled) continue;
+        const commandHandled = await handleBotCommandMessage(m);
+        if(commandHandled) continue;
+        const smartCommandHandled = await handleSmartUserCommandMessage(m);
+        if(smartCommandHandled) continue;
+        const stopped = await handleSpamGuardMessage(m);
+        if(!stopped){
+          const withdrawalHandled = await handleIncomingWithdrawalMessage(m);
+          if(!withdrawalHandled) await handleIncomingEntryMessage(m);
+        }
       }
-    }
-    saveProcessedMessageCache();
-  });
+      saveProcessedMessageCache();
+    });
+  } catch(e) {
+    gatewayHealth.lastWhatsAppEvent = "start_error";
+    gatewayHealth.lastObservedErrorAt = nowIsoSafe();
+    gatewayHealth.lastObservedError = {time:gatewayHealth.lastObservedErrorAt, message:String(e.message || e).slice(0,300), kind:"whatsapp_start_error"};
+    gatewayObsError("whatsapp_start_error", e, {authDir:AUTH_DIR});
+    throw e;
+  } finally {
+    whatsappStartInProgress = false;
+  }
 }
 
 function constantTimeTokenOk(a, b){
@@ -4902,6 +4914,14 @@ function requestAuthToken(req){
   return String(token || "").trim();
 }
 function gatewayAuthMiddleware(req, res, next){
+  if(TITAN_GATEWAY_SECURITY_MISCONFIGURED && !(req.method === "GET" && req.path === "/health")){
+    return res.status(503).json({
+      status:"security_misconfigured",
+      message:"Production mode requires TITAN_GATEWAY_TOKEN/TITAN_ADMIN_TOKEN and enabled Gateway auth.",
+      securityLockdown:true,
+      version:SECURITY_LOCKDOWN_VERSION
+    });
+  }
   if(!TITAN_GATEWAY_AUTH_ENFORCED) return next();
   // Keep a tiny health surface available for local uptime checks; all control/data endpoints are locked.
   if(req.method === "GET" && req.path === "/health") return next();
@@ -5499,14 +5519,92 @@ app.get('/realtime_sync_status', gatewayAuthMiddleware, async (req,res)=>{
   });
 });
 
+function pruneTextFileByLines(filePath, maxLines){
+  try{
+    if(!fs.existsSync(filePath)) return 0;
+    const lines = fs.readFileSync(filePath, "utf8").split(/\n/);
+    if(lines.length <= maxLines) return lines.length;
+    fs.writeFileSync(filePath, lines.slice(-maxLines).join("\n"));
+    return maxLines;
+  }catch(e){
+    gatewayObsError("local_text_prune_error", e, {file:redactConfigValue(filePath, 34)});
+    return 0;
+  }
+}
+
+function pruneJsonFileEntries(filePath, maxEntries){
+  try{
+    if(!fs.existsSync(filePath)) return 0;
+    const obj = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if(Array.isArray(obj)){
+      if(obj.length > maxEntries) fs.writeFileSync(filePath, JSON.stringify(obj.slice(-maxEntries), null, 2));
+      return Math.min(obj.length, maxEntries);
+    }
+    if(obj && typeof obj === "object"){
+      const root = obj.items && typeof obj.items === "object" ? obj.items : obj;
+      const entries = Object.entries(root);
+      if(entries.length > maxEntries){
+        const trimmed = Object.fromEntries(entries.slice(-maxEntries));
+        if(obj.items && typeof obj.items === "object") obj.items = trimmed;
+        else {
+          for(const key of Object.keys(obj)) delete obj[key];
+          Object.assign(obj, trimmed);
+        }
+        fs.writeFileSync(filePath, JSON.stringify(obj, null, 2));
+      }
+      return Math.min(entries.length, maxEntries);
+    }
+  }catch(e){
+    gatewayObsError("local_json_prune_error", e, {file:redactConfigValue(filePath, 34)});
+  }
+  return 0;
+}
+
+function runLocalRetentionCleanup(){
+  const summary = {
+    observability: pruneTextFileByLines(OBSERVABILITY_LOG_FILE, OBSERVABILITY_MAX_FILE_LINES),
+    sentLog: pruneJsonFileEntries(SENT_LOG_FILE, 2500),
+    processedMessages: pruneJsonFileEntries(PROCESSED_MESSAGE_CACHE_FILE, 2500),
+    reliability: pruneJsonFileEntries(WHATSAPP_RELIABILITY_FILE, 1500),
+    scrapeConfirm: pruneJsonFileEntries(SCRAPE_CONFIRM_FILE, 1000),
+    liveResultState: pruneJsonFileEntries(LIVE_RESULT_STATE_FILE, 1000),
+    spamGuard: pruneJsonFileEntries(SPAM_GUARD_STATE_FILE, 1500),
+    whatsappSafety: pruneJsonFileEntries(WHATSAPP_SAFETY_STATE_FILE, 1500)
+  };
+  gatewayObsEvent("local_retention_cleanup", "info", "Gateway local retention cleanup completed", summary);
+  return summary;
+}
+
+function managedInterval(name, fn, ms){
+  let running = false;
+  return setInterval(async () => {
+    if(running){
+      gatewayObsEvent("managed_interval_skip", "warning", `${name} skipped because previous run is still active`, {name, intervalMs:ms});
+      return;
+    }
+    running = true;
+    try { await fn(); }
+    catch(e){ gatewayObsError(`${name}_interval_error`, e, {name}); }
+    finally { running = false; }
+  }, ms);
+}
+
+function managedTimeout(name, fn, delayMs){
+  return setTimeout(() => Promise.resolve()
+    .then(fn)
+    .catch(e => gatewayObsError(`${name}_timeout_error`, e, {name, delayMs})), delayMs);
+}
+
 app.listen(PORT, HOST, () => { console.log(`🚀 Titan Gateway running: http://${HOST}:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {host:HOST, port:PORT, timezone:APP_TZ}); });
 startWhatsApp().catch(e => console.error("WA start error", e));
-setInterval(scheduleTick, TITAN_SCHEDULE_POLL_MS);
-setInterval(resultTick, TITAN_RESULT_POLL_MS);
-setInterval(resultScrapeTick, RESULT_SCRAPE_INTERVAL_MS);
-setInterval(paymentOutboxTick, TITAN_PAYMENT_OUTBOX_POLL_MS);
-setInterval(loadForwarderTick, TITAN_LOAD_FORWARDER_POLL_MS);
-setTimeout(()=>resultScrapeTick().catch(()=>{}), 2000);
-setTimeout(()=>paymentOutboxTick().catch(()=>{}), 5000);
-setTimeout(()=>loadForwarderTick().catch(()=>{}), 7000);
-setInterval(()=>syncTargets().catch(()=>{}), 10*60*1000);
+managedInterval("schedule_tick", scheduleTick, TITAN_SCHEDULE_POLL_MS);
+managedInterval("result_tick", resultTick, TITAN_RESULT_POLL_MS);
+managedInterval("result_scrape_tick", resultScrapeTick, RESULT_SCRAPE_INTERVAL_MS);
+managedInterval("payment_outbox_tick", paymentOutboxTick, TITAN_PAYMENT_OUTBOX_POLL_MS);
+managedInterval("load_forwarder_tick", loadForwarderTick, TITAN_LOAD_FORWARDER_POLL_MS);
+managedTimeout("result_scrape_bootstrap", resultScrapeTick, 2000);
+managedTimeout("payment_outbox_bootstrap", paymentOutboxTick, 5000);
+managedTimeout("load_forwarder_bootstrap", loadForwarderTick, 7000);
+managedInterval("target_sync", () => syncTargets(), 10*60*1000);
+managedInterval("local_retention_cleanup", () => runLocalRetentionCleanup(), 60*60*1000);
+managedTimeout("local_retention_cleanup_bootstrap", () => runLocalRetentionCleanup(), 15000);

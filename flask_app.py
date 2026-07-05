@@ -67,6 +67,9 @@ TITAN_VIP_ACCESS_LOG_THROTTLE_SECONDS = int(os.environ.get("TITAN_VIP_ACCESS_LOG
 TITAN_ADMIN_TOKEN = os.environ.get("TITAN_ADMIN_TOKEN", "").strip()
 TITAN_GATEWAY_TOKEN = os.environ.get("TITAN_GATEWAY_TOKEN", TITAN_ADMIN_TOKEN).strip()
 TITAN_SECURITY_DISABLED = str(os.environ.get("TITAN_SECURITY_DISABLED", "0")).strip().lower() in ("1", "true", "yes", "on")
+TITAN_ENV = str(os.environ.get("TITAN_ENV", os.environ.get("FLASK_ENV", ""))).strip().lower()
+TITAN_PRODUCTION_MODE = TITAN_ENV in ("prod", "production")
+TITAN_SECURITY_MISCONFIGURED = TITAN_PRODUCTION_MODE and (not TITAN_ADMIN_TOKEN or TITAN_SECURITY_DISABLED)
 TITAN_SECURITY_STRICT = bool(TITAN_ADMIN_TOKEN) and not TITAN_SECURITY_DISABLED
 TITAN_COOKIE_SECURE = str(os.environ.get("TITAN_COOKIE_SECURE", "0")).strip().lower() in ("1", "true", "yes", "on")
 TITAN_ALLOW_QUERY_TOKEN = str(os.environ.get("TITAN_ALLOW_QUERY_TOKEN", "0")).strip().lower() in ("1", "true", "yes", "on")
@@ -76,7 +79,7 @@ FIREBASE_LAST_LOAD_META = {"status": "unchecked", "message": "not loaded yet"}
 def titan_no_store_realtime_api(resp):
     try:
         p = request.path or ""
-        if p == "/api/state" or p == "/save" or p.startswith("/api/ledger_") or p.startswith("/api/market_"):
+        if p.startswith("/api/") or p == "/save" or p == "/bot_schedule":
             resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"
@@ -258,6 +261,13 @@ def _security_lockdown_before_request():
     if request.method == "OPTIONS":
         return None
     path = request.path or "/"
+    if TITAN_SECURITY_MISCONFIGURED and path not in PUBLIC_SECURITY_PATHS:
+        return jsonify({
+            "status": "security_misconfigured",
+            "message": "Production mode requires TITAN_ADMIN_TOKEN and enabled security.",
+            "securityLockdown": True,
+            "version": SECURITY_LOCKDOWN_VERSION
+        }), 503
     if path in PUBLIC_SECURITY_PATHS or path.startswith('/static/'):
         return None
     if not TITAN_SECURITY_STRICT:
@@ -1081,45 +1091,31 @@ def _safe_save_to_firebase_put(data):
     return True
 
 def save_to_firebase(data, backup_label="manual_overwrite"):
-    """v41 Base-File Manual Overwrite Core.
-    Full-root saves intentionally overwrite Firebase with the admin's current UI state.
-    Removed: v36 protected-key merge, loss guard, default-state block, stale-root CAS merge.
-    Kept: pre-save backup, post-save last-known-good backup, realtime memory cache refresh.
+    """Guarded Firebase root save.
+
+    Full-root saves are kept for compatibility with the current UI, but they now
+    use the v36/v38 guarded CAS path so stale admin tabs cannot blindly replace
+    live production collections written by Gateway or atomic money flows.
     """
     try:
         if not isinstance(data, dict):
             return False
-        # Backup the current live Firebase root before overwriting, so rollback is still possible.
-        try:
-            res0 = requests.get(get_firebase_url(), timeout=8)
-            old_state = res0.json() if getattr(res0, 'text', '') else None
-            if isinstance(old_state, dict) and old_state:
-                _write_state_backup(old_state, (backup_label or 'manual_overwrite') + '_pre_overwrite')
-        except Exception as backup_err:
-            print('Manual overwrite pre-backup warning:', backup_err)
-
-        started = time.time()
-        res = requests.put(get_firebase_url(), json=data, timeout=15)
-        ms = int((time.time() - started) * 1000)
-        if getattr(res, 'status_code', 500) >= 400:
-            _obs_event('firebase_manual_overwrite_failed_v41', 'error', f"Firebase HTTP {res.status_code}", {'httpStatus': res.status_code, 'body': getattr(res, 'text', '')[:200], 'ms': ms})
-            raise RuntimeError(f"Firebase HTTP {res.status_code}: {getattr(res, 'text', '')[:200]}")
-
         try:
             data.setdefault('firebaseManualOverwrite', {})['version'] = FIREBASE_DATA_GUARD_VERSION
             data['firebaseManualOverwrite']['lastOverwriteAt'] = _now_iso_local() if '_now_iso_local' in globals() else datetime.datetime.now().isoformat(timespec='seconds')
-            data['firebaseManualOverwrite']['mode'] = 'direct-root-put-admin-wins'
+            data['firebaseManualOverwrite']['mode'] = 'guarded-cas-root-save'
         except Exception:
             pass
-        # Cache the exact state admin submitted. No stale Firebase GET after save.
-        _rt_cache_set(data, 'manual_overwrite_root_save_v40')
-        _write_state_backup(data, 'last_known_good')
-        _obs_event('firebase_manual_overwrite_ok_v41', 'warning', 'Manual overwrite Firebase root save committed; guard disabled', {'backupLabel': backup_label, 'ms': ms}, persist_firebase=False)
-        return data
+        saved = _firebase_guarded_root_save(data, backup_label or "guarded_save")
+        if not saved:
+            _rt_cache_clear('guarded_root_save_blocked')
+            return False
+        _obs_event('firebase_guarded_save_ok_phase1', 'info', 'Guarded Firebase root save committed; stale overwrite protection active', {'backupLabel': backup_label}, persist_firebase=False)
+        return saved
     except Exception as e:
-        print('Firebase Manual Overwrite Save Error:', e)
-        _obs_exception('firebase_manual_overwrite_save_error_v41', e, {'backupLabel': backup_label, 'firebaseDataGuard': FIREBASE_DATA_GUARD_VERSION})
-        _rt_cache_clear('manual_overwrite_save_error')
+        print('Firebase Guarded Save Error:', e)
+        _obs_exception('firebase_guarded_save_error_phase1', e, {'backupLabel': backup_label, 'firebaseDataGuard': FIREBASE_DATA_GUARD_VERSION})
+        _rt_cache_clear('guarded_save_error')
         return False
 
 
@@ -1177,6 +1173,22 @@ def _firebase_get_child(parts, timeout=10):
         return res.json() if getattr(res, 'text', '') else None
     except Exception:
         return None
+
+def _firebase_put_top_level_children(state, updates, audit=True):
+    """Persist selected top-level keys without a full Firebase root overwrite.
+
+    Phase 2 single-source cleanup: admin setting panels should not rewrite the
+    whole Firebase root and race Gateway-owned runtime collections. This helper
+    writes only the changed top-level child paths and optionally persists the
+    audit log generated by the caller.
+    """
+    if not isinstance(updates, dict):
+        return False
+    for key, value in updates.items():
+        _firebase_put_child([key], value)
+    if audit and isinstance(state, dict) and isinstance(state.get('auditLog'), list):
+        _firebase_put_child(['auditLog'], state.get('auditLog', [])[-1000:])
+    return True
 
 
 # ==========================================================
@@ -3325,16 +3337,19 @@ def get_state_api():
             "walletSettings": state.get("walletSettings", _default_wallet_settings()),
             "entrySettings": state.get("entrySettings", _default_entry_settings()),
             "entries": [e for e in state.get("entries", []) if isinstance(e, dict) and e.get("userId") == vip_id],
-            "settlementRecords": state.get("settlementRecords", {}),
-            "ledgerAutoMarkRecords": state.get("ledgerAutoMarkRecords", {}),
-            "settlementSettings": state.get("settlementSettings", _default_settlement_settings()),
-            "paymentSettings": state.get("paymentSettings", _default_payment_settings()),
-            "loadForwarder": state.get("loadForwarder", _default_load_forwarder_settings()),
+            "settlementRecords": {},
+            "ledgerAutoMarkRecords": {},
+            "settlementSettings": {},
+            "paymentSettings": {
+                "paymentAutomationEnabled": state.get("paymentSettings", _default_payment_settings()).get("paymentAutomationEnabled", True),
+                "requireUtr": state.get("paymentSettings", _default_payment_settings()).get("requireUtr", True),
+            },
+            "loadForwarder": {},
             "loadForwarderOutbox": [],
-            "spamGuardSettings": state.get("spamGuardSettings", _default_spam_guard_settings()),
+            "spamGuardSettings": {},
             "spamGuardEvents": [],
-            "whatsappSafetySettings": state.get("whatsappSafetySettings", _default_whatsapp_safety_settings()),
-            "whatsappSafetyTargets": state.get("whatsappSafetyTargets", {}),
+            "whatsappSafetySettings": {},
+            "whatsappSafetyTargets": {},
             "whatsappSafetyEvents": [],
             "ledgerSchedules": {k:v for k,v in (state.get("ledgerSchedules", {}) or {}).items() if str(k).startswith(vip_id + "|")},
             "userSafety": {vip_id: (state.get("userSafety", {}) or {}).get(vip_id, {})} if isinstance(state.get("userSafety"), dict) else {},
@@ -4432,6 +4447,9 @@ def submit_payment():
     user_id = data.get('userId')
     if not user_id:
         return jsonify({'status': 'error', 'message': 'Valid user missing'}), 400
+    claimed_vip = str(request.headers.get('X-Titan-Vip-Id') or request.args.get('vip') or '').strip()
+    if claimed_vip and claimed_vip != str(user_id).strip():
+        return jsonify({'status': 'error', 'message': 'VIP identity mismatch', 'userSafety': True}), 403
     # v15: public VIP payment submit must not bypass server-side VIP access status.
     pre_state = migrate_and_get_state()
     vip_access = _vip_runtime_access_check(pre_state, user_id, record=True)
@@ -4584,7 +4602,7 @@ def api_payment_settings():
     if 'maxAmount' in data:
         settings['maxAmount'] = max(settings.get('minAmount', 0), _payment_float(data.get('maxAmount')))
     _add_audit(state, 'payment_settings', settings)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'paymentSettings': settings})
     return jsonify({'status': 'success', 'paymentSettings': settings})
 
 @app.route('/api/payments')
@@ -4721,7 +4739,7 @@ def save_payment_methods():
         'phone': str(data.get('phone') or '').strip(),
         'qr': str(data.get('qr') or '').strip(),
     }
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'paymentMethods': state['paymentMethods']}, audit=False)
     return jsonify({'status': 'success'})
 
 @app.route('/api/set_expiry', methods=['POST'])
@@ -4733,7 +4751,7 @@ def set_expiry():
     expiry = data.get('expiryDate')
     if user_id and user_id in state.get('profiles', {}):
         state['profiles'][user_id]['expiryDate'] = expiry
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'profiles': state.get('profiles', {})}, audit=False)
     return jsonify({'status': 'success'})
 
 
@@ -4969,7 +4987,7 @@ def api_withdrawals():
             w['paymentStatus'] = 'pending_approval'
             changed = True
     if changed:
-        save_to_firebase(state)
+        _firebase_put_top_level_children(state, {'withdrawals': withdrawals}, audit=False)
     withdrawals_sorted = sorted(withdrawals, key=lambda x: str(x.get('createdAt') or x.get('time') or ''), reverse=True)
     pending_count = sum(1 for w in withdrawals if str(w.get('status', '')).lower() == 'pending')
     approved_count = sum(1 for w in withdrawals if str(w.get('status', '')).lower() == 'approved')
@@ -5134,7 +5152,7 @@ def api_withdrawal_settings():
             raw = [x.strip() for x in raw.replace('\\n', ',').split(',') if x.strip()]
         settings['adminNotifyTargets'] = raw if isinstance(raw, list) else []
     _add_audit(state, 'withdrawal_settings', settings)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'withdrawalSettings': settings})
     return jsonify({'status': 'success', 'withdrawalSettings': settings})
 
 @app.route('/api/wallets')
@@ -5361,7 +5379,7 @@ def api_wallet_settings():
     if 'walletEnabled' in data:
         settings['walletEnabled'] = bool(data.get('walletEnabled'))
     _add_audit(state, 'wallet_settings', settings)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'walletSettings': settings})
     return jsonify({'status': 'success', 'walletSettings': settings})
 
 
@@ -5439,7 +5457,7 @@ def api_entry_settings():
                 cur[canon_key] = norm_time
         settings['marketCloseTimesUpdatedAt'] = datetime.datetime.now().isoformat()
     _add_audit(state, 'entry_settings', settings)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'entrySettings': settings})
     return jsonify({'status': 'success', 'entrySettings': settings})
 
 @app.route('/api/save_entry_safety', methods=['POST'])
@@ -5486,7 +5504,7 @@ def api_save_entry_safety():
         risk['autoLockOnLimit'] = bool(data.get('autoLockOnLimit'))
 
     _add_audit(state, 'entry_safety_settings', {'entrySettings': entry, 'riskSettings': risk})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'entrySettings': entry, 'riskSettings': risk})
     return jsonify({'status': 'success', 'entrySettings': entry, 'riskSettings': risk})
 
 @app.route('/api/risk_settings', methods=['POST'])
@@ -5503,7 +5521,7 @@ def api_risk_settings():
     if 'autoLockOnLimit' in data:
         settings['autoLockOnLimit'] = bool(data.get('autoLockOnLimit'))
     _add_audit(state, 'risk_settings', settings)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'riskSettings': settings})
     return jsonify({'status': 'success', 'riskSettings': settings})
 
 @app.route('/api/market_unlock', methods=['POST'])
@@ -5518,7 +5536,7 @@ def api_market_unlock():
     if market in locks:
         locks.pop(market, None)
     _add_audit(state, 'market_unlock', {'date': date, 'market': market})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'marketLocks': locks})
     return jsonify({'status': 'success', 'marketLocks': locks})
 
 @app.route('/api/results')
@@ -5574,7 +5592,7 @@ def api_save_settlement_settings():
                 except Exception:
                     pass
     _add_audit(state, 'settlement_settings', settings)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'settlementSettings': settings})
     return jsonify({'status': 'success', 'settlementSettings': settings})
 
 
@@ -5593,7 +5611,10 @@ def api_ledger_auto_mark():
     else:
         summary = _ledger_auto_mark_all_available(state, date, force=force)
     if summary.get('changed') or data.get('record', True):
-        save_to_firebase(state)
+        _firebase_put_top_level_children(state, {
+            'profiles': state.get('profiles', {}),
+            'ledgerAutoMarkRecords': state.get('ledgerAutoMarkRecords', {})
+        }, audit=False)
     return jsonify({'status': 'success', 'summary': summary, 'ledgerAutoMarkRecords': state.get('ledgerAutoMarkRecords', {}), 'profiles': state.get('profiles', {})})
 
 
@@ -5646,7 +5667,11 @@ def api_save_result():
         rec['closeUpdatedAt'] = _now_label()
 
     auto_mark = _ledger_auto_mark_for_result(state, date, market, stage, result_value)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {
+        'resultRecords': state.get('resultRecords', {}),
+        'profiles': state.get('profiles', {}),
+        'ledgerAutoMarkRecords': state.get('ledgerAutoMarkRecords', {})
+    }, audit=False)
     return jsonify({
         'status': 'success',
         'stage': stage,
@@ -5694,7 +5719,7 @@ def api_clear_invalid_auto_results():
             rec['ignoredCloseAt'] = _now_label()
             rec['ignoredCloseReason'] = invalid_reason
             cleared.append({'market': market, 'oldClose': old_close, 'openResult': open_value if open_stage == 'open' else '', 'reason': invalid_reason})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'resultRecords': state.get('resultRecords', {})}, audit=False)
     return jsonify({'status': 'success', 'date': date, 'cleared': cleared, 'resultRecords': state.get('resultRecords', {})})
 
 @app.route('/api/save_result_targets', methods=['POST'])
@@ -5716,7 +5741,7 @@ def api_save_result_targets():
             clean_targets.append(t)
     state = migrate_and_get_state()
     state['resultTargets'] = clean_targets
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'resultTargets': clean_targets}, audit=False)
     return jsonify({'status': 'success', 'resultTargets': clean_targets})
 
 @app.route('/api/save_result_settings', methods=['POST'])
@@ -5731,7 +5756,7 @@ def api_save_result_settings():
         settings['autoScrapeEnabled'] = bool(data.get('autoScrapeEnabled'))
     if 'useForwardTargetsForResults' in data:
         settings['useForwardTargetsForResults'] = bool(data.get('useForwardTargetsForResults'))
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'resultSettings': settings}, audit=False)
     return jsonify({'status': 'success', 'resultSettings': settings})
 
 
@@ -5780,7 +5805,7 @@ def api_save_spam_guard():
         if k in data:
             settings[k] = str(data.get(k) or _default_spam_guard_settings().get(k, '')).strip()
     _add_audit(state, 'spam_guard_settings', {'settings': settings})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'spamGuardSettings': settings})
     return jsonify({'status': 'success', 'settings': settings})
 
 @app.route('/api/clear_spam_guard', methods=['POST'])
@@ -5789,7 +5814,10 @@ def api_clear_spam_guard():
     state['spamGuardStrikes'] = {}
     state['spamGuardEvents'] = []
     _add_audit(state, 'spam_guard_clear', {})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {
+        'spamGuardStrikes': {},
+        'spamGuardEvents': []
+    })
     return jsonify({'status': 'success'})
 
 
@@ -5843,7 +5871,7 @@ def api_save_whatsapp_safety():
     state.setdefault('whatsappSafetyEvents', []).append({'id': f"WSG{int(time.time()*1000)}", 'time': datetime.now().isoformat(), 'date': _safe_today(), 'action': 'settings_saved', 'target': 'ALL'})
     state['whatsappSafetyEvents'] = state.get('whatsappSafetyEvents', [])[-300:]
     _add_audit(state, 'whatsapp_safety_settings', {'settings': settings})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'whatsappSafetySettings': settings, 'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])})
     return jsonify({'status': 'success', 'settings': settings})
 
 @app.route('/api/whatsapp_safety_pause', methods=['POST'])
@@ -5857,7 +5885,7 @@ def api_whatsapp_safety_pause():
     state.setdefault('whatsappSafetyEvents', []).append({'id': f"WSG{int(time.time()*1000)}", 'time': datetime.now().isoformat(), 'date': _safe_today(), 'action': 'global_paused', 'target': 'ALL', 'reason': settings['pauseReason']})
     state['whatsappSafetyEvents'] = state.get('whatsappSafetyEvents', [])[-300:]
     _add_audit(state, 'whatsapp_safety_pause', {'reason': settings['pauseReason']})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'whatsappSafetySettings': settings, 'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])})
     try:
         requests.post('http://127.0.0.1:3000/whatsapp_safety_pause', json={'reason': settings['pauseReason']}, timeout=3, headers=_gateway_headers())
     except Exception:
@@ -5874,7 +5902,7 @@ def api_whatsapp_safety_resume():
     state.setdefault('whatsappSafetyEvents', []).append({'id': f"WSG{int(time.time()*1000)}", 'time': datetime.now().isoformat(), 'date': _safe_today(), 'action': 'global_resumed', 'target': 'ALL'})
     state['whatsappSafetyEvents'] = state.get('whatsappSafetyEvents', [])[-300:]
     _add_audit(state, 'whatsapp_safety_resume', {})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'whatsappSafetySettings': settings, 'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])})
     try:
         requests.post('http://127.0.0.1:3000/whatsapp_safety_resume', json={}, timeout=3, headers=_gateway_headers())
     except Exception:
@@ -5913,7 +5941,7 @@ def api_whatsapp_safety_target():
     state.setdefault('whatsappSafetyEvents', []).append({'id': f"WSG{int(time.time()*1000)}", 'time': datetime.now().isoformat(), 'date': _safe_today(), 'action': 'target_update', 'target': target, 'approved': rec.get('approved'), 'paused': rec.get('paused')})
     state['whatsappSafetyEvents'] = state.get('whatsappSafetyEvents', [])[-300:]
     _add_audit(state, 'whatsapp_safety_target', {'target': target, 'approved': rec.get('approved'), 'paused': rec.get('paused')})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'whatsappSafetyTargets': store, 'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])})
     try:
         requests.post('http://127.0.0.1:3000/whatsapp_safety_target', json=data, timeout=3, headers=_gateway_headers())
     except Exception:
@@ -5929,7 +5957,10 @@ def api_clear_whatsapp_safety():
             rec['failureCount'] = 0
             rec['lastError'] = ''
     _add_audit(state, 'whatsapp_safety_clear', {})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {
+        'whatsappSafetyTargets': state.get('whatsappSafetyTargets', {}),
+        'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])
+    })
     return jsonify({'status': 'success'})
 
 @app.route('/api/load_forwarder')
@@ -5975,7 +6006,7 @@ def api_save_load_forwarder():
         settings['includeEmptyTypes'] = bool(data.get('includeEmptyTypes'))
     settings['updatedAt'] = _now_iso_local()
     _add_audit(state, 'load_forwarder_settings', settings)
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'loadForwarder': settings})
     return jsonify({'status': 'success', 'settings': settings})
 
 @app.route('/api/load_report_preview')
@@ -6019,7 +6050,10 @@ def api_load_forwarder_send():
         state['loadForwarderOutbox'] = state['loadForwarderOutbox'][-300:]
     settings['lastQueuedAt'] = _now_iso_local()
     _add_audit(state, 'load_report_queued', {'id': msg['id'], 'date': date, 'market': msg['market'], 'targets': targets})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {
+        'loadForwarder': settings,
+        'loadForwarderOutbox': state.get('loadForwarderOutbox', [])
+    })
     return jsonify({'status': 'success', 'message': 'Load report queue ho gaya. Gateway online hote hi send karega.', 'queued': msg, 'text': text})
 
 
@@ -6434,7 +6468,7 @@ def api_update_guard():
         state['updateGuardSettings']['lastSafeCheckAt'] = summary['checkedAt']
         state['updateGuardSettings']['lastSafeCheckStatus'] = summary['status']
         try:
-            save_to_firebase(state)
+            _firebase_put_top_level_children(state, {'updateGuardSettings': state.get('updateGuardSettings', {})}, audit=False)
         except Exception:
             pass
     return jsonify({'status': 'success', 'updateGuard': summary})
@@ -6567,7 +6601,7 @@ def api_download_backup():
     date = _safe_today()
     state.setdefault('backupSettings', {})['lastBackupAt'] = _now_iso_local()
     _add_audit(state, 'manual_backup_download', {'date': date})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'backupSettings': state.get('backupSettings', {})})
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('state.json', json.dumps(state, ensure_ascii=False, indent=2))
@@ -6587,7 +6621,7 @@ def api_clear_audit_log():
     state = migrate_and_get_state()
     state['auditLog'] = []
     _add_audit(state, 'audit_log_cleared', {'time': _now_iso_local()})
-    save_to_firebase(state)
+    _firebase_put_top_level_children(state, {'auditLog': state.get('auditLog', [])}, audit=False)
     return jsonify({'status': 'success', 'auditLog': state.get('auditLog', []), 'summary': _backup_summary(state)})
 
 # ==========================================================
