@@ -10632,6 +10632,80 @@ TOTAL: 300</pre>
                 render(true);
             }catch(e){ showRealNotification('❌ Clear Error', String(e.message || e), 'danger'); }
         }
+
+        function setupStatusBadge(ok, text){
+            return `<span class="text-[8px] font-black uppercase px-2 py-1 rounded-lg border ${ok ? 'text-[var(--green)] border-[rgba(0,194,111,0.25)] bg-[rgba(0,194,111,0.08)]' : 'text-[var(--amber)] border-[rgba(250,199,72,0.25)] bg-[rgba(250,199,72,0.08)]'}">${text}</span>`;
+        }
+        function setupCard(title, icon, badge, body, actionHtml, accent='var(--primary)'){
+            return `<section class="native-card p-4 mb-3" style="border-color:${accent.replace('var(--primary)','rgba(42,171,238,0.24)').replace('var(--green)','rgba(0,194,111,0.24)').replace('var(--amber)','rgba(250,199,72,0.24)').replace('var(--rose)','rgba(255,93,93,0.24)')}">
+                <div class="flex items-start justify-between gap-3 mb-3">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <div class="w-10 h-10 rounded-xl bg-[var(--surface-light)] border border-[var(--border)] flex items-center justify-center shrink-0" style="color:${accent}"><i class="fas ${icon}"></i></div>
+                        <div class="min-w-0"><h3 class="text-white font-black text-[13px] uppercase truncate">${title}</h3><p class="text-[9px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Clean Setup Section</p></div>
+                    </div>
+                    ${badge || ''}
+                </div>
+                <div class="text-[10px] text-[var(--text-muted)] leading-relaxed">${body}</div>
+                ${actionHtml ? `<div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">${actionHtml}</div>` : ''}
+            </section>`;
+        }
+        function setupSaveButton(label, onclick, color='bg-[var(--primary)]'){
+            return `<button onclick="${onclick}" class="w-full ${color} text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-save mr-1"></i>${label}</button>`;
+        }
+        function setupLinkButton(label, nav, icon='fa-arrow-right'){
+            return `<button onclick="setMainNav('${nav}')" class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas ${icon} mr-1 text-[var(--primary)]"></i>${label}</button>`;
+        }
+        async function setupRefreshStatuses(){
+            try{ await Promise.all([refreshHealthMonitor(), refreshBackupAuditState()]); showRealNotification('✅ Setup Status', 'Latest Firebase/Gateway/backup status loaded.', 'success'); }
+            catch(e){ showRealNotification('❌ Setup Status', String(e.message || e), 'danger'); }
+        }
+        async function setupSaveSection(section){
+            try{
+                if(section === 'market') { await saveMaster(false); }
+                else if(section === 'schedule') { await saveEntrySafetySettings(); }
+                else if(section === 'whatsapp') { await saveWhatsappSafetySettings(); }
+                else throw new Error('Unknown setup section');
+                showRealNotification('✅ Setup Saved', section + ' settings saved.', 'success');
+            }catch(e){ showRealNotification('❌ Setup Save Error', String(e.message || e), 'danger'); }
+        }
+        function setupConfirmAction(label, fnName){
+            if(!confirm(label + ' continue karna hai? Dangerous action se pehle backup download recommended hai.')) return;
+            const fn = window[fnName];
+            if(typeof fn === 'function') fn();
+        }
+        function renderSetupTab(){
+            if(!IS_MASTER) return '';
+            ensureDataStruct(); ensureBackupAuditStruct(); ensureWhatsappSafetyStruct();
+            const hm = appState.healthMonitor || {};
+            const fb = hm.firebase || {};
+            const gw = hm.gateway || {};
+            const sec = (TITAN_CONFIG_STATUS && TITAN_CONFIG_STATUS.security) || {};
+            const cfg = TITAN_CONFIG_STATUS || {};
+            const bs = appState.backupSummary || {};
+            const targets = appState.whatsappSafetyTargets || {};
+            const targetCount = Object.keys(targets).length;
+            const marketCount = (Array.isArray(appState.marketRegistry) ? appState.marketRegistry.length : ((baseMarkets||[]).length));
+            const scheduleCount = Object.keys(appState.ledgerSchedules || {}).length;
+            const firebaseOk = fb.status === 'success' || fb.ok === true;
+            const gatewayOk = gw.connected === true || gw.status === 'online' || (gw.gateway && gw.gateway.connected);
+            const adminLocked = !!sec.adminTokenConfigured;
+            const waEnabled = (appState.whatsappSafetySettings || {}).enabled !== false;
+            return `<div class="px-3 py-4 pb-24">
+                <div class="flex items-center justify-between mb-3">
+                    <p class="sec-header m-0">Setup</p>
+                    <button onclick="setupRefreshStatuses()" class="bg-[var(--surface-light)] border border-[var(--border)] text-[var(--primary)] px-3 py-2 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-sync mr-1"></i>Refresh</button>
+                </div>
+                ${setupCard('Firebase Status','fa-database',setupStatusBadge(firebaseOk, firebaseOk?'Saved / Online':'Check'),`URL: <span class="text-white break-all">${htmlEscape((cfg.firebase && cfg.firebase.urlRedacted) || fb.url || 'Configured on server')}</span><br>Guard: <span class="text-white">${htmlEscape((appState.firebaseDataGuard && appState.firebaseDataGuard.mode) || 'active')}</span><br>Status is read-only here; no persistence logic changed.`,setupLinkButton('Open Health','health','fa-heart-pulse'),'var(--green)')}
+                ${setupCard('Gateway Status','fa-plug',setupStatusBadge(gatewayOk, gatewayOk?'Online':'Offline'),`Gateway: <span class="text-white">${htmlEscape(gw.message || gw.status || (gatewayOk?'Connected':'Not reachable'))}</span><br>WhatsApp runtime, result sender, and Gateway APIs remain unchanged.`,setupLinkButton('Open Gateway Health','health','fa-heart-pulse'),'var(--primary)')}
+                ${setupCard('Admin Security','fa-user-shield',setupStatusBadge(adminLocked, adminLocked?'Locked':'Open'),`Admin token: <span class="text-white">${adminLocked ? 'Configured' : 'Compatibility-open'}</span><br>Gateway token: <span class="text-white">${sec.gatewayTokenConfigured ? 'Configured' : 'Fallback / missing'}</span><br>Change tokens from environment; this card only displays status.`,setupLinkButton('Security Health','health','fa-shield-halved'),'var(--amber)')}
+                ${setupCard('Market Settings','fa-store',setupStatusBadge(true, marketCount + ' Markets'),`Capital, day target, per-card target, and visibility controls are preserved from the existing setup flow.<br><span class="text-[var(--amber)]">Unsaved edits show immediately in this tab until Save Market Settings is tapped.</span>`,setupLinkButton('Manage Markets','markets','fa-store') + setupSaveButton('Save Market Settings', "setupSaveSection('market')", 'bg-[var(--green)]'),'var(--green)')}
+                ${setupCard('Schedule Settings','fa-clock',setupStatusBadge(true, scheduleCount + ' Saved'),`Entry cut-off and schedule safety settings continue to use existing APIs. Schedule engine logic is not touched.`,setupLinkButton('Open Entries','entries','fa-receipt') + setupSaveButton('Save Schedule Settings', "setupSaveSection('schedule')"),'var(--primary)')}
+                ${setupCard('WhatsApp Targets','fab fa-whatsapp',setupStatusBadge(waEnabled, waEnabled?'Guard On':'Guard Off'),`Saved targets: <span class="text-white">${targetCount}</span><br>Target picking, Gateway delivery, and WhatsApp safety logic are preserved.`,setupLinkButton('Open Guard','guard','fa-shield-halved') + setupSaveButton('Save WhatsApp Targets', "setupSaveSection('whatsapp')", 'bg-[var(--green)]'),'var(--green)')}
+                ${setupCard('Backup / Restore','fa-file-zipper',setupStatusBadge(true, (bs.auditEvents || 0) + ' Audit'),`Last backup: <span class="text-white">${bs.lastBackupAt ? String(bs.lastBackupAt).replace('T',' ').slice(0,19) : 'Never'}</span><br>Exports and backups remain in the existing Backup tab.`,setupLinkButton('Open Backup','backup','fa-file-export') + `<button onclick="downloadBackupZip()" class="w-full bg-[var(--primary)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-download mr-1"></i>Download Backup</button>`,'var(--amber)')}
+                ${setupCard('Danger Zone','fa-triangle-exclamation',setupStatusBadge(false,'Confirm'),`Dangerous actions require confirmation. Existing features are not removed; this only adds a safer launch point.`,setupLinkButton('Review Audit','backup','fa-clipboard-list') + `<button onclick="setupConfirmAction('Audit log clear', 'clearAuditLog')" class="w-full bg-[rgba(255,93,93,0.16)] text-[var(--rose)] border border-[rgba(255,93,93,0.28)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-trash-alt mr-1"></i>Clear Audit Log</button>`,'var(--rose)')}
+            </div>`;
+        }
+
         function renderBackupAuditTab(){
             ensureBackupAuditStruct();
             const s = appState.backupSummary || {};
@@ -11817,7 +11891,8 @@ TOTAL: 300</pre>
                     navItems.splice(7, 0, { id: 'guard', icon: 'fa-shield-halved', label: 'Guard' });
                     navItems.splice(8, 0, { id: 'backup', icon: 'fa-file-export', label: 'Backup' });
                     navItems.splice(9, 0, { id: 'health', icon: 'fa-heart-pulse', label: 'Health' });
-                    navItems.splice(10, 0, { id: 'smart', icon: 'fa-bolt', label: 'AI Scan' });
+                    navItems.splice(10, 0, { id: 'setup', icon: 'fa-sliders-h', label: 'Setup' });
+                    navItems.splice(11, 0, { id: 'smart', icon: 'fa-bolt', label: 'AI Scan' });
                 }
             } else {
                 // VIP always sees Settings tab, but inputs will be disabled if Read-Only
@@ -14076,7 +14151,8 @@ TOTAL: 300</pre>
             else if(mainNav === 'guard' && IS_MASTER) { container.innerHTML = renderGuardTab(); }
             else if(mainNav === 'backup' && IS_MASTER) { container.innerHTML = renderBackupAuditTab(); }
             else if(mainNav === 'health' && IS_MASTER) { container.innerHTML = renderHealthMonitorTab(); if(!appState.healthMonitor) refreshHealthMonitor(); }
-            else if(mainNav === 'settings' && IS_MASTER) { mainNav = 'markets'; container.innerHTML = renderMarketManagerTab(); }
+            else if(mainNav === 'setup' && IS_MASTER) { container.innerHTML = renderSetupTab(); if(!appState.healthMonitor) refreshHealthMonitor(); }
+            else if(mainNav === 'settings' && IS_MASTER) { mainNav = 'setup'; container.innerHTML = renderSetupTab(); if(!appState.healthMonitor) refreshHealthMonitor(); }
             else if(mainNav === 'settings' && !IS_MASTER) { container.innerHTML = renderVipSettings(); }
             else if(mainNav === 'membership' && !IS_MASTER) { container.innerHTML = renderMembership(); setTimeout(() => { selectPlan(_selectedPlan); loadPayments(); }, 100); }
 
