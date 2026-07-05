@@ -135,9 +135,18 @@ const RESULT_SCRAPE_CONFIRM_COUNT = Math.max(Number(process.env.RESULT_SCRAPE_CO
 // Set SCHEDULE_RECOVERY_MINUTES=0 for exact-minute only.
 const SCHEDULE_RECOVERY_MINUTES = Math.max(Number(process.env.SCHEDULE_RECOVERY_MINUTES || 10), 0);
 function redactConfigValue(v, keep=18){ const s=String(v||""); return s ? (s.slice(0,keep) + "…" + s.length + "chars") : ""; }
-function gatewayConfigReport(){
+function gatewayStartupConfigWarnings(){
   const warnings=[];
-  if(!FIREBASE_URL_FROM_ENV) warnings.push("FIREBASE_URL/FIREBASE_DB_URL env not set; compatibility default database is in use.");
+  if(!FIREBASE_URL_FROM_ENV) warnings.push("FIREBASE_URL/FIREBASE_DB_URL is missing; compatibility default database is in use.");
+  if(!process.env.TITAN_ADMIN_TOKEN) warnings.push("TITAN_ADMIN_TOKEN is missing; admin-auth fallback is unavailable.");
+  if(!process.env.TITAN_GATEWAY_TOKEN) warnings.push("TITAN_GATEWAY_TOKEN is missing; Gateway auth uses TITAN_ADMIN_TOKEN fallback or remains compatibility-open.");
+  return warnings;
+}
+const GATEWAY_STARTUP_WARNINGS = gatewayStartupConfigWarnings();
+for(const msg of GATEWAY_STARTUP_WARNINGS) console.warn("⚠️ TITAN CONFIG WARNING:", msg);
+
+function gatewayConfigReport(){
+  const warnings=[...GATEWAY_STARTUP_WARNINGS];
   if(!TITAN_GATEWAY_TOKEN && !TITAN_GATEWAY_AUTH_DISABLED) warnings.push("TITAN_GATEWAY_TOKEN not set; Gateway API auth is compatibility-open unless disabled intentionally.");
   return {
     status:warnings.length?"warning":"success",
@@ -4114,9 +4123,9 @@ async function saveFirebaseState(state){
         gatewayObsEvent("firebase_gateway_root_save_blocked_v36", "critical", "Gateway risky Firebase root save blocked", {attempt, guard, candidateScore:gatewayStateScore(candidate), liveScore:gatewayStateScore(latest)});
         throw new Error("Firebase Data Guard v36 blocked Gateway root save: " + guard.errors.join(","));
       }
-      const res = await axios.put(firebaseDataUrl(), candidate || {}, { timeout: 10000, headers:{"if-match":etag} });
+      const saved = await putFirebaseTopLevelChildren(candidate || {});
       realtimeCacheSet(candidate || {});
-      return res.data;
+      return saved;
     } catch(error) {
       lastErr = error;
       if(error.response && error.response.status === 412){
@@ -4133,6 +4142,15 @@ async function saveFirebaseState(state){
   gatewayObsError("firebase_save_conflict_after_retries", lastErr || new Error('Firebase save CAS conflict'));
   throw lastErr || new Error('Firebase save CAS conflict');
 }
+async function putFirebaseTopLevelChildren(state){
+  const out = {};
+  for(const [key, value] of Object.entries(state || {})){
+    out[key] = await putFirebaseChild([key], value, null);
+  }
+  realtimeCacheClear();
+  return out;
+}
+
 async function patchFirebaseState(patch){
   try {
     const res = await axios.patch(firebaseDataUrl(), patch || {}, { timeout: 8000 });
