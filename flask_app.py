@@ -4264,6 +4264,7 @@ def _ledger_commit_clean_record(rec):
         '_ledgerKey','_marketName','_ledgerType','_ledgerIndex','_ledgerDate',
         '_updatedAt','_dirtyAt','_sourceAction','_manualStatusAt','_manualStatusBy',
         '_explicitClearedAt','_digitClearedAt','_rateClearedAt','_resetAt',
+        '_deleted','_deletedAt','_deletedBy','deleted','deletedAt',
         '_manualR','_autoR','_digitsTouchedAt','_manualRateAt','_autoRateAt','_autoRateReason',
         '_recoveryAutoR','_recoveryDebt','_recoveryUnreal','_recoveryMargin','_recoveryTargetProfit','_recoveryTrackKey','_recoveryFromIdx','_recoveryBaseRate',
         'autoMarkedAt','autoMarkedByResult','autoMarkStage','autoMarkMarket','autoMarkWinDigit'
@@ -4326,6 +4327,34 @@ def _ledger_commit_merge_record(existing, incoming, typ, idx, market_key, date_k
     final['_dirtyAt'] = final.get('_dirtyAt') or final['_updatedAt']
     final['_sourceAction'] = action or final.get('_sourceAction') or 'ledger_card_update'
     return final
+
+def _ledger_commit_audit_entry(profile_id, typ, idx, market_key, date_key, action, rec, apply_to_vips=False):
+    """Small audit entry for direct ledger card commits.
+
+    The ledger card itself is still saved only at its exact profile/day/type/index
+    Firebase child path; this audit row is a separate operational trail so refresh
+    issues can be traced without doing a root save.
+    """
+    safe_rec = rec if isinstance(rec, dict) else {}
+    return {
+        'id': 'ledger_update_' + uuid.uuid4().hex[:12],
+        'time': _now_iso_local(),
+        'action': 'ledger_card_update',
+        'detail': {
+            'profileId': str(profile_id),
+            'date': str(date_key),
+            'type': str(typ),
+            'idx': int(idx),
+            'marketKey': str(market_key or ''),
+            'sourceAction': str(action or 'ledger_card_update'),
+            'status': str(safe_rec.get('s') or 'WAIT'),
+            'hasDigits': bool(str(safe_rec.get('d') or '').strip()),
+            'hasRate': bool(str(safe_rec.get('r') or '').strip()),
+            'deleted': bool(safe_rec.get('_deleted') or safe_rec.get('deleted')),
+            'applyToVips': bool(apply_to_vips),
+            'exactChildPathOnly': True
+        }
+    }
 
 def _ledger_commit_upsert_profile(state_obj, profile_id, typ, idx, market_key, date_key, record, action):
     profiles = state_obj.setdefault('profiles', {})
@@ -4424,26 +4453,21 @@ def api_ledger_card_update():
             if vip_final is not None:
                 saved_records[str(pid)] = vip_final
 
-    commit_meta = {
-        'lastCommitAt': _now_iso_local(),
-        'lastCommit': {
-            'date': date_key,
-            'profileId': profile_id,
-            'type': typ,
-            'idx': idx,
-            'marketKey': market_key,
-            'action': action,
-            'applyToVips': apply_to_vips,
-        },
-        'mode': 'atomic-child-path-put-v41-base-manual-overwrite'
-    }
+    audit_log = state.setdefault('auditLog', [])
+    if not isinstance(audit_log, list):
+        audit_log = []
+        state['auditLog'] = audit_log
+    audit_log.append(_ledger_commit_audit_entry(profile_id, typ, idx, market_key, date_key, action, final, apply_to_vips))
+    if len(audit_log) > 1000:
+        del audit_log[:-1000]
 
-    # v5: write only changed ledger card paths. Do not save the full Firebase root.
+    # v6: write only changed ledger card paths plus the audit log child.
+    # Do not save the full Firebase root and do not write ledger metadata siblings.
     # This prevents overlapping card edits from blanking/overwriting previous cards.
     try:
         for pid, rec in saved_records.items():
             _firebase_put_child(['profiles', str(pid), 'dayRecords', str(date_key), dict_name, str(idx)], rec)
-        _firebase_put_child(['ledgerFirebaseLiveCommit'], commit_meta)
+        _firebase_put_child(['auditLog'], audit_log[-1000:])
     except Exception as e:
         print('Ledger atomic child commit error:', e)
         return jsonify({'status': 'error', 'message': 'Firebase atomic ledger commit failed: ' + str(e)}), 500
@@ -8886,7 +8910,7 @@ HTML_TEMPLATE = """
         function titanLedgerPatchKey(date, profileId, type, marketKey){ return [date || currentDate, profileId || 'admin1', type || '', marketKey || ''].join('|'); }
         function titanCopyLedgerRecordForPatch(rec){
             const out = {}; rec = rec || {};
-            ['s','d','r','od','trick','schTime','schTargets','_ledgerKey','_marketName','_ledgerType','_ledgerIndex','_ledgerDate','_updatedAt','_dirtyAt','_sourceAction','_manualStatusAt','_manualStatusBy','_explicitClearedAt','_digitClearedAt','_rateClearedAt','_resetAt','_manualR','_autoR','_digitsTouchedAt','_manualRateAt','_autoRateAt','_autoRateReason','_recoveryAutoR','_recoveryDebt','_recoveryUnreal','_recoveryMargin','_recoveryTargetProfit','_recoveryTrackKey','_recoveryFromIdx','_recoveryBaseRate'].forEach(k => { if(typeof rec[k] !== 'undefined') out[k] = rec[k]; });
+            ['s','d','r','od','trick','schTime','schTargets','_ledgerKey','_marketName','_ledgerType','_ledgerIndex','_ledgerDate','_updatedAt','_dirtyAt','_sourceAction','_manualStatusAt','_manualStatusBy','_explicitClearedAt','_digitClearedAt','_rateClearedAt','_resetAt','_deleted','_deletedAt','_deletedBy','deleted','deletedAt','_manualR','_autoR','_digitsTouchedAt','_manualRateAt','_autoRateAt','_autoRateReason','_recoveryAutoR','_recoveryDebt','_recoveryUnreal','_recoveryMargin','_recoveryTargetProfit','_recoveryTrackKey','_recoveryFromIdx','_recoveryBaseRate'].forEach(k => { if(typeof rec[k] !== 'undefined') out[k] = rec[k]; });
             return JSON.parse(JSON.stringify(out));
         }
         function titanDeletedLedgerFieldsForPatch(rec){
@@ -8987,6 +9011,7 @@ HTML_TEMPLATE = """
                     });
                 }
                 if(data.ledgerSchedules) appState.ledgerSchedules = data.ledgerSchedules;
+                try { localStorage.setItem(LOCAL_KEY, JSON.stringify(appState)); } catch(e) {}
                 titanLedgerDirtyUntil = Math.max(titanLedgerDirtyUntil || 0, titanNowMs() + 1500);
                 // Keep optimistic patch briefly after success so an already-in-flight
                 // /api/state response cannot flash the old value, then remove it.
