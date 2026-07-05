@@ -37,6 +37,7 @@ export TITAN_BUSINESS_DAY_CUTOFF_HOUR="${TITAN_BUSINESS_DAY_CUTOFF_HOUR:-6}"
 export GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:3000}"
 export HOST="${HOST:-127.0.0.1}"
 export PORT="${PORT:-3000}"
+export TITAN_WHATSAPP_UI="${TITAN_WHATSAPP_UI:-1}"
 
 info "Updating repo from origin/$BRANCH"
 git fetch origin "$BRANCH"
@@ -47,6 +48,11 @@ pip install -r requirements.txt
 
 info "Installing Node dependencies"
 npm install
+
+if [ "${TITAN_WHATSAPP_UI:-1}" = "1" ]; then
+  info "Applying WhatsApp-style UI theme"
+  python titan_whatsapp_ui_patch.py --apply
+fi
 
 info "Running preflight checks"
 python -m py_compile flask_app.py
