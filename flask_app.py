@@ -2920,7 +2920,8 @@ def _default_entry_settings():
         "marketCloseTimes": _default_market_close_times(),
         "marketTargets": {},
         "marketEntryEnabled": {},
-        "allowUnmappedMarkets": True
+        "allowUnmappedMarkets": True,
+        "entryFormatTemplate": "MARKET:{market} TYPE:{type} DIGITS:{digits} PAR DIGIT:{parDigit} TOTAL:{total}"
     }
 
 def _client_profile_ids(state_obj):
@@ -3357,6 +3358,9 @@ def get_state_api():
         if TITAN_VIP_ACCESS_ENFORCE and not vip_access.get('allowed'):
             return jsonify({"status": "blocked", "message": "VIP access blocked: " + ",".join(vip_access.get('reasons') or []), "userSafety": vip_access}), int(vip_access.get('httpStatus') or 403)
         user_payments = [p for p in state.get("payments", []) if isinstance(p, dict) and p.get("userId") == vip_id]
+        vip_entry_settings = _default_entry_settings()
+        if isinstance(state.get("entrySettings"), dict):
+            vip_entry_settings.update(state.get("entrySettings") or {})
         isolated_state = {
             "activeId": vip_id,
             "broadcasts": state.get("broadcasts", []),
@@ -3371,7 +3375,7 @@ def get_state_api():
             "wallets": {vip_id: state.get("wallets", {}).get(vip_id, {})} if isinstance(state.get("wallets"), dict) else {},
             "walletTransactions": [t for t in _wallet_transactions_from_state(state, vip_id, 500)],
             "walletSettings": state.get("walletSettings", _default_wallet_settings()),
-            "entrySettings": state.get("entrySettings", _default_entry_settings()),
+            "entrySettings": vip_entry_settings,
             "entries": [e for e in state.get("entries", []) if isinstance(e, dict) and e.get("userId") == vip_id],
             "settlementRecords": {},
             "ledgerAutoMarkRecords": {},
@@ -5552,6 +5556,11 @@ def api_entry_settings():
             settings[key] = bool(data.get(key))
     if 'duplicatePolicy' in data:
         settings['duplicatePolicy'] = str(data.get('duplicatePolicy') or 'sender_market_type_digits_date')
+    if 'entryFormatTemplate' in data:
+        template = str(data.get('entryFormatTemplate') or '').strip()
+        if not template:
+            template = _default_entry_settings()['entryFormatTemplate']
+        settings['entryFormatTemplate'] = template[:1000]
     if isinstance(data.get('marketCloseTimes'), dict):
         cur = settings.setdefault('marketCloseTimes', _default_market_close_times())
         for mk, val in data.get('marketCloseTimes', {}).items():
@@ -10000,7 +10009,7 @@ withdraw status</pre>
         // ==========================================
         function ensureEntryStruct(){
             if(!Array.isArray(appState.entries)) appState.entries = [];
-            if(!appState.entrySettings) appState.entrySettings = {entryParserEnabled:true, groupsOnly:true, strictFormat:true, autoDebitWallet:true, marketTimingEnabled:true, riskLimitEnabled:true, marketCloseTimes:{}};
+            if(!appState.entrySettings) appState.entrySettings = {entryParserEnabled:true, groupsOnly:true, strictFormat:true, autoDebitWallet:true, marketTimingEnabled:true, riskLimitEnabled:true, marketCloseTimes:{}, entryFormatTemplate:'MARKET:{market} TYPE:{type} DIGITS:{digits} PAR DIGIT:{parDigit} TOTAL:{total}'};
             if(!appState.riskSettings) appState.riskSettings = {marketDailyLimit:0, digitDailyLimit:0, userDailyLimit:0, warningPercent:80, autoLockOnLimit:false};
             if(!appState.marketLocks) appState.marketLocks = {};
         }
@@ -10061,6 +10070,20 @@ withdraw status</pre>
                 showRealNotification('✅ Entry Safety Saved', `Manual market times saved: ${changedCount}. Gateway next message me new cut-off use karega.`, 'success');
                 render(true);
             }catch(e){ showRealNotification('❌ Risk Save Error', String(e.message || e), 'danger'); }
+        }
+
+        async function saveEntryFormatTemplate(){
+            if(!IS_MASTER) return;
+            ensureEntryStruct();
+            const tpl = String(document.getElementById('entryFormatTemplate')?.value || '').trim();
+            try{
+                const res = await fetch('/api/entry_settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({entryFormatTemplate:tpl})});
+                const data = await res.json();
+                if(data.status !== 'success') throw new Error(data.message || 'Entry format save failed');
+                appState.entrySettings = data.entrySettings || appState.entrySettings;
+                showRealNotification('✅ Entry Format Saved', 'Gateway next WhatsApp entry me new template use karega.', 'success');
+                render(true);
+            }catch(e){ showRealNotification('❌ Format Save Error', String(e.message || e), 'danger'); }
         }
         async function unlockMarketFromEntries(market){
             if(!market) return;
@@ -10135,15 +10158,18 @@ withdraw status</pre>
                     <button onclick="saveEntrySafetySettings()" class="mt-3 w-full bg-[var(--primary)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95">Save Risk Controls</button>
                 </div>`; })()}
                 ${(()=>{ const locks = appState.marketLocks || {}; const today = new Date().toISOString().slice(0,10); const rows = Object.entries(locks[today] || {}).filter(([m,v])=>v && (v.locked===true || v===true)); if(!rows.length) return ''; return `<div class="native-card p-3 mb-3"><p class="text-white font-black text-[11px] uppercase mb-2">Locked Markets Today</p>${rows.map(([m,v])=>`<div class="flex items-center justify-between gap-2 py-2 border-b border-[var(--border)] last:border-0"><div><p class="text-white font-bold text-[10px]">${m}</p><p class="text-[var(--text-muted)] text-[9px]">${(v&&v.reason)||'locked'}</p></div><button onclick="unlockMarketFromEntries('${String(m).replace(/'/g,"\'")}')" class="text-[var(--green)] font-black text-[10px] px-3 py-2 rounded-lg bg-[rgba(0,194,111,0.12)]">Unlock</button></div>`).join('')}</div>`; })()}
-                <div class="native-card p-3 mb-3">
-                    <p class="text-white font-black text-[11px] uppercase mb-2">Strict WhatsApp Format</p>
-                    <pre class="text-[10px] text-[var(--text-muted)] whitespace-pre-wrap bg-[#17212B] rounded-xl p-3 border border-[var(--border)]">MARKET: KALYAN OPEN
-TYPE: ANK
-DIGITS: 1,2,3
-PAR DIGIT: 100
-TOTAL: 300</pre>
-                    <p class="text-[9px] text-[var(--text-muted)] mt-2">ANK/PENEL me OPEN/CLOSE market required hai. JODI me base market allowed hai, jaise KALYAN.</p>
-                </div>`;
+                ${(()=>{ const tpl = (appState.entrySettings && appState.entrySettings.entryFormatTemplate) || 'MARKET:{market} TYPE:{type} DIGITS:{digits} PAR DIGIT:{parDigit} TOTAL:{total}'; return `<div class="native-card p-3 mb-3">
+                    <p class="text-white font-black text-[11px] uppercase mb-2">Configurable WhatsApp Entry Format</p>
+                    <p class="text-[9px] text-[var(--text-muted)] mb-2 leading-relaxed">Placeholders required: <span class="text-white">{market}</span>, <span class="text-white">{type}</span>, <span class="text-white">{digits}</span>, <span class="text-white">{parDigit}</span>, <span class="text-white">{total}</span>. Separators/labels admin apni marzi se set kar sakta hai.</p>
+                    <textarea id="entryFormatTemplate" class="native-input text-[11px] min-h-[90px] leading-relaxed" placeholder="MARKET:{market} TYPE:{type} DIGITS:{digits} PAR DIGIT:{parDigit} TOTAL:{total}">${htmlEscape(tpl)}</textarea>
+                    <div class="grid grid-cols-1 gap-2 mt-2 text-[9px] text-[var(--text-muted)]">
+                        <div class="bg-[#17212B] rounded-xl p-2 border border-[var(--border)]"><b class="text-white">A:</b> MARKET:{market} TYPE:{type} DIGITS:{digits} PAR DIGIT:{parDigit} TOTAL:{total}</div>
+                        <div class="bg-[#17212B] rounded-xl p-2 border border-[var(--border)]"><b class="text-white">B:</b> {market} | {type} | {digits} | {parDigit} | {total}</div>
+                        <div class="bg-[#17212B] rounded-xl p-2 border border-[var(--border)]"><b class="text-white">C:</b> {market}/{type}/{digits}/{parDigit}/{total}</div>
+                    </div>
+                    <button onclick="saveEntryFormatTemplate()" class="mt-3 w-full bg-[var(--primary)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95">Save Entry Format</button>
+                    <p class="text-[9px] text-[var(--text-muted)] mt-2">Calculation logic same rahegi: digits validate, total calculate, wallet debit aur risk check unchanged.</p>
+                </div>`; })()}`;
             if(marketRows.length){
                 html += `<div class="native-card p-3 mb-3"><p class="text-white font-black text-[11px] uppercase mb-2">Market Load</p>${marketRows.map(([m,v])=>`<div class="flex justify-between text-[10px] py-1 border-b border-[var(--border)] last:border-0"><span class="text-[var(--text-muted)] font-bold">${m}</span><span class="text-white font-black">${fmtMoney(v)}</span></div>`).join('')}</div>`;
             }
