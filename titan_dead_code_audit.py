@@ -1,7 +1,15 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-FILES = ["flask_app.py", "Gateway.js", "TITAN_STABLE_DEPLOY.md", "termux.env.example", ".github/workflows/titan-check.yml"]
+FILES = [
+    "flask_app.py",
+    "Gateway.js",
+    "TITAN_STABLE_DEPLOY.md",
+    "TITAN_PHASE2_CLEANUP_REPORT.md",
+    "TITAN_PHASE3_RUNTIME_BUDGET.md",
+    "termux.env.example",
+    ".github/workflows/titan-check.yml",
+]
 OBSOLETE = ["sitecustomize.py", "usercustomize.py", "dashboard.js", "bot.js", "README_TERMUX_FINAL.txt"]
 OLD_DEFAULT_HINTS = ["default-rtdb", "SattaMatka", "Mobi"]
 RUNTIME_CACHE_NAMES = [
