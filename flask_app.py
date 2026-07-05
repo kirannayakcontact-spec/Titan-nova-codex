@@ -10031,7 +10031,10 @@ withdraw status</pre>
         }
         async function saveEntrySafetySettings(){
             if(!IS_MASTER) return;
+            ensureEntryStruct();
             try{
+                const existingEntrySettings = appState.entrySettings || {};
+                const existingRiskSettings = appState.riskSettings || {};
                 const marketCloseTimes = {};
                 document.querySelectorAll('.entry-time-input[data-market]').forEach(inp => {
                     const market = String(inp.getAttribute('data-market') || '').trim().toUpperCase().replace(/\\s+/g, ' ');
@@ -10039,14 +10042,14 @@ withdraw status</pre>
                     if(market && /^\\d{2}:\\d{2}$/.test(value)) marketCloseTimes[market] = value;
                 });
                 const payload = {
-                    marketTimingEnabled: !!document.getElementById('entryTimingToggle')?.checked,
-                    riskLimitEnabled: !!document.getElementById('entryRiskToggle')?.checked,
-                    marketCloseTimes,
-                    marketDailyLimit: Number(document.getElementById('riskMarketLimit')?.value || 0),
-                    digitDailyLimit: Number(document.getElementById('riskDigitLimit')?.value || 0),
-                    userDailyLimit: Number(document.getElementById('riskUserLimit')?.value || 0),
-                    warningPercent: Number(document.getElementById('riskWarnPercent')?.value || 80),
-                    autoLockOnLimit: !!document.getElementById('riskAutoLock')?.checked
+                    marketTimingEnabled: document.getElementById('entryTimingToggle') ? !!document.getElementById('entryTimingToggle').checked : existingEntrySettings.marketTimingEnabled !== false,
+                    riskLimitEnabled: document.getElementById('entryRiskToggle') ? !!document.getElementById('entryRiskToggle').checked : existingEntrySettings.riskLimitEnabled !== false,
+                    marketCloseTimes: Object.keys(marketCloseTimes).length ? marketCloseTimes : (existingEntrySettings.marketCloseTimes || {}),
+                    marketDailyLimit: Number(document.getElementById('riskMarketLimit')?.value ?? existingRiskSettings.marketDailyLimit ?? 0),
+                    digitDailyLimit: Number(document.getElementById('riskDigitLimit')?.value ?? existingRiskSettings.digitDailyLimit ?? 0),
+                    userDailyLimit: Number(document.getElementById('riskUserLimit')?.value ?? existingRiskSettings.userDailyLimit ?? 0),
+                    warningPercent: Number(document.getElementById('riskWarnPercent')?.value ?? existingRiskSettings.warningPercent ?? 80),
+                    autoLockOnLimit: document.getElementById('riskAutoLock') ? !!document.getElementById('riskAutoLock').checked : !!existingRiskSettings.autoLockOnLimit
                 };
                 const res = await fetch('/api/save_entry_safety', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
                 const data = await res.json();
@@ -10204,24 +10207,27 @@ TOTAL: 300</pre>
         }
         async function saveWhatsappSafetySettings(){
             ensureWhatsappSafetyStruct();
+            const s = appState.whatsappSafetySettings || {};
+            const checkedOr = (id, fallback) => document.getElementById(id) ? !!document.getElementById(id).checked : fallback;
+            const valueOr = (id, fallback) => document.getElementById(id)?.value ?? fallback;
             const payload = {
-                enabled: document.getElementById('wa-safe-enabled')?.checked,
-                globalPaused: document.getElementById('wa-safe-paused')?.checked,
-                requireApprovedTargets: document.getElementById('wa-safe-approved')?.checked,
-                duplicateBlock: document.getElementById('wa-safe-dup')?.checked,
-                autoPauseTargetOnFailures: document.getElementById('wa-safe-target-autopause')?.checked,
-                autoPauseGlobalOnFailures: document.getElementById('wa-safe-global-autopause')?.checked,
-                safeModeForGroupsOnly: document.getElementById('wa-safe-groups-only')?.checked,
-                allowPrivateReplies: document.getElementById('wa-safe-private')?.checked,
-                allowAdminNotifications: document.getElementById('wa-safe-admin')?.checked,
-                minDelayMs: Number(document.getElementById('wa-safe-delay')?.value || 2500),
-                randomDelayMs: Number(document.getElementById('wa-safe-random')?.value || 1200),
-                duplicateWindowMinutes: Number(document.getElementById('wa-safe-dup-window')?.value || 1440),
-                targetFailureLimit: Number(document.getElementById('wa-safe-target-fail')?.value || 3),
-                globalConsecutiveFailureLimit: Number(document.getElementById('wa-safe-global-fail')?.value || 8),
-                dailyTargetLimit: Number(document.getElementById('wa-safe-target-limit')?.value || 80),
-                dailyGlobalLimit: Number(document.getElementById('wa-safe-global-limit')?.value || 300),
-                pauseReason: document.getElementById('wa-safe-reason')?.value || ''
+                enabled: checkedOr('wa-safe-enabled', s.enabled !== false),
+                globalPaused: checkedOr('wa-safe-paused', s.globalPaused === true),
+                requireApprovedTargets: checkedOr('wa-safe-approved', s.requireApprovedTargets === true),
+                duplicateBlock: checkedOr('wa-safe-dup', s.duplicateBlock !== false),
+                autoPauseTargetOnFailures: checkedOr('wa-safe-target-autopause', s.autoPauseTargetOnFailures !== false),
+                autoPauseGlobalOnFailures: checkedOr('wa-safe-global-autopause', s.autoPauseGlobalOnFailures !== false),
+                safeModeForGroupsOnly: checkedOr('wa-safe-groups-only', s.safeModeForGroupsOnly === true),
+                allowPrivateReplies: checkedOr('wa-safe-private', s.allowPrivateReplies !== false),
+                allowAdminNotifications: checkedOr('wa-safe-admin', s.allowAdminNotifications !== false),
+                minDelayMs: Number(valueOr('wa-safe-delay', s.minDelayMs ?? 2500)),
+                randomDelayMs: Number(valueOr('wa-safe-random', s.randomDelayMs ?? 1200)),
+                duplicateWindowMinutes: Number(valueOr('wa-safe-dup-window', s.duplicateWindowMinutes || 1440)),
+                targetFailureLimit: Number(valueOr('wa-safe-target-fail', s.targetFailureLimit || 3)),
+                globalConsecutiveFailureLimit: Number(valueOr('wa-safe-global-fail', s.globalConsecutiveFailureLimit || 8)),
+                dailyTargetLimit: Number(valueOr('wa-safe-target-limit', s.dailyTargetLimit || 80)),
+                dailyGlobalLimit: Number(valueOr('wa-safe-global-limit', s.dailyGlobalLimit || 300)),
+                pauseReason: valueOr('wa-safe-reason', s.pauseReason || '')
             };
             try{
                 const res = await fetch('/api/save_whatsapp_safety', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
@@ -10637,10 +10643,11 @@ TOTAL: 300</pre>
             return `<span class="text-[8px] font-black uppercase px-2 py-1 rounded-lg border ${ok ? 'text-[var(--green)] border-[rgba(0,194,111,0.25)] bg-[rgba(0,194,111,0.08)]' : 'text-[var(--amber)] border-[rgba(250,199,72,0.25)] bg-[rgba(250,199,72,0.08)]'}">${text}</span>`;
         }
         function setupCard(title, icon, badge, body, actionHtml, accent='var(--primary)'){
+            const iconClass = /^fa[bsr]?\\s/.test(String(icon || '')) ? icon : `fas ${icon}`;
             return `<section class="native-card p-4 mb-3" style="border-color:${accent.replace('var(--primary)','rgba(42,171,238,0.24)').replace('var(--green)','rgba(0,194,111,0.24)').replace('var(--amber)','rgba(250,199,72,0.24)').replace('var(--rose)','rgba(255,93,93,0.24)')}">
                 <div class="flex items-start justify-between gap-3 mb-3">
                     <div class="flex items-center gap-3 min-w-0">
-                        <div class="w-10 h-10 rounded-xl bg-[var(--surface-light)] border border-[var(--border)] flex items-center justify-center shrink-0" style="color:${accent}"><i class="fas ${icon}"></i></div>
+                        <div class="w-10 h-10 rounded-xl bg-[var(--surface-light)] border border-[var(--border)] flex items-center justify-center shrink-0" style="color:${accent}"><i class="${iconClass}"></i></div>
                         <div class="min-w-0"><h3 class="text-white font-black text-[13px] uppercase truncate">${title}</h3><p class="text-[9px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Clean Setup Section</p></div>
                     </div>
                     ${badge || ''}
@@ -10654,6 +10661,73 @@ TOTAL: 300</pre>
         }
         function setupLinkButton(label, nav, icon='fa-arrow-right'){
             return `<button onclick="setMainNav('${nav}')" class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas ${icon} mr-1 text-[var(--primary)]"></i>${label}</button>`;
+        }
+        function setupMiniStat(label, value, color='text-white'){
+            return `<div class="stat-box"><p class="stat-lbl">${label}</p><p class="stat-val ${color}">${value}</p></div>`;
+        }
+        function setupTargetCounts(listLike){
+            const ids = Array.isArray(listLike) ? listLike : Object.values(listLike || {}).map(x => x && (x.id || x.target)).filter(Boolean);
+            return ids.reduce((acc, id) => {
+                if(normalizeTargetType(targetTypeFromId(id), id) === 'group') acc.groups += 1;
+                else acc.contacts += 1;
+                return acc;
+            }, {groups:0, contacts:0});
+        }
+        function renderSetupMarketSettingsCard(marketCount){
+            const cfg = state.config || {};
+            const visibleMarkets = (baseMarkets || []).filter(m => !(m && m.hiddenForLedger)).length;
+            const hiddenMarkets = Math.max(0, marketCount - visibleMarkets);
+            const perCardRows = [['ank','ANK','text-[var(--primary)]'], ['jodi','JODI','text-[#B85CFF]'], ['pannel','PAN','text-[var(--amber)]']].map(([type,label,color]) => `
+                <label class="bg-[var(--surface-light)] rounded-xl p-3 border border-[var(--border)]">
+                    <p class="stat-lbl">${label} Per-card Target</p>
+                    <input type="number" inputmode="numeric" class="native-input text-[12px] mt-1 ${color}" value="${Number((cfg[type] || {}).tgt || 0)}" oninput="state.config.${type}.tgt=parseFloat(this.value)||0; runLiveSync(); titanSaveAdminSettingsNow();">
+                </label>`).join('');
+            const body = `
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <label><p class="stat-lbl">Capital</p><input type="number" inputmode="numeric" class="native-input text-[12px] text-[var(--green)]" value="${Number(cfg.capital || 0)}" oninput="state.config.capital=parseFloat(this.value)||0; titanSaveAdminSettingsNow();"></label>
+                    <label><p class="stat-lbl">Day Target</p><input type="number" inputmode="numeric" class="native-input text-[12px] text-[var(--primary)]" value="${Number(cfg.dayTarget || 0)}" oninput="state.config.dayTarget=parseFloat(this.value)||0; titanSaveAdminSettingsNow();"></label>
+                </div>
+                <div class="grid grid-cols-1 gap-2 mb-3">${perCardRows}</div>
+                <div class="grid grid-cols-3 gap-2">
+                    ${setupMiniStat('Visible', visibleMarkets, 'text-[var(--green)]')}
+                    ${setupMiniStat('Hidden', hiddenMarkets, hiddenMarkets ? 'text-[var(--amber)]' : 'text-white')}
+                    ${setupMiniStat('Total', marketCount, 'text-white')}
+                </div>`;
+            return setupCard('Market Settings','fa-store',setupStatusBadge(true, marketCount + ' Markets'),body,setupSaveButton('Save Market Settings', "setupSaveSection('market')", 'bg-[var(--green)]'),'var(--green)');
+        }
+        function renderSetupScheduleSettingsCard(scheduleCount){
+            ensureEntryStruct();
+            const es = appState.entrySettings || {};
+            const rs = appState.riskSettings || {};
+            const timingOn = es.marketTimingEnabled !== false;
+            const repeatOn = Object.values(appState.ledgerSchedules || {}).some(s => s && s.enabled !== false);
+            const body = `
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    ${toggleRow('entryTimingToggle', timingOn ? 'Reject After Time' : 'Allow After Time', timingOn)}
+                    ${toggleRow('entryRiskToggle', 'Safety Limits', es.riskLimitEnabled !== false)}
+                </div>
+                <input id="riskMarketLimit" type="hidden" value="${Number(rs.marketDailyLimit || 0)}"><input id="riskDigitLimit" type="hidden" value="${Number(rs.digitDailyLimit || 0)}"><input id="riskUserLimit" type="hidden" value="${Number(rs.userDailyLimit || 0)}"><input id="riskWarnPercent" type="hidden" value="${Number(rs.warningPercent || 80)}"><input id="riskAutoLock" type="checkbox" class="hidden" ${rs.autoLockOnLimit ? 'checked' : ''}>
+                <div class="grid grid-cols-3 gap-2">
+                    ${setupMiniStat('Entry Cutoff', timingOn ? 'Reject' : 'Allow', timingOn ? 'text-[var(--amber)]' : 'text-[var(--green)]')}
+                    ${setupMiniStat('Daily Repeat', repeatOn ? 'ON' : 'OFF', repeatOn ? 'text-[var(--green)]' : 'text-[var(--text-muted)]')}
+                    ${setupMiniStat('Saved', scheduleCount, 'text-white')}
+                </div>`;
+            return setupCard('Schedule Settings','fa-clock',setupStatusBadge(repeatOn, scheduleCount + ' Saved'),body,setupSaveButton('Save Schedule Settings', "setupSaveSection('schedule')"),'var(--primary)');
+        }
+        function renderSetupWhatsAppTargetsCard(){
+            ensureWhatsappSafetyStruct(); ensureResultStruct();
+            const resultCounts = setupTargetCounts(appState.resultTargets || []);
+            const safetyCounts = setupTargetCounts(appState.whatsappSafetyTargets || {});
+            const gw = appState.whatsappSafetyGateway || {};
+            const connected = gw.connected === true || (gw.gateway && gw.gateway.connected) || (appState.healthMonitor && appState.healthMonitor.gateway && appState.healthMonitor.gateway.connected);
+            const body = `
+                <div class="grid grid-cols-3 gap-2">
+                    ${setupMiniStat('Groups', resultCounts.groups || safetyCounts.groups, 'text-[var(--green)]')}
+                    ${setupMiniStat('Private', resultCounts.contacts || safetyCounts.contacts, 'text-[var(--primary)]')}
+                    ${setupMiniStat('Sync', connected ? 'Online' : 'Offline', connected ? 'text-[var(--green)]' : 'text-[var(--amber)]')}
+                </div>
+                <p class="text-[9px] text-[var(--text-muted)] mt-3">Summary uses existing saved result targets first, then safety target history. Target picker and gateway send logic unchanged.</p>`;
+            return setupCard('WhatsApp Targets','fab fa-whatsapp',setupStatusBadge(connected, connected?'Synced':'Check'),body,setupSaveButton('Save WhatsApp Targets', "setupSaveSection('whatsapp')", 'bg-[var(--green)]'),'var(--green)');
         }
         async function setupRefreshStatuses(){
             try{ await Promise.all([refreshHealthMonitor(), refreshBackupAuditState()]); showRealNotification('✅ Setup Status', 'Latest Firebase/Gateway/backup status loaded.', 'success'); }
@@ -10697,10 +10771,10 @@ TOTAL: 300</pre>
                 </div>
                 ${setupCard('Firebase Status','fa-database',setupStatusBadge(firebaseOk, firebaseOk?'Saved / Online':'Check'),`URL: <span class="text-white break-all">${htmlEscape((cfg.firebase && cfg.firebase.urlRedacted) || fb.url || 'Configured on server')}</span><br>Guard: <span class="text-white">${htmlEscape((appState.firebaseDataGuard && appState.firebaseDataGuard.mode) || 'active')}</span><br>Status is read-only here; no persistence logic changed.`,setupLinkButton('Open Health','health','fa-heart-pulse'),'var(--green)')}
                 ${setupCard('Gateway Status','fa-plug',setupStatusBadge(gatewayOk, gatewayOk?'Online':'Offline'),`Gateway: <span class="text-white">${htmlEscape(gw.message || gw.status || (gatewayOk?'Connected':'Not reachable'))}</span><br>WhatsApp runtime, result sender, and Gateway APIs remain unchanged.`,setupLinkButton('Open Gateway Health','health','fa-heart-pulse'),'var(--primary)')}
-                ${setupCard('Admin Security','fa-user-shield',setupStatusBadge(adminLocked, adminLocked?'Locked':'Open'),`Admin token: <span class="text-white">${adminLocked ? 'Configured' : 'Compatibility-open'}</span><br>Gateway token: <span class="text-white">${sec.gatewayTokenConfigured ? 'Configured' : 'Fallback / missing'}</span><br>Change tokens from environment; this card only displays status.`,setupLinkButton('Security Health','health','fa-shield-halved'),'var(--amber)')}
-                ${setupCard('Market Settings','fa-store',setupStatusBadge(true, marketCount + ' Markets'),`Capital, day target, per-card target, and visibility controls are preserved from the existing setup flow.<br><span class="text-[var(--amber)]">Unsaved edits show immediately in this tab until Save Market Settings is tapped.</span>`,setupLinkButton('Manage Markets','markets','fa-store') + setupSaveButton('Save Market Settings', "setupSaveSection('market')", 'bg-[var(--green)]'),'var(--green)')}
-                ${setupCard('Schedule Settings','fa-clock',setupStatusBadge(true, scheduleCount + ' Saved'),`Entry cut-off and schedule safety settings continue to use existing APIs. Schedule engine logic is not touched.`,setupLinkButton('Open Entries','entries','fa-receipt') + setupSaveButton('Save Schedule Settings', "setupSaveSection('schedule')"),'var(--primary)')}
-                ${setupCard('WhatsApp Targets','fab fa-whatsapp',setupStatusBadge(waEnabled, waEnabled?'Guard On':'Guard Off'),`Saved targets: <span class="text-white">${targetCount}</span><br>Target picking, Gateway delivery, and WhatsApp safety logic are preserved.`,setupLinkButton('Open Guard','guard','fa-shield-halved') + setupSaveButton('Save WhatsApp Targets', "setupSaveSection('whatsapp')", 'bg-[var(--green)]'),'var(--green)')}
+                ${setupCard('Admin Security','fa-user-shield',setupStatusBadge(adminLocked, adminLocked?'Locked':'Open'),`Admin token: <span class="text-white">${adminLocked ? 'Configured' : 'Missing / compatibility-open'}</span><br>Gateway token: <span class="text-white">${sec.gatewayTokenConfigured ? 'Configured' : 'Missing / fallback'}</span><br>Firebase URL: <span class="text-white break-all">${(cfg.firebase && cfg.firebase.urlRedacted) || fb.url ? 'Configured' : 'Fallback / server default'}</span><br><span class="text-[var(--amber)]">Read-only warning: token editing is disabled here. Change secrets only from environment/server config.</span>`,setupLinkButton('Security Health','health','fa-shield-halved'),'var(--amber)')}
+                ${renderSetupMarketSettingsCard(marketCount)}
+                ${renderSetupScheduleSettingsCard(scheduleCount)}
+                ${renderSetupWhatsAppTargetsCard()}
                 ${setupCard('Backup / Restore','fa-file-zipper',setupStatusBadge(true, (bs.auditEvents || 0) + ' Audit'),`Last backup: <span class="text-white">${bs.lastBackupAt ? String(bs.lastBackupAt).replace('T',' ').slice(0,19) : 'Never'}</span><br>Exports and backups remain in the existing Backup tab.`,setupLinkButton('Open Backup','backup','fa-file-export') + `<button onclick="downloadBackupZip()" class="w-full bg-[var(--primary)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-download mr-1"></i>Download Backup</button>`,'var(--amber)')}
                 ${setupCard('Danger Zone','fa-triangle-exclamation',setupStatusBadge(false,'Confirm'),`Dangerous actions require confirmation. Existing features are not removed; this only adds a safer launch point.`,setupLinkButton('Review Audit','backup','fa-clipboard-list') + `<button onclick="setupConfirmAction('Audit log clear', 'clearAuditLog')" class="w-full bg-[rgba(255,93,93,0.16)] text-[var(--rose)] border border-[rgba(255,93,93,0.28)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-trash-alt mr-1"></i>Clear Audit Log</button>`,'var(--rose)')}
             </div>`;
