@@ -4488,6 +4488,93 @@ def api_ledger_card_update():
     })
 
 
+
+@app.route('/api/approve_vip_profile', methods=['POST'])
+def approve_vip_profile_api():
+    data = request.json or {}
+    pid = str(data.get('pid') or data.get('userId') or '').strip()
+    if not pid:
+        return jsonify({'status': 'error', 'message': 'VIP id missing'}), 400
+    if pid.startswith('admin'):
+        return jsonify({'status': 'error', 'message': 'Admin profile cannot be approved from VIP approval panel'}), 400
+    state = migrate_and_get_state()
+    profiles = state.get('profiles') if isinstance(state.get('profiles'), dict) else {}
+    profile = profiles.get(pid)
+    if not isinstance(profile, dict):
+        return jsonify({'status': 'error', 'message': 'VIP profile not found'}), 404
+    now = _now_iso_local()
+    admin_id = str(data.get('approvedBy') or state.get('activeId') or 'admin1')
+    patch = {
+        'approvalStatus': 'approved',
+        'approvedAt': now,
+        'approvedBy': admin_id,
+        'vipAccessEnabled': True,
+        'autoCreated': bool(profile.get('autoCreated')),
+    }
+    try:
+        # Write approval to the exact VIP profile child and verify it. Some older
+        # deployments also have a normal /save sync running in the browser, so the
+        # endpoint must make Firebase the source of truth immediately instead of
+        # only changing local UI state.
+        _firebase_patch_child(['profiles', pid], patch)
+        verified_profile = _firebase_get_child(['profiles', pid], timeout=8)
+        if not isinstance(verified_profile, dict) or str(verified_profile.get('approvalStatus') or '').lower() != 'approved' or verified_profile.get('vipAccessEnabled') is False:
+            verified_profile = dict(profile)
+            verified_profile.update(patch)
+            _firebase_put_child(['profiles', pid], verified_profile)
+        wallets = state.get('wallets') if isinstance(state.get('wallets'), dict) else {}
+        wallet = wallets.get(pid) if isinstance(wallets.get(pid), dict) else None
+        if not wallet:
+            wallet = {
+                'userId': pid,
+                'name': profile.get('name') or pid,
+                'phone': profile.get('phone') or '',
+                'balance': 0,
+                'creditLimit': float((state.get('walletSettings') or {}).get('defaultCreditLimit') or 0),
+                'ledger': [],
+                'createdAt': now,
+                'updatedAt': now,
+            }
+            _firebase_put_child(['wallets', pid], wallet)
+        else:
+            wallet.update({'userId': pid, 'name': wallet.get('name') or profile.get('name') or pid, 'phone': wallet.get('phone') or profile.get('phone') or '', 'updatedAt': now})
+            _firebase_patch_child(['wallets', pid], {'userId': wallet.get('userId'), 'name': wallet.get('name'), 'phone': wallet.get('phone'), 'updatedAt': now})
+        audit_id = 'vip_approve_' + uuid.uuid4().hex[:10]
+        try:
+            _firebase_put_child(['auditLog', audit_id], {'id': audit_id, 'time': now, 'action': 'vip_profile_approved', 'detail': {'userId': pid, 'name': profile.get('name') or '', 'phone': profile.get('phone') or '', 'approvedBy': admin_id}})
+        except Exception as audit_err:
+            _obs_exception('vip_profile_approve_audit_failed', audit_err, {'userId': pid})
+        saved_profile = _firebase_get_child(['profiles', pid], timeout=8)
+        if not isinstance(saved_profile, dict) or str(saved_profile.get('approvalStatus') or '').lower() != 'approved' or saved_profile.get('vipAccessEnabled') is False:
+            return jsonify({'status': 'error', 'message': 'VIP approval could not be verified in Firebase'}), 409
+        profile.update(saved_profile)
+        return jsonify({'status': 'success', 'profile': profile, 'wallet': wallet, 'message': 'VIP profile approved and saved', 'verified': True})
+    except Exception as e:
+        _obs_exception('vip_profile_approve_save_failed', e, {'userId': pid})
+        return jsonify({'status': 'error', 'message': 'VIP approval save failed'}), 500
+
+@app.route('/api/reject_vip_profile', methods=['POST'])
+def reject_vip_profile_api():
+    data = request.json or {}
+    pid = str(data.get('pid') or data.get('userId') or '').strip()
+    if not pid:
+        return jsonify({'status': 'error', 'message': 'VIP id missing'}), 400
+    if pid.startswith('admin'):
+        return jsonify({'status': 'error', 'message': 'Admin profile cannot be deleted'}), 400
+    state = migrate_and_get_state()
+    profile = (state.get('profiles') or {}).get(pid) if isinstance(state.get('profiles'), dict) else None
+    if not isinstance(profile, dict):
+        return jsonify({'status': 'error', 'message': 'VIP profile not found'}), 404
+    try:
+        _firebase_delete_child(['profiles', pid])
+        _firebase_delete_child(['wallets', pid])
+        audit_id = 'vip_reject_' + uuid.uuid4().hex[:10]
+        _firebase_put_child(['auditLog', audit_id], {'id': audit_id, 'time': _now_iso_local(), 'action': 'vip_profile_rejected', 'detail': {'userId': pid, 'name': profile.get('name') or '', 'phone': profile.get('phone') or ''}})
+        return jsonify({'status': 'success', 'message': 'VIP profile rejected and deleted'})
+    except Exception as e:
+        _obs_exception('vip_profile_reject_save_failed', e, {'userId': pid})
+        return jsonify({'status': 'error', 'message': 'VIP reject save failed'}), 500
+
 @app.route('/save', methods=['POST'])
 def save():
     incoming = request.json
@@ -4542,6 +4629,22 @@ def save():
             for pid, profile in (incoming.get('profiles') or {}).items():
                 if isinstance(profile, dict) and isinstance(profile.get('config'), dict):
                     _firebase_put_child(['profiles', str(pid), 'config'], profile.get('config'))
+                # VIP approvals are profile metadata, not ledger dayRecords. Persist only
+                # approved/non-pending metadata from normal UI saves so a queued save cannot
+                # leave auto-created WhatsApp users pending after refresh. Never write a
+                # stale pending status here over a profile that may have just been approved.
+                if isinstance(profile, dict) and not str(pid).startswith('admin'):
+                    status = str(profile.get('approvalStatus') or '').lower()
+                    if status == 'approved':
+                        approval_patch = {
+                            'approvalStatus': 'approved',
+                            'vipAccessEnabled': profile.get('vipAccessEnabled') is not False,
+                            'approvedAt': profile.get('approvedAt') or _now_iso_local(),
+                            'approvedBy': profile.get('approvedBy') or incoming.get('activeId') or 'admin1',
+                        }
+                        if 'autoCreated' in profile:
+                            approval_patch['autoCreated'] = bool(profile.get('autoCreated'))
+                        _firebase_patch_child(['profiles', str(pid)], approval_patch)
         except Exception as save_err:
             _obs_exception('normal_save_child_path_failed', save_err, {'route': '/save'})
             return jsonify({"status": "error", "message": "Firebase child-path save failed.", "manualOverwrite": False}), 500
@@ -14145,28 +14248,50 @@ withdraw status</pre>
             }
         }
 
-        function approveVipProfile(pid) {
+        async function approveVipProfile(pid) {
             const p = appState.profiles[pid];
             if(!p) return;
-            p.approvalStatus = 'approved';
-            p.approvedAt = new Date().toISOString();
-            p.approvedBy = appState.activeId || 'admin1';
-            p.vipAccessEnabled = true;
-            p.autoCreated = !!p.autoCreated;
-            if(!appState.wallets) appState.wallets = {};
-            if(!appState.wallets[pid]) appState.wallets[pid] = {userId:pid, name:p.name || pid, phone:p.phone || '', balance:0, creditLimit:Number(appState.walletSettings?.defaultCreditLimit || 0), ledger:[], createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()};
-            autoSave(); render(true);
-            showRealNotification('✅ VIP Approved', `${p.name || pid} ab entry bhej sakta hai.`, 'success');
+            const approvedAt = new Date().toISOString();
+            const approvedBy = appState.activeId || 'admin1';
+            try {
+                const res = await fetch('/api/approve_vip_profile', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pid, approvedBy})
+                });
+                const data = await res.json().catch(() => ({}));
+                if(!res.ok || data.status !== 'success') throw new Error(data.message || 'VIP approval save failed');
+                appState.profiles[pid] = Object.assign({}, p, data.profile || {}, {approvalStatus:'approved', approvedAt, approvedBy, vipAccessEnabled:true, autoCreated:!!p.autoCreated});
+                if(!appState.wallets) appState.wallets = {};
+                appState.wallets[pid] = data.wallet || appState.wallets[pid] || {userId:pid, name:p.name || pid, phone:p.phone || '', balance:0, creditLimit:Number(appState.walletSettings?.defaultCreditLimit || 0), ledger:[], createdAt:approvedAt, updatedAt:approvedAt};
+                try { localStorage.setItem(LOCAL_KEY, JSON.stringify(appState)); } catch(e) {}
+                render(true);
+                showRealNotification('✅ VIP Approved', `${p.name || pid} ab entry bhej sakta hai.`, 'success');
+            } catch(e) {
+                showRealNotification('❌ Approval Save Failed', String(e.message || e), 'danger');
+            }
         }
 
-        function rejectVipProfile(pid) {
+        async function rejectVipProfile(pid) {
             const p = appState.profiles[pid];
             if(!p) return;
             if(!confirm(`${p.name || pid} ka pending profile reject/delete karna hai?`)) return;
-            delete appState.profiles[pid];
-            if(appState.wallets) delete appState.wallets[pid];
-            autoSave(); render(true);
-            showRealNotification('🗑️ Profile Rejected', 'Pending profile delete ho gaya.', 'danger');
+            try {
+                const res = await fetch('/api/reject_vip_profile', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pid})
+                });
+                const data = await res.json().catch(() => ({}));
+                if(!res.ok || data.status !== 'success') throw new Error(data.message || 'VIP reject save failed');
+                delete appState.profiles[pid];
+                if(appState.wallets) delete appState.wallets[pid];
+                try { localStorage.setItem(LOCAL_KEY, JSON.stringify(appState)); } catch(e) {}
+                render(true);
+                showRealNotification('🗑️ Profile Rejected', 'Pending profile delete ho gaya.', 'danger');
+            } catch(e) {
+                showRealNotification('❌ Reject Save Failed', String(e.message || e), 'danger');
+            }
         }
 
         function toggleVipAccess(pid, enabled) {
