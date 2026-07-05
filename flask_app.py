@@ -210,6 +210,32 @@ def _gateway_headers():
         headers["X-Titan-Admin-Token"] = TITAN_ADMIN_TOKEN
     return headers
 
+def _gateway_url(path=""):
+    path = str(path or "")
+    if not path.startswith("/"):
+        path = "/" + path
+    return GATEWAY_URL + path
+
+def _gateway_request(method, path, **kwargs):
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.update(_gateway_headers())
+    kwargs["headers"] = headers
+    return requests.request(str(method or "GET").upper(), _gateway_url(path), **kwargs)
+
+def _startup_config_warnings():
+    warnings = []
+    if not (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL")):
+        warnings.append("FIREBASE_URL/FIREBASE_DB_URL is missing; using local compatibility default Firebase URL.")
+    if not TITAN_ADMIN_TOKEN:
+        warnings.append("TITAN_ADMIN_TOKEN is missing; admin security is compatibility-open.")
+    if not os.environ.get("TITAN_GATEWAY_TOKEN"):
+        warnings.append("TITAN_GATEWAY_TOKEN is missing; Gateway proxy calls will fall back to TITAN_ADMIN_TOKEN when available.")
+    if re.search(r"https?://(127\.0\.0\.1|localhost)(:|/|$)", GATEWAY_URL, re.I):
+        warnings.append("GATEWAY_URL is using localhost; this is OK for local Termux but not for split-host deployments.")
+    for msg in warnings:
+        print("⚠️ TITAN CONFIG WARNING:", msg)
+    return warnings
+
 
 def _json_auth_required():
     return jsonify({
@@ -437,10 +463,12 @@ TITAN_CLEANUP_ARCHIVE_KEEP = int(os.environ.get("TITAN_CLEANUP_ARCHIVE_KEEP", "1
 # CONFIG CLEANUP v11: environment-first runtime configuration
 # ==========================================================
 DEFAULT_FIREBASE_DB_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/"
-FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", DEFAULT_FIREBASE_DB_URL).strip() or DEFAULT_FIREBASE_DB_URL
+FIREBASE_DB_URL = os.environ.get("FIREBASE_URL", os.environ.get("FIREBASE_DB_URL", DEFAULT_FIREBASE_DB_URL)).strip() or DEFAULT_FIREBASE_DB_URL
+GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://127.0.0.1:3000").strip().rstrip("/") or "http://127.0.0.1:3000"
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "").strip()
 TITAN_UPLOAD_MAX_BYTES = int(os.environ.get("TITAN_UPLOAD_MAX_BYTES", str(7 * 1024 * 1024)))
 TITAN_PAYMENT_NAME = os.environ.get("TITAN_PAYMENT_NAME", "TITAN NOVA").strip() or "TITAN NOVA"
+STARTUP_CONFIG_WARNINGS = _startup_config_warnings()
 
 
 # ==========================================================
@@ -574,7 +602,7 @@ def _obs_filter_events(events, severity=None, source=None, limit=100):
 
 def _obs_gateway_snapshot():
     try:
-        r = requests.get('http://127.0.0.1:3000/observability_status', timeout=4, headers=_gateway_headers())
+        r = _gateway_request('GET', '/observability_status', timeout=4)
         try:
             return r.json()
         except Exception:
@@ -663,13 +691,17 @@ def _client_app_config():
 
 def _config_migration_report():
     warnings = []
-    using_default_firebase = FIREBASE_DB_URL.strip().rstrip('/') == DEFAULT_FIREBASE_DB_URL.strip().rstrip('/')
+    using_default_firebase = not (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL"))
     if using_default_firebase:
         warnings.append("FIREBASE_URL/FIREBASE_DB_URL env not set; compatibility default database URL is in use.")
     if not IMGBB_API_KEY:
         warnings.append("IMGBB_API_KEY env not set; payment/QR image uploads will be disabled until configured.")
-    if TITAN_SECURITY_STRICT and not TITAN_GATEWAY_TOKEN:
+    if not TITAN_ADMIN_TOKEN:
+        warnings.append("TITAN_ADMIN_TOKEN env not set; admin security is compatibility-open.")
+    if not os.environ.get("TITAN_GATEWAY_TOKEN"):
         warnings.append("TITAN_GATEWAY_TOKEN missing; Flask will fall back to admin token for Gateway proxy calls.")
+    if re.search(r"https?://(127\.0\.0\.1|localhost)(:|/|$)", GATEWAY_URL, re.I):
+        warnings.append("GATEWAY_URL is localhost; OK for local Termux, risky for split-host deployments.")
     return {
         "status": "warning" if warnings else "success",
         "version": CONFIG_CLEANUP_VERSION,
@@ -693,6 +725,8 @@ def _config_migration_report():
             "proxyEndpoint": "/api/upload_image",
             "maxBytes": TITAN_UPLOAD_MAX_BYTES,
         },
+        "gateway": {"urlRedacted": _redact_config_value(GATEWAY_URL, 20), "localhost": bool(re.search(r"https?://(127\.0\.0\.1|localhost)(:|/|$)", GATEWAY_URL, re.I))},
+        "startupWarnings": STARTUP_CONFIG_WARNINGS,
         "clientConfig": _client_app_config(),
         "warnings": warnings,
         "envRequiredRecommended": ["FIREBASE_URL", "TITAN_ADMIN_TOKEN", "TITAN_GATEWAY_TOKEN", "TITAN_FLASK_SECRET", "IMGBB_API_KEY"],
@@ -1222,18 +1256,19 @@ def _firebase_get_root_with_etag(timeout=10):
 
 
 def _firebase_put_root_if_match(state_obj, etag, timeout=12):
-    # v40: manual-overwrite build does not block default/empty-looking root PUTs.
-    # CAS is kept only to prevent simultaneous money mutation collisions.
+    # Patch 2: normal money/wallet mutations no longer root-PUT Firebase.
+    # The caller still reads with ETag for conflict awareness, then writes changed
+    # collections through top-level child PUTs to avoid replacing the full app root.
     started = time.time()
-    headers = {"if-match": etag or '*'}
-    res = requests.put(get_firebase_url(), json=state_obj or {}, headers=headers, timeout=timeout)
-    if getattr(res, 'status_code', 500) == 412:
-        _obs_event('firebase_cas_conflict', 'warning', 'Firebase CAS conflict; retry expected', {'ms': int((time.time()-started)*1000)})
+    if not isinstance(state_obj, dict):
         return False
-    if getattr(res, 'status_code', 500) >= 400:
-        _obs_event('firebase_cas_put_failed', 'error', f"Firebase CAS PUT HTTP {res.status_code}", {'body': getattr(res, 'text', '')[:200], 'ms': int((time.time()-started)*1000)})
-        raise RuntimeError(f"Firebase CAS PUT HTTP {res.status_code}: {getattr(res, 'text', '')[:200]}")
-    return True
+    try:
+        _firebase_put_top_level_children(state_obj, state_obj, audit=False)
+        _obs_event('firebase_child_path_money_save_ok', 'info', 'Money state committed with child-path PUTs', {'ms': int((time.time()-started)*1000)}, persist_firebase=False)
+        return True
+    except Exception as e:
+        _obs_exception('firebase_child_path_money_save_failed', e, {'ms': int((time.time()-started)*1000)})
+        raise
 
 
 def _money_stamp(v):
@@ -3429,9 +3464,9 @@ def _market_save_registry_child(state, reg, audit_action='market_registry_action
             pass
         return True
     except Exception as child_err:
-        print('Market child save fallback:', child_err)
-        _ensure_foundation_state(state)
-        return save_to_firebase(state, backup_label='before_market_registry_action')
+        print('Market child save failed:', child_err)
+        _obs_exception('market_child_save_failed', child_err, {'action': audit_action, 'detail': detail or {}})
+        return False
 
 
 def _market_clean_name(v):
@@ -3712,7 +3747,7 @@ def api_market_registry_save():
     state['marketRegistry']['updatedAt'] = manual_stamp
     state.setdefault('auditLog', []).append({'id': 'market_registry_' + uuid.uuid4().hex[:10], 'time': manual_stamp, 'action': 'market_registry_saved', 'detail': {'count': len(state['marketRegistry'].get('items', {})), 'version': MARKET_REGISTRY_VERSION, 'manualChangeOnly': True}})
     _ensure_foundation_state(state)
-    if not save_to_firebase(state, backup_label='before_market_registry_save'):
+    if not _market_save_registry_child(state, state.get('marketRegistry', {}), 'market_registry_saved'):
         return jsonify({'status':'error','message':'Market registry save blocked by runtime guard'}), 409
     ledger_markets, ledger_base = _market_arrays_from_registry(state['marketRegistry'], purpose='ledger')
     result_markets, result_base = _market_arrays_from_registry(state['marketRegistry'], purpose='result')
@@ -3750,7 +3785,7 @@ def api_market_registry_delete():
     state['marketRegistry']['updatedAt'] = stamp
     state.setdefault('auditLog', []).append({'id': 'market_delete_' + uuid.uuid4().hex[:10], 'time': stamp, 'action': 'market_registry_deleted', 'detail': {'id': market_id, 'name': item.get('displayName') or item.get('name'), 'safeHiddenDelete': True}})
     _ensure_foundation_state(state)
-    if not save_to_firebase(state, backup_label='before_market_registry_delete'):
+    if not _market_save_registry_child(state, state.get('marketRegistry', {}), 'market_registry_deleted', {'id': market_id}):
         return jsonify({'status':'error','message':'Market delete save blocked by runtime guard'}), 409
     ledger_markets, ledger_base = _market_arrays_from_registry(state['marketRegistry'], purpose='ledger')
     result_markets, result_base = _market_arrays_from_registry(state['marketRegistry'], purpose='result')
@@ -3842,7 +3877,7 @@ def api_market_import_from_website():
     state['marketRegistry']['updatedAt'] = _now_iso_local()
     state.setdefault('auditLog', []).append({'id': 'market_import_' + uuid.uuid4().hex[:10], 'time': _now_iso_local(), 'action': 'market_import_from_website', 'detail': {'added': added, 'skipped': skipped, 'phase': 'marketManagerPhase2', 'manualChangeOnly': True}})
     _ensure_foundation_state(state)
-    if added and not save_to_firebase(state, backup_label='before_market_import_from_website'):
+    if added and not _market_save_registry_child(state, state.get('marketRegistry', {}), 'market_import_from_website', {'added': added, 'skipped': skipped}):
         return jsonify({'status':'error','message':'Market import save blocked by runtime guard','added':[], 'skipped':skipped}), 409
     ledger_markets, ledger_base = _market_arrays_from_registry(state['marketRegistry'], purpose='ledger')
     result_markets, result_base = _market_arrays_from_registry(state['marketRegistry'], purpose='result')
@@ -4425,14 +4460,19 @@ def save():
                 incoming['ledgerRenderSyncGuard']['mode'] = 'full-save-preserves-newest-manual-ledger-edits'
         except Exception as merge_err:
             _obs_exception('ledger_render_sync_guard_merge_failed', merge_err, {'route': '/save'})
-        saved = save_to_firebase(incoming, "ledger_render_sync_guard_v42")
-        if not saved:
-            return jsonify({"status": "error", "message": "Firebase manual overwrite save failed.", "manualOverwrite": True}), 500
+        try:
+            _ensure_foundation_state(incoming)
+            normal_updates = {k: v for k, v in incoming.items() if k not in ("firebaseManualOverwrite",)}
+            _firebase_put_top_level_children(incoming, normal_updates, audit=False)
+        except Exception as save_err:
+            _obs_exception('normal_save_child_path_failed', save_err, {'route': '/save'})
+            return jsonify({"status": "error", "message": "Firebase child-path save failed.", "manualOverwrite": False}), 500
         return jsonify({
             "status": "success",
-            "manualOverwrite": True,
+            "manualOverwrite": False,
+            "childPathSave": True,
             "ledgerRenderSyncGuard": True,
-            "source": "ledger_render_sync_guard_v42"
+            "source": "ledger_render_sync_guard_v42_child_paths"
         })
     else:
         return jsonify({"status": "rejected", "msg": "Client app is restricted to Read-Only mode."})
@@ -5622,7 +5662,7 @@ def api_ledger_auto_mark():
 def api_send_hitmiss_report():
     data = request.json or {}
     try:
-        res = requests.post('http://127.0.0.1:3000/send_hitmiss', json=data, timeout=30, headers=_gateway_headers())
+        res = _gateway_request('POST', '/send_hitmiss', json=data, timeout=30)
         try:
             payload = res.json()
         except Exception:
@@ -5766,7 +5806,7 @@ def api_save_result_settings():
 def api_gateway_result_retry():
     data = request.json or {}
     try:
-        res = requests.post('http://127.0.0.1:3000/result_retry', json=data, timeout=8, headers=_gateway_headers())
+        res = _gateway_request('POST', '/result_retry', json=data, timeout=8)
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -5829,7 +5869,7 @@ def api_whatsapp_safety():
     events = state.get('whatsappSafetyEvents', []) if isinstance(state.get('whatsappSafetyEvents', []), list) else []
     gateway = {'status': 'offline'}
     try:
-        r = requests.get('http://127.0.0.1:3000/whatsapp_safety_status', timeout=4, headers=_gateway_headers())
+        r = _gateway_request('GET', '/whatsapp_safety_status', timeout=4)
         gateway = r.json()
         if gateway.get('status') == 'success':
             settings = gateway.get('settings') or settings
@@ -5887,7 +5927,7 @@ def api_whatsapp_safety_pause():
     _add_audit(state, 'whatsapp_safety_pause', {'reason': settings['pauseReason']})
     _firebase_put_top_level_children(state, {'whatsappSafetySettings': settings, 'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])})
     try:
-        requests.post('http://127.0.0.1:3000/whatsapp_safety_pause', json={'reason': settings['pauseReason']}, timeout=3, headers=_gateway_headers())
+        _gateway_request('POST', '/whatsapp_safety_pause', json={'reason': settings['pauseReason']}, timeout=3)
     except Exception:
         pass
     return jsonify({'status': 'success', 'settings': settings})
@@ -5904,7 +5944,7 @@ def api_whatsapp_safety_resume():
     _add_audit(state, 'whatsapp_safety_resume', {})
     _firebase_put_top_level_children(state, {'whatsappSafetySettings': settings, 'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])})
     try:
-        requests.post('http://127.0.0.1:3000/whatsapp_safety_resume', json={}, timeout=3, headers=_gateway_headers())
+        _gateway_request('POST', '/whatsapp_safety_resume', json={}, timeout=3)
     except Exception:
         pass
     return jsonify({'status': 'success', 'settings': settings})
@@ -5943,7 +5983,7 @@ def api_whatsapp_safety_target():
     _add_audit(state, 'whatsapp_safety_target', {'target': target, 'approved': rec.get('approved'), 'paused': rec.get('paused')})
     _firebase_put_top_level_children(state, {'whatsappSafetyTargets': store, 'whatsappSafetyEvents': state.get('whatsappSafetyEvents', [])})
     try:
-        requests.post('http://127.0.0.1:3000/whatsapp_safety_target', json=data, timeout=3, headers=_gateway_headers())
+        _gateway_request('POST', '/whatsapp_safety_target', json=data, timeout=3)
     except Exception:
         pass
     return jsonify({'status': 'success', 'target': rec})
@@ -6488,7 +6528,7 @@ def api_health_monitor():
     gateway_targets = {'status': 'offline', 'contacts': [], 'groups': []}
     wa_login = {'status': 'offline', 'connected': False, 'qrAvailable': False}
     try:
-        r = requests.get('http://127.0.0.1:3000/health', timeout=4)
+        r = _gateway_request('GET', '/health', timeout=4)
         try:
             gateway = r.json()
         except Exception:
@@ -6496,18 +6536,18 @@ def api_health_monitor():
     except Exception as e:
         gateway = {'status': 'offline', 'connected': False, 'message': str(e)}
     try:
-        r = requests.get('http://127.0.0.1:3000/results', timeout=4, headers=_gateway_headers())
+        r = _gateway_request('GET', '/results', timeout=4)
         gateway_results = r.json()
     except Exception as e:
         gateway_results = {'status': 'offline', 'results': [], 'message': str(e)}
     try:
-        r = requests.get('http://127.0.0.1:3000/targets?force=1', timeout=6, headers=_gateway_headers())
+        r = _gateway_request('GET', '/targets?force=1', timeout=6)
         gateway_targets = r.json()
     except Exception as e:
         gateway_targets = {'status': 'offline', 'contacts': [], 'groups': [], 'message': str(e)}
 
     try:
-        r = requests.get('http://127.0.0.1:3000/wa_login_status', timeout=4, headers=_gateway_headers())
+        r = _gateway_request('GET', '/wa_login_status', timeout=4)
         wa_login = r.json()
     except Exception as e:
         wa_login = {'status': 'offline', 'connected': False, 'qrAvailable': False, 'message': str(e)}
@@ -7385,7 +7425,7 @@ def api_intel_schedule_time_fix_status():
 def api_wa_targets():
     # Proxy to local Baileys Gateway if running. App still works if gateway is off.
     try:
-        res = requests.get('http://127.0.0.1:3000/targets?force=1', timeout=6, headers=_gateway_headers())
+        res = _gateway_request('GET', '/targets?force=1', timeout=6)
         return jsonify(res.json())
     except Exception as e:
         return jsonify({'status': 'offline', 'contacts': [], 'groups': [], 'message': str(e)})
@@ -7394,7 +7434,7 @@ def api_wa_targets():
 @app.route('/api/wa_login_status')
 def api_wa_login_status():
     try:
-        res = requests.get('http://127.0.0.1:3000/wa_login_status', timeout=5, headers=_gateway_headers())
+        res = _gateway_request('GET', '/wa_login_status', timeout=5)
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({'status': 'offline', 'connected': False, 'qrAvailable': False, 'message': str(e)}), 503
@@ -7402,7 +7442,7 @@ def api_wa_login_status():
 @app.route('/api/wa_reset_session', methods=['POST'])
 def api_wa_reset_session():
     try:
-        res = requests.post('http://127.0.0.1:3000/wa_reset_session', timeout=10, headers=_gateway_headers())
+        res = _gateway_request('POST', '/wa_reset_session', timeout=10)
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({'status': 'offline', 'message': str(e)}), 503
@@ -7411,7 +7451,7 @@ def api_wa_reset_session():
 def api_wa_qr_image():
     try:
         import urllib.parse
-        res = requests.get('http://127.0.0.1:3000/wa_login_status', timeout=5, headers=_gateway_headers())
+        res = _gateway_request('GET', '/wa_login_status', timeout=5)
         data = res.json()
         qr = str(data.get('qr') or '')
         if not qr:
@@ -7424,7 +7464,7 @@ def api_wa_qr_image():
 @app.route('/api/gateway_status')
 def api_gateway_status():
     try:
-        res = requests.get('http://127.0.0.1:3000/status', timeout=5, headers=_gateway_headers())
+        res = _gateway_request('GET', '/status', timeout=5)
         return jsonify(res.json())
     except Exception as e:
         return jsonify({'status': 'offline', 'connected': False, 'message': str(e), 'timezone': APP_TZ})
@@ -7432,7 +7472,7 @@ def api_gateway_status():
 @app.route('/api/gateway_durability_status')
 def api_gateway_durability_status():
     try:
-        res = requests.get('http://127.0.0.1:3000/gateway_durability_status', timeout=5, headers=_gateway_headers())
+        res = _gateway_request('GET', '/gateway_durability_status', timeout=5)
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({'status': 'offline', 'version': '2026-07-02-gateway-durability-v10', 'firebaseLocks': False, 'message': str(e)}), 503
@@ -7440,7 +7480,7 @@ def api_gateway_durability_status():
 @app.route('/api/smart_command_status')
 def api_smart_command_status():
     try:
-        res = requests.get('http://127.0.0.1:3000/smart_command_status', timeout=5, headers=_gateway_headers())
+        res = _gateway_request('GET', '/smart_command_status', timeout=5)
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({'status': 'offline', 'version': SMART_COMMAND_VERSION, 'enabled': False, 'message': str(e)}), 503
@@ -7448,7 +7488,7 @@ def api_smart_command_status():
 @app.route('/api/whatsapp_compliance_status')
 def api_whatsapp_compliance_status():
     try:
-        res = requests.get('http://127.0.0.1:3000/whatsapp_compliance_status', timeout=5, headers=_gateway_headers())
+        res = _gateway_request('GET', '/whatsapp_compliance_status', timeout=5)
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({'status': 'offline', 'complianceGuardV18': True, 'enabled': False, 'message': str(e)}), 503
@@ -7457,7 +7497,7 @@ def api_whatsapp_compliance_status():
 def api_gateway_scrape_results():
     # Manual trigger for Gateway auto-result scraper. Gateway still scrapes automatically on interval.
     try:
-        res = requests.get('http://127.0.0.1:3000/scrape_results', timeout=30, headers=_gateway_headers())
+        res = _gateway_request('GET', '/scrape_results', timeout=30)
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({'status': 'offline', 'message': str(e), 'updates': [], 'scraped': []}), 503
