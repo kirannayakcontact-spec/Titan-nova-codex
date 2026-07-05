@@ -26,6 +26,7 @@ gateway_observability_events.jsonl
 # Titan backups/local state
 titan_state_backups/
 last_known_good.json
+*.phase4.bak
 
 # Local secrets/env
 .env
