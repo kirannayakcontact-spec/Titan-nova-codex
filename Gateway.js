@@ -51,7 +51,8 @@ const SMART_WHATSAPP_COMMAND_VERSION = "2026-07-02-smart-whatsapp-commands-v16";
 const DATA_CLEANUP_VERSION = "2026-07-02-firebase-data-cleanup-v17";
 const FIREBASE_DATA_GUARD_VERSION = "2026-07-03-firebase-data-guard-v36";
 const REALTIME_SYNC_VERSION = "2026-07-03-realtime-stability-lock-v38";
-const RUNTIME_STABILITY_VERSION = "2026-07-05-runtime-stability-patch-v44";
+const RUNTIME_STABILITY_VERSION = "2026-07-05-runtime-stability-patch-v45";
+const WHATSAPP_TARGET_SYNC_VERSION = "2026-07-05-whatsapp-target-realtime-sync-v45";
 const GATEWAY_ROOT_SAVE_NORMAL_DISABLED = true;
 // Schedule timezone: keep Python UI and Node gateway on the same date/time.
 const APP_TZ = process.env.APP_TZ || "Asia/Kolkata";
@@ -136,6 +137,7 @@ const RESULT_SCRAPE_CONFIRM_COUNT = Math.max(Number(process.env.RESULT_SCRAPE_CO
 // If phone/Termux sleeps briefly, still send schedules shortly after the exact minute.
 // Set SCHEDULE_RECOVERY_MINUTES=0 for exact-minute only.
 const SCHEDULE_RECOVERY_MINUTES = Math.max(Number(process.env.SCHEDULE_RECOVERY_MINUTES || 10), 0);
+const WHATSAPP_TARGET_SYNC_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_TARGET_SYNC_INTERVAL_MS || 60000), 15000);
 function redactConfigValue(v, keep=18){ const s=String(v||""); return s ? (s.slice(0,keep) + "…" + s.length + "chars") : ""; }
 function gatewayStartupConfigWarnings(){
   const warnings=[];
@@ -475,7 +477,8 @@ let gatewayHealth = {
   lastTargetSyncAt: targetsCache.updatedAt || "",
   lastTargetSyncGroups: Array.isArray(targetsCache.groups) ? targetsCache.groups.length : 0,
   lastTargetSyncContacts: Array.isArray(targetsCache.contacts) ? targetsCache.contacts.length : 0,
-  lastTargetSyncError: targetsCache.lastSyncError || ""
+  lastTargetSyncError: targetsCache.lastSyncError || "",
+  targetSyncVersion: WHATSAPP_TARGET_SYNC_VERSION
 };
 
 function loadJson(file, fallback){ try { return JSON.parse(fs.readFileSync(file,"utf8")); } catch { return fallback; } }
@@ -3164,6 +3167,32 @@ function rememberPrivateTarget(jid, name = ""){
   });
 }
 
+function rememberGroupTarget(jid, name = ""){
+  const id = _jidKey(jid);
+  if(!id || !id.endsWith("@g.us")) return targetsCache;
+  const current = loadJson(TARGET_CACHE_FILE, targetsCache || {contacts:[], groups:[]});
+  const groups = _mergeTargetList(current.groups || targetsCache.groups || [], [{id, name:name || id, type:"group"}], "group");
+  return _saveTargetsCache({
+    contacts: _mergeTargetList(current.contacts || targetsCache.contacts || [], [], "contact"),
+    groups,
+    updatedAt: new Date().toISOString(),
+    lastSyncError: current.lastSyncError || ""
+  });
+}
+
+async function refreshSingleGroupTarget(groupJid, fallbackName = ""){
+  const id = _jidKey(groupJid);
+  if(!id || !id.endsWith("@g.us")) return targetsCache;
+  let name = fallbackName || id;
+  try {
+    if(sock && connected && typeof sock.groupMetadata === "function"){
+      const meta = await sock.groupMetadata(id);
+      name = meta?.subject || meta?.name || name;
+    }
+  } catch(e) {}
+  return rememberGroupTarget(id, name);
+}
+
 async function syncTargets(options = {}){
   const previous = loadJson(TARGET_CACHE_FILE, targetsCache || { contacts: [], groups: [], updatedAt: null, lastSyncError: "" });
   const prevGroups = Array.isArray(previous.groups) ? previous.groups : [];
@@ -5019,13 +5048,23 @@ async function startWhatsApp(){
         }
       }
     });
-    sock.ev.on("groups.update", () => syncTargets().catch(()=>{}));
+    sock.ev.on("groups.update", async (updates = []) => {
+      for(const g of (Array.isArray(updates) ? updates : [])){
+        try { await refreshSingleGroupTarget(g?.id, g?.subject || g?.name || ""); } catch(e) {}
+      }
+      syncTargets().catch(()=>{});
+    });
+    sock.ev.on("group-participants.update", async (u = {}) => {
+      try { await refreshSingleGroupTarget(u?.id || u?.jid || u?.groupId || ""); } catch(e) {}
+      syncTargets().catch(()=>{});
+    });
     sock.ev.on("messages.upsert", async ({ messages }) => {
       for(const m of (messages || [])) {
         try {
           const remote = _jidKey(m?.key?.remoteJid || "");
           const participant = _jidKey(m?.key?.participant || "");
           const displayName = m?.pushName || m?.verifiedBizName || "";
+          if(remote.endsWith("@g.us")) refreshSingleGroupTarget(remote).catch(()=>{});
           if(remote.endsWith("@s.whatsapp.net")) rememberPrivateTarget(remote, displayName || remote);
           if(participant.endsWith("@s.whatsapp.net")) rememberPrivateTarget(participant, displayName || participant);
         } catch(e) {}
@@ -5240,7 +5279,7 @@ app.get("/health", async (req,res)=>{
     res.json({
       status:"success", connected, user:sock?.user || null, timezone:APP_TZ, now:nowHHMM(), date:todayISO(),
       waLogin:{qrAvailable:!!lastQR, qrAt:lastQRAt, authDir:AUTH_DIR, resetCount:whatsappResetCount, lastSessionResetAt, lastWhatsAppEvent:gatewayHealth.lastWhatsAppEvent || "", lastDisconnectCode:gatewayHealth.lastDisconnectCode || ""},
-      targets:{ contacts:(targetsCache.contacts||[]).length, groups:(targetsCache.groups||[]).length, updatedAt:targetsCache.updatedAt, lastSyncError:targetsCache.lastSyncError || "" },
+      targets:{ contacts:(targetsCache.contacts||[]).length, groups:(targetsCache.groups||[]).length, updatedAt:targetsCache.updatedAt, lastSyncError:targetsCache.lastSyncError || "", syncVersion:WHATSAPP_TARGET_SYNC_VERSION, syncIntervalMs:WHATSAPP_TARGET_SYNC_INTERVAL_MS },
       scrape:{ enabled: RESULT_SCRAPE_ENABLED && firebaseAutoScrapeEnabled(state), envEnabled: RESULT_SCRAPE_ENABLED, adminEnabled: firebaseAutoScrapeEnabled(state), intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:RESULT_SOURCE_URL },
       queue:{ paymentPending:Array.isArray(state.paymentOutbox)?state.paymentOutbox.filter(x=>x&&x.status==="pending").length:0, loadForwardPending:Array.isArray(state.loadForwarderOutbox)?state.loadForwarderOutbox.filter(x=>x&&x.status==="pending").length:0 },
       modules:{ entryParser: state.entrySettings?.entryParserEnabled !== false, settlement: state.settlementSettings?.enabled !== false, loadForwarder: lf.enabled === true, spamGuard: sg.enabled !== false, whatsappSafetyGuard: state.whatsappSafetySettings?.enabled !== false },
@@ -5272,10 +5311,10 @@ app.get("/targets", async (req,res)=>{
     const force = String(req.query.force || "") === "1";
     if(connected || force) await syncTargets({force});
     else targetsCache = loadJson(TARGET_CACHE_FILE, targetsCache);
-    res.json({status:connected?"success":"offline", connected, ...targetsCache});
+    res.json({status:connected?"success":"offline", connected, targetSyncVersion:WHATSAPP_TARGET_SYNC_VERSION, syncIntervalMs:WHATSAPP_TARGET_SYNC_INTERVAL_MS, ...targetsCache});
   } catch(e) {
     const cached = loadJson(TARGET_CACHE_FILE, targetsCache || {contacts:[], groups:[]});
-    res.json({status:connected?"partial":"offline", connected, ...cached, lastSyncError:e.message || String(e)});
+    res.json({status:connected?"partial":"offline", connected, targetSyncVersion:WHATSAPP_TARGET_SYNC_VERSION, syncIntervalMs:WHATSAPP_TARGET_SYNC_INTERVAL_MS, ...cached, lastSyncError:e.message || String(e)});
   }
 });
 app.get("/chats", async (req,res)=>{
@@ -5762,6 +5801,7 @@ function managedTimeout(name, fn, delayMs){
 
 app.listen(PORT, HOST, () => { console.log(`🚀 Titan Gateway running: http://${HOST}:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {host:HOST, port:PORT, timezone:APP_TZ}); });
 startWhatsApp().catch(e => console.error("WA start error", e));
+managedInterval("whatsapp_target_sync", async () => { if(connected) await syncTargets({periodic:true}); }, WHATSAPP_TARGET_SYNC_INTERVAL_MS);
 managedInterval("schedule_tick", scheduleTick, TITAN_SCHEDULE_POLL_MS);
 managedInterval("result_tick", resultTick, TITAN_RESULT_POLL_MS);
 managedInterval("result_scrape_tick", resultScrapeTick, RESULT_SCRAPE_INTERVAL_MS);
