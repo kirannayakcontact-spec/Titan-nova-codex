@@ -4522,6 +4522,7 @@ def approve_vip_profile_api():
             verified_profile = dict(profile)
             verified_profile.update(patch)
             _firebase_put_child(['profiles', pid], verified_profile)
+        _firebase_patch_child(['profiles', pid], patch)
         wallets = state.get('wallets') if isinstance(state.get('wallets'), dict) else {}
         wallet = wallets.get(pid) if isinstance(wallets.get(pid), dict) else None
         if not wallet:
@@ -4549,6 +4550,9 @@ def approve_vip_profile_api():
             return jsonify({'status': 'error', 'message': 'VIP approval could not be verified in Firebase'}), 409
         profile.update(saved_profile)
         return jsonify({'status': 'success', 'profile': profile, 'wallet': wallet, 'message': 'VIP profile approved and saved', 'verified': True})
+        _firebase_put_child(['auditLog', audit_id], {'id': audit_id, 'time': now, 'action': 'vip_profile_approved', 'detail': {'userId': pid, 'name': profile.get('name') or '', 'phone': profile.get('phone') or '', 'approvedBy': admin_id}})
+        profile.update(patch)
+        return jsonify({'status': 'success', 'profile': profile, 'wallet': wallet, 'message': 'VIP profile approved and saved'})
     except Exception as e:
         _obs_exception('vip_profile_approve_save_failed', e, {'userId': pid})
         return jsonify({'status': 'error', 'message': 'VIP approval save failed'}), 500
