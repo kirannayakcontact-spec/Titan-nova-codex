@@ -979,9 +979,6 @@ function parseEntryFieldsByTemplate(raw, template){
 function parseEntryCardDynamic(text, template=DEFAULT_ENTRY_FORMAT_TEMPLATE, state=null){
   const raw = String(text || "").replace(/\r/g, "\n").trim();
   template = String(template || DEFAULT_ENTRY_FORMAT_TEMPLATE).trim() || DEFAULT_ENTRY_FORMAT_TEMPLATE;
-function parseEntryCard(text, state=null){
-  const raw = String(text || "").replace(/\r/g, "\n").trim();
-  const template = entryFormatTemplate(state);
   let fields = parseEntryFieldsByTemplate(raw, template);
   if(!fields && template !== DEFAULT_ENTRY_FORMAT_TEMPLATE) fields = parseEntryFieldsByTemplate(raw, DEFAULT_ENTRY_FORMAT_TEMPLATE);
   if(!fields) {
