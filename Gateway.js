@@ -1287,12 +1287,12 @@ async function saveAcceptedEntryToFirebaseUnlocked(parsed, meta){
     if(!Array.isArray(state.auditLog)) state.auditLog = [];
     state.auditLog.push({ id:`AP${Date.now()}`, time:nowIso(), action:"profile_pending_approval", detail:{ userId:found.userId, phone:profile.phone || found.matchedPhone || "", name:profile.name || "", autoCreated:!!found.autoCreated } });
     if(state.auditLog.length > 500) state.auditLog.splice(0, state.auditLog.length - 500);
-    await saveFirebaseState(state);
+    await saveGatewayProfileSync(state, found.userId);
     return { ok:false, reason:"profile_pending_approval", message:"Aapka profile auto-create ho gaya hai. Admin approval ke baad entry accept hogi." };
   }
   const riskCheck = validateEntryRiskAndTiming(state, parsed, found.userId);
   if(!riskCheck.ok){
-    if(riskCheck.saveState) await saveFirebaseState(state);
+    if(riskCheck.saveState) await saveGatewayChildren(state, ['marketLocks']);
     return { ok:false, reason:"risk_or_time_rejected", message:riskCheck.message || "Entry risk/time validation failed." };
   }
   const entry = {
@@ -1342,7 +1342,7 @@ async function saveAcceptedEntryToFirebaseUnlocked(parsed, meta){
   if(!Array.isArray(state.auditLog)) state.auditLog = [];
   state.auditLog.push({ id:entry.id, time:nowIso(), action:"entry_accepted", detail:{ userId:entry.userId, market:entry.market, gameType:entry.gameType, total:entry.total, walletDebited:entry.walletDebited } });
   if(state.auditLog.length > 500) state.auditLog.splice(0, state.auditLog.length - 500);
-  await saveFirebaseState(state);
+  await saveGatewayEntryAcceptNarrow(state, found.userId);
   return { ok:true, entry, wallet };
 }
 async function saveAcceptedEntryToFirebase(parsed, meta){
@@ -1788,7 +1788,7 @@ async function handleSpamGuardMessage(m){
     if(state.spamGuardEvents.length > 300) state.spamGuardEvents.splice(0, state.spamGuardEvents.length - 300);
     if(spamGuardLocalState.events.length > 500) spamGuardLocalState.events.splice(0, spamGuardLocalState.events.length - 500);
     saveSpamGuardLocalState();
-    await saveFirebaseState(state);
+    await saveGatewaySpamGuardNarrow(state);
 
     console.log(`🛡️ SpamGuard ${action}: ${kind} ${record.count}/${limit} ${identity.key} aliases=${(aliasKeys || []).length} notice=${noticeResult.ok?"OK":"FAIL"} remove=${removeResult.ok?"OK":(removeResult.skipped?"SKIP":"FAIL")} tried=${(removeResult.tried || []).join(",")}`);
     return true;
@@ -1996,7 +1996,7 @@ async function handleSmartUserCommandMessage(m){
     const profile = found.profile || {};
     const wallet = ensureWalletInState(state, found.userId);
     if(found.autoCreated || found.autoLinked){
-      try{ await saveFirebaseState(state); }catch(e){}
+      try{ await saveGatewayProfileSync(state, found.userId); }catch(e){}
     }
     let text = "";
     if(cmd === "profile") text = profileSmartText(profile, wallet, found.userId, found);
@@ -2034,7 +2034,7 @@ async function saveWithdrawalRequestToFirebaseUnlocked(parsed, meta, qrImageData
     ensureWalletInState(state, found.userId);
     if(!Array.isArray(state.auditLog)) state.auditLog = [];
     state.auditLog.push({ id:`WP${Date.now()}`, time:nowIso(), action:"withdrawal_profile_pending", detail:{ userId:found.userId, phone:profile.phone || found.matchedPhone || "", name:profile.name || "" } });
-    await saveFirebaseState(state);
+    await saveGatewayProfileSync(state, found.userId);
     return { ok:false, reason:"profile_pending_approval", message:"Aapka profile auto-create ho gaya hai. Admin approval ke baad withdrawal request accept hogi." };
   }
   if(parsed.amount < wSettings.minAmount) return { ok:false, reason:"below_min", message:`Minimum withdrawal ${money(wSettings.minAmount)} hai.` };
@@ -2087,7 +2087,7 @@ async function saveWithdrawalRequestToFirebaseUnlocked(parsed, meta, qrImageData
   if(wSettings.notifyAdminPrivate !== false){
     for(const t of adminNotifyTargets(state)) queueWhatsAppOutbox(state, t, adminText, { type:"withdrawal_admin_notify", withdrawalId:wd.id });
   }
-  await saveFirebaseState(state);
+  await saveGatewayWithdrawalNarrow(state, found.userId);
   return { ok:true, withdrawal:wd, wallet };
 }
 async function saveWithdrawalRequestToFirebase(parsed, meta, qrImageData = ""){
@@ -2127,7 +2127,7 @@ async function handleIncomingWithdrawalMessage(m){
       const profile = found.profile || {};
       if(!profileApprovedForWithdrawal(profile, found.userId, entrySettings(state))){
         ensureWalletInState(state, found.userId);
-        await saveFirebaseState(state);
+        await saveGatewayProfileSync(state, found.userId);
         await replyToMessage(chatJid, "⏳ Aapka profile pending approval me hai. Admin approve karega uske baad wallet/withdrawal active hoga.", m);
         return true;
       }
@@ -2137,7 +2137,7 @@ async function handleIncomingWithdrawalMessage(m){
         const last = (Array.isArray(state.withdrawals) ? state.withdrawals : []).filter(x => x.userId === found.userId).slice(-1)[0];
         await replyToMessage(chatJid, withdrawalStatusText(last), m);
       }
-      await saveFirebaseState(state);
+      await saveGatewayProfileSync(state, found.userId);
       return true;
     }
     if(!parsed.ok){ await replyToMessage(chatJid, withdrawalRejectedText(parsed.message || "Withdrawal command invalid."), m); return true; }
@@ -4155,6 +4155,52 @@ async function putFirebaseTopLevelChildren(state){
   return out;
 }
 
+async function saveGatewayChildren(state, childKeys){
+  const out = {};
+  for(const key of childKeys){
+    if(Object.prototype.hasOwnProperty.call(state || {}, key)){
+      out[key] = await putFirebaseChild([key], state[key], null);
+    }
+  }
+  return out;
+}
+async function saveGatewayProfileSync(state, userId){
+  if(userId && state?.profiles?.[userId]) await putFirebaseChild(['profiles', userId], state.profiles[userId], null);
+  if(userId && state?.wallets?.[userId]) await putFirebaseChild(['wallets', userId], state.wallets[userId], null);
+  if(Array.isArray(state?.auditLog)) await putFirebaseChild(['auditLog'], state.auditLog.slice(-500), null);
+}
+async function saveGatewayEntryAcceptNarrow(state, userId){
+  await saveGatewayChildren(state, ['entries', 'walletTransactions', 'paymentOutbox']);
+  if(userId && state?.wallets?.[userId]) await putFirebaseChild(['wallets', userId], state.wallets[userId], null);
+  if(Array.isArray(state?.auditLog)) await putFirebaseChild(['auditLog'], state.auditLog.slice(-500), null);
+}
+async function saveGatewayWithdrawalNarrow(state, userId){
+  await saveGatewayChildren(state, ['withdrawals', 'walletTransactions', 'paymentOutbox']);
+  if(userId && state?.wallets?.[userId]) await putFirebaseChild(['wallets', userId], state.wallets[userId], null);
+  if(Array.isArray(state?.auditLog)) await putFirebaseChild(['auditLog'], state.auditLog.slice(-500), null);
+}
+async function saveGatewaySpamGuardNarrow(state){
+  await saveGatewayChildren(state, ['spamGuardSettings', 'spamGuardEvents']);
+}
+async function saveGatewayResultScrapeNarrow(state, updates, autoLedgerMark){
+  const date = todayISO();
+  const markets = [...new Set((updates || []).map(u => String(u.market || '')).filter(Boolean))];
+  for(const market of markets){
+    const rec = state?.resultRecords?.[date]?.[market];
+    if(rec) await putFirebaseChild(['resultRecords', date, market], rec, null);
+  }
+  if(autoLedgerMark?.changed) await saveGatewayAutoMarkNarrow(state, {date, details:autoLedgerMark.details || []});
+  if(Array.isArray(state?.auditLog)) await putFirebaseChild(['auditLog'], state.auditLog.slice(-500), null);
+}
+async function saveGatewayLoadForwarderNarrow(state){
+  await saveGatewayChildren(state, ['loadForwarderOutbox', 'loadForwarder']);
+}
+async function saveGatewayPaymentOutboxNarrow(state){
+  await saveGatewayChildren(state, ['paymentOutbox']);
+}
+async function saveGatewayWhatsappSafetyNarrow(state){
+  await saveGatewayChildren(state, ['whatsappSafetySettings', 'whatsappSafetyTargets', 'whatsappSafetyEvents']);
+}
 
 async function saveGatewayAutoMarkNarrow(state, summary){
   const date = summary?.date || todayISO();
@@ -4427,10 +4473,11 @@ async function autoScrapeResultsOnce(){
       autoLedgerMark.marked += Number(r.marked || 0);
       autoLedgerMark.pass += Number(r.pass || 0);
       autoLedgerMark.fail += Number(r.fail || 0);
+      autoLedgerMark.details = (autoLedgerMark.details || []).concat(r.details || []);
     }
   }
   gatewayHealth.lastLedgerAutoMark = autoLedgerMark;
-  if(merged.updates.length || autoLedgerMark.changed) await saveFirebaseState(merged.state);
+  if(merged.updates.length || autoLedgerMark.changed) await saveGatewayResultScrapeNarrow(merged.state, merged.updates, autoLedgerMark);
   return { status:"success", scraped:scrape.results, statuses:scrape.statuses || [], confirmed, updates:merged.updates, autoLedgerMark, skipped:merged.skipped || [], confirmRequired:RESULT_SCRAPE_CONFIRM_COUNT, errors:scrape.errors };
 }
 async function resultScrapeTick(){
@@ -4797,7 +4844,7 @@ async function loadForwarderTick(){
         }
       }
     }
-    if(changed) await saveFirebaseState(state);
+    if(changed) await saveGatewayLoadForwarderNarrow(state);
   }catch(e){
     gatewayHealth.lastLoadForwarderError = e.response ? `HTTP ${e.response.status}` : e.message;
     console.log("Load forwarder error:", e.response ? `HTTP ${e.response.status}` : e.message);
@@ -4837,7 +4884,7 @@ async function paymentOutboxTick(){
     if(changed){
       // Keep latest queue history compact.
       if(outbox.length > 300) state.paymentOutbox = outbox.slice(-300);
-      await saveFirebaseState(state);
+      await saveGatewayPaymentOutboxNarrow(state);
       const pending = (state.paymentOutbox || outbox).filter(x => x.status === "pending").length;
       console.log(`💳 Payment outbox processed. pending:${pending}`);
     }
@@ -5277,7 +5324,7 @@ app.post("/whatsapp_safety_pause", async (req,res)=>{
     state.whatsappSafetySettings.pauseReason = String(req.body?.reason || "Manual safety pause").slice(0,200);
     state.whatsappSafetySettings.updatedAt = nowIso();
     pushWhatsappSafetyEvent(state, {action:"global_paused", target:"ALL", reason:state.whatsappSafetySettings.pauseReason});
-    await saveFirebaseState(state);
+    await saveGatewayWhatsappSafetyNarrow(state);
     whatsappSafetyCache = {at:Date.now(), state};
     res.json({status:"success", settings:state.whatsappSafetySettings});
   }catch(e){ res.status(500).json({status:"error", message:e.message}); }
@@ -5291,7 +5338,7 @@ app.post("/whatsapp_safety_resume", async (req,res)=>{
     whatsappSafetyLocalState.consecutiveFailures = 0;
     pushWhatsappSafetyEvent(state, {action:"global_resumed", target:"ALL"});
     saveWhatsappSafetyLocalState();
-    await saveFirebaseState(state);
+    await saveGatewayWhatsappSafetyNarrow(state);
     whatsappSafetyCache = {at:Date.now(), state};
     res.json({status:"success", settings:state.whatsappSafetySettings});
   }catch(e){ res.status(500).json({status:"error", message:e.message}); }
@@ -5314,7 +5361,7 @@ app.post("/whatsapp_safety_target", async (req,res)=>{
     rec.pauseReason = rec.paused ? String(body.reason || rec.pauseReason || "Manual target pause").slice(0,200) : "";
     rec.updatedAt = nowIso();
     pushWhatsappSafetyEvent(state, {action:"target_update", target:key, approved:rec.approved, paused:rec.paused, reason:rec.pauseReason || ""});
-    await saveFirebaseState(state);
+    await saveGatewayWhatsappSafetyNarrow(state);
     whatsappSafetyCache = {at:Date.now(), state};
     res.json({status:"success", target:rec});
   }catch(e){ res.status(500).json({status:"error", message:e.message}); }

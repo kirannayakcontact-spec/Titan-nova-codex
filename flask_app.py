@@ -4495,7 +4495,19 @@ def save():
             _obs_exception('ledger_render_sync_guard_merge_failed', merge_err, {'route': '/save'})
         try:
             _ensure_foundation_state(incoming)
-            normal_updates = {k: v for k, v in incoming.items() if k not in ("firebaseManualOverwrite",)}
+            # Patch 4: normal /save is a UI sync path, not an import/restore path.
+            # Keep it on narrow Firebase children that the UI legitimately edits,
+            # instead of replaying every top-level child from the browser snapshot.
+            normal_save_allowed = {
+                'ledgerSchedules', 'scheduleTargets', 'botSchedule', 'botSchedules',
+                'targets', 'resultTargets', 'loadForwarder', 'loadForwarderOutbox',
+                'groups', 'contacts', 'whatsappGroups', 'whatsappContacts',
+                'spamGuardSettings', 'spamGuardEvents', 'whatsappSafetySettings',
+                'whatsappSafetyTargets', 'whatsappSafetyEvents', 'entrySettings',
+                'resultSettings', 'resultRecords', 'paymentOutbox',
+                'marketRegistry', 'marketLocks', 'marketAliases'
+            }
+            normal_updates = {k: v for k, v in incoming.items() if k in normal_save_allowed}
             _firebase_put_top_level_children(incoming, normal_updates, audit=False)
         except Exception as save_err:
             _obs_exception('normal_save_child_path_failed', save_err, {'route': '/save'})
