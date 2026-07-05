@@ -2024,21 +2024,47 @@ function paymentUpiLink(upi, name, amount, note){
   const am = amount > 0 ? `&am=${encodeURIComponent(String(amount))}` : '';
   return `upi://pay?pa=${pa}&pn=${pn}${am}&cu=INR&tn=${tn}`;
 }
-function depositInstructionsText(state, userId, amount = 0){
+function getDepositPaymentConfig(state){
+  const ds = state?.depositSettings?.v1 || {};
+  if(ds && typeof ds === 'object' && (ds.upiId || ds.qrImageUrl || ds.paymentName || ds.accountName)){
+    return {
+      source: 'depositSettings.v1',
+      name: ds.paymentName || ds.accountName || 'TITAN NOVA',
+      receiver: ds.accountName || ds.paymentName || 'TITAN NOVA',
+      bankName: ds.bankName || '',
+      phone: ds.phone || '',
+      qr: ds.qrImageUrl || '',
+      upis: [['UPI', ds.upiId]].filter(([,v]) => v)
+    };
+  }
   const pm = state?.paymentMethods || {};
-  const name = pm.name || 'TITAN NOVA';
-  const upiList = [
-    ['Default UPI', pm.upi],
-    ['PhonePe', pm.phonepeUpi],
-    ['GPay', pm.gpayUpi],
-    ['Paytm', pm.paytmUpi]
-  ].filter(([,v], idx, arr) => v && arr.findIndex(([,x]) => String(x).trim().toLowerCase() === String(v).trim().toLowerCase()) === idx);
+  return {
+    source: 'paymentMethods',
+    name: pm.name || 'TITAN NOVA',
+    receiver: pm.name || 'TITAN NOVA',
+    bankName: pm.bankName || '',
+    phone: pm.phone || '',
+    qr: pm.qr || '',
+    upis: [
+      ['Default UPI', pm.upi],
+      ['PhonePe', pm.phonepeUpi],
+      ['GPay', pm.gpayUpi],
+      ['Paytm', pm.paytmUpi]
+    ].filter(([,v], idx, arr) => v && arr.findIndex(([,x]) => String(x).trim().toLowerCase() === String(v).trim().toLowerCase()) === idx)
+  };
+}
+function depositInstructionsText(state, userId, amount = 0){
+  const cfg = getDepositPaymentConfig(state);
+  const name = cfg.name || 'TITAN NOVA';
+  const receiver = cfg.receiver || name;
+  const upiList = cfg.upis || [];
   const lines = [];
   lines.push('💳 *DEPOSIT / ADD MONEY*');
   lines.push('━━━━━━━━━━━━━━━━━━━━');
   if(amount > 0) lines.push(`💵 *Amount:* ${money(amount)}`);
-  lines.push(`👤 *Receiver:* ${name}`);
-  if(pm.phone) lines.push(`📱 *Phone:* ${pm.phone}`);
+  lines.push(`👤 *Receiver:* ${receiver}`);
+  if(cfg.bankName) lines.push(`🏦 *Bank:* ${cfg.bankName}`);
+  if(cfg.phone) lines.push(`📱 *Phone:* ${cfg.phone}`);
   if(upiList.length){
     lines.push('');
     lines.push('🏦 *UPI Details:*');
@@ -2055,8 +2081,8 @@ function depositInstructionsText(state, userId, amount = 0){
 }
 async function replyDepositInstructions(chatJid, state, userId, amount, quoted){
   const text = depositInstructionsText(state, userId, amount);
-  const pm = state?.paymentMethods || {};
-  const qr = String(pm.qr || '').trim();
+  const cfg = getDepositPaymentConfig(state);
+  const qr = String(cfg.qr || '').trim();
   if(!sock || !connected || !chatJid) return null;
   if(qr){
     return safeSendQueueRun(async () => {

@@ -14725,5 +14725,532 @@ def api_firebase_data_guard_status():
         'recentBackups': [{k:v for k,v in x.items() if k in ('file','size','mtime')} for x in backup_files],
     })
 
+
+# ==========================================================
+# DEPOSIT FLOW v1: backend APIs and setup UI
+# Runtime-owned by flask_app.py (no sitecustomize/usercustomize patches).
+# ==========================================================
+import datetime as _dt
+import hashlib as _hashlib
+import json as _json
+import os as _os
+import random as _random
+import re as _re
+import urllib.parse as _urlparse
+import urllib.request as _urlrequest
+import urllib.error as _urlerror
+import uuid as _uuid
+
+DEPOSIT_FLOW_V1_VERSION = "2026-07-05-deposit-flow-v1-backend-u1"
+_ALLOWED_STATUS = {
+    "new",
+    "payment_pending",
+    "payment_submitted",
+    "under_verification",
+    "approved",
+    "rejected",
+    "cancelled",
+}
+_DEFAULT_FIREBASE_DB_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/"
+
+
+def _now_iso() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        return _dt.datetime.now(ZoneInfo(_os.environ.get("APP_TZ", "Asia/Kolkata"))).isoformat(timespec="seconds")
+    except Exception:
+        return _dt.datetime.now().isoformat(timespec="seconds")
+
+
+def _business_date_compact() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        now = _dt.datetime.now(ZoneInfo(_os.environ.get("APP_TZ", "Asia/Kolkata")))
+    except Exception:
+        now = _dt.datetime.now()
+    try:
+        cutoff = int(str(_os.environ.get("TITAN_BUSINESS_DAY_CUTOFF_HOUR", "6")).strip() or "6")
+        cutoff = min(23, max(0, cutoff))
+    except Exception:
+        cutoff = 6
+    if now.hour < cutoff:
+        now = now - _dt.timedelta(days=1)
+    return now.strftime("%Y%m%d")
+
+
+def _firebase_root_url() -> str:
+    url = (_os.environ.get("FIREBASE_URL") or _os.environ.get("FIREBASE_DB_URL") or _DEFAULT_FIREBASE_DB_URL).strip()
+    if not url:
+        url = _DEFAULT_FIREBASE_DB_URL
+    url = url.rstrip("/")
+    if not url.endswith(".json"):
+        url += "/titan_master_data.json"
+    return url
+
+
+def _firebase_child_url(*parts: str) -> str:
+    root = _firebase_root_url()
+    base = root[:-5] if root.endswith(".json") else root.rstrip("/")
+    clean = [_urlparse.quote(str(p), safe="") for p in parts if str(p) != ""]
+    if not clean:
+        return root
+    return base + "/" + "/".join(clean) + ".json"
+
+
+def _json_request(method: str, url: str, payload=None, timeout: int = 10):
+    data = None
+    headers = {"Content-Type": "application/json"}
+    if payload is not None:
+        data = _json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = _urlrequest.Request(url, data=data, method=method.upper(), headers=headers)
+    try:
+        with _urlrequest.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+            if not raw:
+                return None
+            try:
+                return _json.loads(raw)
+            except Exception:
+                return raw
+    except _urlerror.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"Firebase HTTP {e.code}: {body}")
+
+
+def _fb_get(parts, default=None):
+    try:
+        val = _json_request("GET", _firebase_child_url(*parts), timeout=10)
+        return default if val is None else val
+    except Exception:
+        raise
+
+
+def _fb_put(parts, value):
+    return _json_request("PUT", _firebase_child_url(*parts), value, timeout=12)
+
+
+def _fb_patch(parts, value):
+    return _json_request("PATCH", _firebase_child_url(*parts), value, timeout=12)
+
+
+def _normalize_phone(phone: str) -> str:
+    digits = _re.sub(r"\D+", "", str(phone or ""))
+    if len(digits) == 10:
+        digits = "91" + digits
+    return digits
+
+
+def _normalize_utr(utr: str) -> str:
+    return _re.sub(r"[^A-Za-z0-9]", "", str(utr or "")).upper()[:80]
+
+
+def _utr_hash(utr: str) -> str:
+    return _hashlib.sha256(_normalize_utr(utr).encode("utf-8")).hexdigest()
+
+
+def _money_amount(value):
+    try:
+        amt = float(str(value or "0").replace(",", "").strip())
+    except Exception:
+        amt = 0.0
+    if amt <= 0:
+        return None
+    return round(amt, 2)
+
+
+def _deposit_settings_default() -> dict:
+    return {
+        "version": DEPOSIT_FLOW_V1_VERSION,
+        "enabled": True,
+        "paymentName": _os.environ.get("TITAN_PAYMENT_NAME", "TITAN NOVA").strip() or "TITAN NOVA",
+        "upiId": _os.environ.get("TITAN_UPI_ID", "").strip(),
+        "accountName": _os.environ.get("TITAN_PAYMENT_ACCOUNT_NAME", _os.environ.get("TITAN_PAYMENT_NAME", "TITAN NOVA")).strip() or "TITAN NOVA",
+        "bankName": _os.environ.get("TITAN_PAYMENT_BANK", "").strip(),
+        "qrImageUrl": _os.environ.get("TITAN_PAYMENT_QR_URL", "").strip(),
+        "minDeposit": float(_os.environ.get("TITAN_MIN_DEPOSIT", "1") or "1"),
+        "maxDeposit": float(_os.environ.get("TITAN_MAX_DEPOSIT", "100000") or "100000"),
+        "manualApproval": True,
+        "autoWhatsapp": False,
+        "createdBy": "deposit_flow_v1_default",
+        "updatedAt": _now_iso(),
+    }
+
+
+def _get_deposit_settings() -> dict:
+    saved = _fb_get(["depositSettings", "v1"], default={})
+    base = _deposit_settings_default()
+    if isinstance(saved, dict):
+        base.update(saved)
+    base["version"] = DEPOSIT_FLOW_V1_VERSION
+    return base
+
+
+def _save_deposit_settings(data: dict) -> dict:
+    cur = _get_deposit_settings()
+    allowed = {
+        "enabled", "paymentName", "upiId", "accountName", "bankName", "qrImageUrl",
+        "minDeposit", "maxDeposit", "manualApproval", "autoWhatsapp", "adminNote"
+    }
+    for key in allowed:
+        if key in data:
+            cur[key] = data.get(key)
+    for k in ("enabled", "manualApproval", "autoWhatsapp"):
+        cur[k] = bool(cur.get(k))
+    for k in ("minDeposit", "maxDeposit"):
+        try:
+            cur[k] = float(cur.get(k) or 0)
+        except Exception:
+            cur[k] = 0.0
+    cur["version"] = DEPOSIT_FLOW_V1_VERSION
+    cur["updatedAt"] = _now_iso()
+    _fb_put(["depositSettings", "v1"], cur)
+    return cur
+
+
+def _new_deposit_id() -> str:
+    stamp = _dt.datetime.now().strftime("%H%M%S")
+    return f"DEP-{_business_date_compact()}-{stamp}-{_random.randint(1000, 9999)}"
+
+
+def _audit(deposit_id: str, event: str, detail=None):
+    rec = {
+        "id": _uuid.uuid4().hex[:12],
+        "depositId": deposit_id,
+        "event": str(event or "event")[:80],
+        "time": _now_iso(),
+        "version": DEPOSIT_FLOW_V1_VERSION,
+        "detail": detail or {},
+    }
+    _fb_put(["depositAuditLog", deposit_id, rec["id"]], rec)
+    return rec
+
+
+def _register_deposit_routes(app):
+    if getattr(app, "_titan_deposit_flow_v1_registered", False):
+        return
+    app._titan_deposit_flow_v1_registered = True
+
+    from flask import jsonify, request
+
+    @app.route("/api/deposit_flow_v1/status", methods=["GET"])
+    def titan_deposit_flow_v1_status():
+        return jsonify({
+            "status": "success",
+            "feature": "deposit_flow_v1",
+            "version": DEPOSIT_FLOW_V1_VERSION,
+            "endpoints": [
+                "/api/deposit_flow_v1/settings",
+                "/api/deposit_flow_v1/request",
+                "/api/deposit_flow_v1/list",
+                "/api/deposit_flow_v1/detail/<depositId>",
+                "/api/deposit_flow_v1/update",
+            ],
+            "note": "Update 1 backend APIs only. Wallet credit and WhatsApp automation come in later updates.",
+        })
+
+    @app.route("/api/deposit_flow_v1/settings", methods=["GET", "POST"])
+    def titan_deposit_flow_v1_settings():
+        try:
+            if request.method == "GET":
+                return jsonify({"status": "success", "settings": _get_deposit_settings(), "version": DEPOSIT_FLOW_V1_VERSION})
+            data = request.get_json(silent=True) or {}
+            settings = _save_deposit_settings(data)
+            _audit("SETTINGS", "deposit_settings_saved", {"keys": sorted(list(data.keys()))})
+            return jsonify({"status": "success", "settings": settings, "version": DEPOSIT_FLOW_V1_VERSION})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
+
+    @app.route("/api/deposit_flow_v1/request", methods=["POST"])
+    def titan_deposit_flow_v1_request():
+        try:
+            data = request.get_json(silent=True) or {}
+            settings = _get_deposit_settings()
+            if not settings.get("enabled", True):
+                return jsonify({"status": "error", "message": "Deposit flow disabled", "version": DEPOSIT_FLOW_V1_VERSION}), 403
+            amount = _money_amount(data.get("amount"))
+            if amount is None:
+                return jsonify({"status": "error", "message": "Valid deposit amount required", "version": DEPOSIT_FLOW_V1_VERSION}), 400
+            min_dep = float(settings.get("minDeposit") or 0)
+            max_dep = float(settings.get("maxDeposit") or 0)
+            if min_dep and amount < min_dep:
+                return jsonify({"status": "error", "message": f"Minimum deposit is ₹{min_dep:g}", "version": DEPOSIT_FLOW_V1_VERSION}), 400
+            if max_dep and amount > max_dep:
+                return jsonify({"status": "error", "message": f"Maximum deposit is ₹{max_dep:g}", "version": DEPOSIT_FLOW_V1_VERSION}), 400
+
+            utr = _normalize_utr(data.get("utr") or data.get("utrNumber") or data.get("transactionId"))
+            if utr:
+                existing = _fb_get(["depositUtrIndex", _utr_hash(utr)], default=None)
+                if existing:
+                    return jsonify({"status": "error", "message": "Duplicate UTR blocked", "existing": existing, "version": DEPOSIT_FLOW_V1_VERSION}), 409
+
+            deposit_id = str(data.get("depositId") or "").strip() or _new_deposit_id()
+            proof_url = str(data.get("proofUrl") or data.get("screenshotUrl") or data.get("imageUrl") or "").strip()
+            current_status = "payment_submitted" if (utr or proof_url) else "payment_pending"
+            user_id = str(data.get("userId") or data.get("profileId") or data.get("customerId") or "guest").strip() or "guest"
+            rec = {
+                "id": deposit_id,
+                "depositId": deposit_id,
+                "version": DEPOSIT_FLOW_V1_VERSION,
+                "status": current_status,
+                "stage": current_status,
+                "userId": user_id,
+                "profileId": str(data.get("profileId") or user_id),
+                "customerName": str(data.get("customerName") or data.get("name") or "").strip(),
+                "phoneNumber": _normalize_phone(data.get("phoneNumber") or data.get("phone") or ""),
+                "amount": amount,
+                "utr": utr,
+                "proofUrl": proof_url,
+                "note": str(data.get("note") or "").strip()[:500],
+                "createdAt": _now_iso(),
+                "updatedAt": _now_iso(),
+                "createdBusinessDate": _business_date_compact(),
+                "payment": {
+                    "upiId": settings.get("upiId", ""),
+                    "accountName": settings.get("accountName", ""),
+                    "paymentName": settings.get("paymentName", ""),
+                    "qrImageUrl": settings.get("qrImageUrl", ""),
+                },
+                "walletCredit": {"applied": False, "readyForUpdate4": False},
+                "whatsapp": {"queued": False, "sent": False, "readyForUpdate3": False},
+            }
+            _fb_put(["depositRequests", deposit_id], rec)
+            if utr:
+                _fb_put(["depositUtrIndex", _utr_hash(utr)], {"depositId": deposit_id, "utr": utr, "amount": amount, "createdAt": rec["createdAt"]})
+            _audit(deposit_id, "deposit_request_created", {"status": current_status, "amount": amount, "userId": user_id})
+            return jsonify({"status": "success", "deposit": rec, "settings": settings, "version": DEPOSIT_FLOW_V1_VERSION})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
+
+    @app.route("/api/deposit_flow_v1/list", methods=["GET"])
+    def titan_deposit_flow_v1_list():
+        try:
+            status_filter = str(request.args.get("status") or "").strip().lower()
+            limit = int(str(request.args.get("limit") or "50").strip() or "50")
+            limit = max(1, min(limit, 300))
+            records = _fb_get(["depositRequests"], default={})
+            items = list(records.values()) if isinstance(records, dict) else []
+            if status_filter:
+                items = [x for x in items if isinstance(x, dict) and str(x.get("status") or "").lower() == status_filter]
+            items.sort(key=lambda x: str((x or {}).get("updatedAt") or (x or {}).get("createdAt") or ""), reverse=True)
+            return jsonify({"status": "success", "deposits": items[:limit], "count": len(items), "version": DEPOSIT_FLOW_V1_VERSION})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
+
+    @app.route("/api/deposit_flow_v1/detail/<deposit_id>", methods=["GET"])
+    def titan_deposit_flow_v1_detail(deposit_id):
+        try:
+            rec = _fb_get(["depositRequests", deposit_id], default=None)
+            if not rec:
+                return jsonify({"status": "error", "message": "Deposit not found", "version": DEPOSIT_FLOW_V1_VERSION}), 404
+            audit = _fb_get(["depositAuditLog", deposit_id], default={})
+            return jsonify({"status": "success", "deposit": rec, "audit": audit or {}, "version": DEPOSIT_FLOW_V1_VERSION})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
+
+    @app.route("/api/deposit_flow_v1/update", methods=["POST"])
+    def titan_deposit_flow_v1_update():
+        try:
+            data = request.get_json(silent=True) or {}
+            deposit_id = str(data.get("depositId") or data.get("id") or "").strip()
+            if not deposit_id:
+                return jsonify({"status": "error", "message": "depositId required", "version": DEPOSIT_FLOW_V1_VERSION}), 400
+            rec = _fb_get(["depositRequests", deposit_id], default=None)
+            if not isinstance(rec, dict):
+                return jsonify({"status": "error", "message": "Deposit not found", "version": DEPOSIT_FLOW_V1_VERSION}), 404
+            updates = {}
+            new_status = str(data.get("status") or "").strip().lower()
+            if new_status:
+                if new_status not in _ALLOWED_STATUS:
+                    return jsonify({"status": "error", "message": "Invalid deposit status", "allowed": sorted(_ALLOWED_STATUS), "version": DEPOSIT_FLOW_V1_VERSION}), 400
+                updates["status"] = new_status
+                updates["stage"] = new_status
+            for key in ("adminNote", "rejectReason", "verificationNote", "proofUrl", "utr"):
+                if key in data:
+                    updates[key] = str(data.get(key) or "").strip()[:1000]
+            if "utr" in updates:
+                updates["utr"] = _normalize_utr(updates.get("utr"))
+            updates["updatedAt"] = _now_iso()
+            updates["lastUpdatedBy"] = str(data.get("updatedBy") or "admin").strip()[:80]
+            _fb_patch(["depositRequests", deposit_id], updates)
+            if updates.get("utr"):
+                _fb_put(["depositUtrIndex", _utr_hash(updates["utr"])], {"depositId": deposit_id, "utr": updates["utr"], "updatedAt": updates["updatedAt"]})
+            fresh = dict(rec)
+            fresh.update(updates)
+            _audit(deposit_id, "deposit_request_updated", {"updates": updates})
+            return jsonify({"status": "success", "deposit": fresh, "updates": updates, "version": DEPOSIT_FLOW_V1_VERSION})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
+
+
+DEPOSIT_FLOW_V1_UI_VERSION = "2026-07-05-deposit-flow-v1-setup-ui-u2"
+
+
+def _deposit_setup_html() -> str:
+    return r"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Titan Nova Deposit Setup</title>
+  <style>
+    :root{--bg:#07111f;--card:#101c2e;--soft:#17263d;--line:#26405f;--txt:#eef6ff;--muted:#8fb2d4;--ok:#1ed760;--danger:#ff4d6d;--brand:#2aabee;--warn:#ffcc66}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#07111f,#0c1728);color:var(--txt);font-family:Inter,Arial,sans-serif;padding:16px}
+    .wrap{max-width:860px;margin:0 auto}.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}.title{font-size:22px;font-weight:900}.badge{font-size:11px;color:#062013;background:var(--ok);border-radius:999px;padding:7px 10px;font-weight:900}
+    .grid{display:grid;grid-template-columns:1fr;gap:14px}@media(min-width:760px){.grid{grid-template-columns:1.1fr .9fr}}
+    .card{background:rgba(16,28,46,.96);border:1px solid rgba(42,171,238,.22);border-radius:18px;padding:16px;box-shadow:0 14px 38px rgba(0,0,0,.28)}
+    label{display:block;font-size:12px;color:var(--muted);margin:12px 0 7px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}input,textarea,select{width:100%;background:#07111f;border:1px solid var(--line);color:var(--txt);border-radius:13px;padding:13px;font-size:15px;outline:none}textarea{min-height:78px;resize:vertical}
+    input:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(42,171,238,.14)}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:10px}.toggle input{width:auto;transform:scale(1.2)}
+    button{border:0;border-radius:13px;padding:13px 14px;font-weight:900;color:white;background:var(--brand);width:100%;margin-top:12px;font-size:14px}.secondary{background:#263b59}.danger{background:var(--danger)}.ok{background:var(--ok);color:#062013}.hint{color:var(--muted);font-size:12px;line-height:1.45}.status{padding:11px 12px;border-radius:14px;margin:12px 0;background:#0b1727;border:1px solid var(--line);color:var(--muted);font-size:13px;white-space:pre-wrap}.status.good{border-color:rgba(30,215,96,.45);color:#b9ffd0}.status.bad{border-color:rgba(255,77,109,.55);color:#ffc7d2}.qr{width:100%;min-height:230px;background:#07111f;border:1px dashed var(--line);border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden}.qr img{max-width:100%;max-height:320px;display:block}.mini{font-size:12px;color:var(--muted)}.list{display:flex;flex-direction:column;gap:9px;margin-top:10px}.item{padding:11px;border:1px solid var(--line);border-radius:14px;background:#0b1727}.item b{font-size:13px}.pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#1a2d48;color:#b8d8ff;font-size:11px;font-weight:900;margin-left:6px}.copy{font-size:12px;color:#9fd3ff;word-break:break-all}.footer{margin-top:14px;color:var(--muted);font-size:12px;text-align:center}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><div class="title">💳 Deposit Flow v1 Setup</div><div class="hint">UPI, QR aur deposit limit yahin se save honge.</div></div>
+    <div class="badge">UPDATE 2 UI</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3 style="margin:0 0 8px">Payment Settings</h3>
+      <div id="status" class="status">Loading settings...</div>
+
+      <label>Payment Name</label>
+      <input id="paymentName" placeholder="TITAN NOVA">
+
+      <label>UPI ID</label>
+      <input id="upiId" placeholder="example@upi" autocomplete="off">
+
+      <label>Account / Receiver Name</label>
+      <input id="accountName" placeholder="Titan Nova">
+
+      <label>Bank Name Optional</label>
+      <input id="bankName" placeholder="Optional">
+
+      <div class="row">
+        <div><label>Minimum Deposit</label><input id="minDeposit" type="number" min="0" step="1" placeholder="100"></div>
+        <div><label>Maximum Deposit</label><input id="maxDeposit" type="number" min="0" step="1" placeholder="100000"></div>
+      </div>
+
+      <label>QR Image URL</label>
+      <input id="qrImageUrl" placeholder="https://.../qr.jpg" oninput="previewQr()">
+      <div class="hint">Abhi quick update me QR image URL paste/save supported hai. File upload next patch me existing /api/upload_image se connect karenge.</div>
+
+      <div class="toggle"><div><b>Deposit Enabled</b><div class="mini">User deposit request bana payega</div></div><input id="enabled" type="checkbox"></div>
+      <div class="toggle"><div><b>Manual Approval</b><div class="mini">Wallet credit admin approve ke baad hoga</div></div><input id="manualApproval" type="checkbox"></div>
+      <div class="toggle"><div><b>Auto WhatsApp</b><div class="mini">Update 3 me Gateway se auto send hoga</div></div><input id="autoWhatsapp" type="checkbox"></div>
+
+      <label>Admin Note</label>
+      <textarea id="adminNote" placeholder="Internal note..."></textarea>
+
+      <button onclick="saveSettings()">💾 Save Deposit Setup</button>
+      <button class="secondary" onclick="loadSettings()">🔄 Reload</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px">QR Preview</h3>
+      <div class="qr" id="qrBox"><span class="hint">QR URL save karne ke baad preview dikhega</span></div>
+      <div class="status" id="summary">No settings loaded yet.</div>
+      <button class="ok" onclick="copyPaymentMessage()">📋 Copy Payment Message</button>
+      <button class="secondary" onclick="openStatus()">🧪 Open Backend Status</button>
+
+      <h3 style="margin:18px 0 8px">Latest Deposits</h3>
+      <div id="depositList" class="list"><div class="hint">Loading...</div></div>
+      <button class="secondary" onclick="loadDeposits()">Refresh Deposits</button>
+    </div>
+  </div>
+  <div class="footer">Titan Nova Deposit Flow v1 · Setup UI Update 2</div>
+</div>
+
+<script>
+const API = '/api/deposit_flow_v1';
+function qs(id){ return document.getElementById(id); }
+function setStatus(msg, good=false, bad=false){ const el=qs('status'); el.textContent=msg; el.className='status '+(good?'good':bad?'bad':''); }
+async function jfetch(url, opt={}){
+  const token = localStorage.getItem('TITAN_ADMIN_TOKEN') || '';
+  opt.headers = Object.assign({'Content-Type':'application/json'}, opt.headers || {});
+  if(token) opt.headers['X-Titan-Admin-Token'] = token;
+  const r = await fetch(url, opt);
+  const j = await r.json().catch(()=>({status:'error', message:'Invalid JSON'}));
+  if(!r.ok) throw new Error(j.message || ('HTTP '+r.status));
+  return j;
+}
+function fill(s){
+  qs('paymentName').value = s.paymentName || '';
+  qs('upiId').value = s.upiId || '';
+  qs('accountName').value = s.accountName || '';
+  qs('bankName').value = s.bankName || '';
+  qs('qrImageUrl').value = s.qrImageUrl || '';
+  qs('minDeposit').value = s.minDeposit ?? '';
+  qs('maxDeposit').value = s.maxDeposit ?? '';
+  qs('enabled').checked = !!s.enabled;
+  qs('manualApproval').checked = !!s.manualApproval;
+  qs('autoWhatsapp').checked = !!s.autoWhatsapp;
+  qs('adminNote').value = s.adminNote || '';
+  previewQr();
+  qs('summary').textContent = `Name: ${s.paymentName || '-'}\nUPI: ${s.upiId || '-'}\nLimit: ₹${s.minDeposit || 0} - ₹${s.maxDeposit || 0}\nManual Approval: ${s.manualApproval?'ON':'OFF'}\nAuto WhatsApp: ${s.autoWhatsapp?'ON':'OFF'}`;
+}
+async function loadSettings(){
+  try{ setStatus('Loading settings...'); const j=await jfetch(API+'/settings'); fill(j.settings||{}); setStatus('Settings loaded ✅', true); }
+  catch(e){ setStatus('Load failed: '+e.message, false, true); }
+}
+async function saveSettings(){
+  try{
+    const payload = {
+      paymentName: qs('paymentName').value.trim(), upiId: qs('upiId').value.trim(), accountName: qs('accountName').value.trim(), bankName: qs('bankName').value.trim(), qrImageUrl: qs('qrImageUrl').value.trim(),
+      minDeposit: Number(qs('minDeposit').value||0), maxDeposit: Number(qs('maxDeposit').value||0), enabled: qs('enabled').checked, manualApproval: qs('manualApproval').checked, autoWhatsapp: qs('autoWhatsapp').checked, adminNote: qs('adminNote').value.trim()
+    };
+    if(!payload.paymentName) throw new Error('Payment Name required');
+    if(!payload.upiId) throw new Error('UPI ID required');
+    if(payload.maxDeposit && payload.minDeposit && payload.maxDeposit < payload.minDeposit) throw new Error('Maximum deposit minimum se kam nahi ho sakta');
+    setStatus('Saving...'); const j=await jfetch(API+'/settings',{method:'POST',body:JSON.stringify(payload)}); fill(j.settings||{}); setStatus('Deposit setup saved ✅', true); await loadDeposits();
+  }catch(e){ setStatus('Save failed: '+e.message, false, true); }
+}
+function previewQr(){
+  const url = qs('qrImageUrl').value.trim();
+  qs('qrBox').innerHTML = url ? `<img src="${url.replace(/"/g,'&quot;')}" onerror="this.parentElement.innerHTML='<span class=hint>QR image load nahi hua. URL check karo.</span>'">` : '<span class="hint">QR URL save karne ke baad preview dikhega</span>';
+}
+function paymentMessage(){
+  return `💳 TITAN NOVA PAYMENT\n\nName: ${qs('paymentName').value || '-'}\nUPI: ${qs('upiId').value || '-'}\nReceiver: ${qs('accountName').value || '-'}\nMin: ₹${qs('minDeposit').value || 0}\nMax: ₹${qs('maxDeposit').value || 0}\n\nPayment ke baad UTR aur screenshot submit kare.`;
+}
+async function copyPaymentMessage(){
+  const msg = paymentMessage();
+  try{ await navigator.clipboard.writeText(msg); setStatus('Payment message copied ✅', true); }
+  catch(e){ prompt('Copy payment message:', msg); }
+}
+function openStatus(){ window.open(API+'/status','_blank'); }
+async function loadDeposits(){
+  try{
+    const j = await jfetch(API+'/list?limit=8'); const arr = j.deposits || [];
+    qs('depositList').innerHTML = arr.length ? arr.map(d=>`<div class="item"><b>${d.depositId||d.id}</b><span class="pill">${d.status||'-'}</span><div class="mini">₹${d.amount||0} · ${d.customerName||d.userId||'guest'}</div><div class="copy">${d.utr||''}</div></div>`).join('') : '<div class="hint">No deposits yet.</div>';
+  }catch(e){ qs('depositList').innerHTML = '<div class="hint">Deposit list load failed: '+e.message+'</div>'; }
+}
+loadSettings(); loadDeposits();
+</script>
+</body>
+</html>
+"""
+
+
+def _register_deposit_setup_ui(app):
+    if getattr(app, "_titan_deposit_flow_v1_setup_ui_registered", False):
+        return
+    app._titan_deposit_flow_v1_setup_ui_registered = True
+
+    from flask import Response, jsonify
+
+    @app.route("/api/deposit_flow_v1/setup_ui", methods=["GET"])
+    def titan_deposit_flow_v1_setup_ui():
+        return Response(_deposit_setup_html(), mimetype="text/html")
+
+    @app.route("/api/deposit_flow_v1/ui_status", methods=["GET"])
+    def titan_deposit_flow_v1_ui_status():
+        return jsonify({"status":"success","ui":"deposit_setup","version":DEPOSIT_FLOW_V1_UI_VERSION,"open":"/api/deposit_flow_v1/setup_ui"})
+
+
+_register_deposit_routes(app)
+_register_deposit_setup_ui(app)
+
 if __name__ == '__main__':
     app.run(debug=False)
