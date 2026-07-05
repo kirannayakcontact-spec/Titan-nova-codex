@@ -3998,6 +3998,26 @@ function realtimeCacheGet(){
 }
 function realtimeCacheSet(st){ if(st && typeof st === "object"){ realtimeStateCache = realtimeClone(st); realtimeStateCacheAt = Date.now(); } }
 function realtimeCacheClear(){ realtimeStateCache = null; realtimeStateCacheAt = 0; }
+function realtimeCacheApplyChild(parts, data, mode="put"){
+  if(!realtimeStateCache || !Array.isArray(parts) || !parts.length) return;
+  try{
+    const root = realtimeClone(realtimeStateCache);
+    let cur = root;
+    for(let i = 0; i < parts.length - 1; i++){
+      const key = String(parts[i]);
+      if(!cur[key] || typeof cur[key] !== "object" || Array.isArray(cur[key])) cur[key] = {};
+      cur = cur[key];
+    }
+    const leaf = String(parts[parts.length - 1]);
+    if(mode === "delete") delete cur[leaf];
+    else if(mode === "patch" && cur[leaf] && typeof cur[leaf] === "object" && !Array.isArray(cur[leaf]) && data && typeof data === "object" && !Array.isArray(data)) cur[leaf] = Object.assign({}, cur[leaf], realtimeClone(data));
+    else cur[leaf] = realtimeClone(data);
+    realtimeStateCache = root;
+    realtimeStateCacheAt = Date.now();
+  }catch(e){
+    realtimeCacheClear();
+  }
+}
 async function fetchFirebaseState(opts={}){
   try{
     if(!opts.force){ const cached = realtimeCacheGet(); if(cached) return cached; }
@@ -4277,12 +4297,12 @@ async function fetchFirebaseChildWithEtag(parts){
 async function putFirebaseChild(parts, data, etag='*'){
   const headers = etag ? {'if-match':etag} : {};
   const res = await axios.put(firebaseChildUrl(parts), data || {}, { timeout:8000, headers });
-  realtimeCacheClear();
+  realtimeCacheApplyChild(parts, data || {}, "put");
   return res.data;
 }
 async function patchFirebaseChild(parts, data){
   const res = await axios.patch(firebaseChildUrl(parts), data || {}, { timeout:8000 });
-  realtimeCacheClear();
+  realtimeCacheApplyChild(parts, Object.assign({}, data || {}), "patch");
   return res.data;
 }
 function durableExpired(rec){
