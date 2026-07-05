@@ -4512,6 +4512,16 @@ def approve_vip_profile_api():
         'autoCreated': bool(profile.get('autoCreated')),
     }
     try:
+        # Write approval to the exact VIP profile child and verify it. Some older
+        # deployments also have a normal /save sync running in the browser, so the
+        # endpoint must make Firebase the source of truth immediately instead of
+        # only changing local UI state.
+        _firebase_patch_child(['profiles', pid], patch)
+        verified_profile = _firebase_get_child(['profiles', pid], timeout=8)
+        if not isinstance(verified_profile, dict) or str(verified_profile.get('approvalStatus') or '').lower() != 'approved' or verified_profile.get('vipAccessEnabled') is False:
+            verified_profile = dict(profile)
+            verified_profile.update(patch)
+            _firebase_put_child(['profiles', pid], verified_profile)
         _firebase_patch_child(['profiles', pid], patch)
         wallets = state.get('wallets') if isinstance(state.get('wallets'), dict) else {}
         wallet = wallets.get(pid) if isinstance(wallets.get(pid), dict) else None
@@ -4531,6 +4541,15 @@ def approve_vip_profile_api():
             wallet.update({'userId': pid, 'name': wallet.get('name') or profile.get('name') or pid, 'phone': wallet.get('phone') or profile.get('phone') or '', 'updatedAt': now})
             _firebase_patch_child(['wallets', pid], {'userId': wallet.get('userId'), 'name': wallet.get('name'), 'phone': wallet.get('phone'), 'updatedAt': now})
         audit_id = 'vip_approve_' + uuid.uuid4().hex[:10]
+        try:
+            _firebase_put_child(['auditLog', audit_id], {'id': audit_id, 'time': now, 'action': 'vip_profile_approved', 'detail': {'userId': pid, 'name': profile.get('name') or '', 'phone': profile.get('phone') or '', 'approvedBy': admin_id}})
+        except Exception as audit_err:
+            _obs_exception('vip_profile_approve_audit_failed', audit_err, {'userId': pid})
+        saved_profile = _firebase_get_child(['profiles', pid], timeout=8)
+        if not isinstance(saved_profile, dict) or str(saved_profile.get('approvalStatus') or '').lower() != 'approved' or saved_profile.get('vipAccessEnabled') is False:
+            return jsonify({'status': 'error', 'message': 'VIP approval could not be verified in Firebase'}), 409
+        profile.update(saved_profile)
+        return jsonify({'status': 'success', 'profile': profile, 'wallet': wallet, 'message': 'VIP profile approved and saved', 'verified': True})
         _firebase_put_child(['auditLog', audit_id], {'id': audit_id, 'time': now, 'action': 'vip_profile_approved', 'detail': {'userId': pid, 'name': profile.get('name') or '', 'phone': profile.get('phone') or '', 'approvedBy': admin_id}})
         profile.update(patch)
         return jsonify({'status': 'success', 'profile': profile, 'wallet': wallet, 'message': 'VIP profile approved and saved'})
@@ -4614,6 +4633,22 @@ def save():
             for pid, profile in (incoming.get('profiles') or {}).items():
                 if isinstance(profile, dict) and isinstance(profile.get('config'), dict):
                     _firebase_put_child(['profiles', str(pid), 'config'], profile.get('config'))
+                # VIP approvals are profile metadata, not ledger dayRecords. Persist only
+                # approved/non-pending metadata from normal UI saves so a queued save cannot
+                # leave auto-created WhatsApp users pending after refresh. Never write a
+                # stale pending status here over a profile that may have just been approved.
+                if isinstance(profile, dict) and not str(pid).startswith('admin'):
+                    status = str(profile.get('approvalStatus') or '').lower()
+                    if status == 'approved':
+                        approval_patch = {
+                            'approvalStatus': 'approved',
+                            'vipAccessEnabled': profile.get('vipAccessEnabled') is not False,
+                            'approvedAt': profile.get('approvedAt') or _now_iso_local(),
+                            'approvedBy': profile.get('approvedBy') or incoming.get('activeId') or 'admin1',
+                        }
+                        if 'autoCreated' in profile:
+                            approval_patch['autoCreated'] = bool(profile.get('autoCreated'))
+                        _firebase_patch_child(['profiles', str(pid)], approval_patch)
         except Exception as save_err:
             _obs_exception('normal_save_child_path_failed', save_err, {'route': '/save'})
             return jsonify({"status": "error", "message": "Firebase child-path save failed.", "manualOverwrite": False}), 500
