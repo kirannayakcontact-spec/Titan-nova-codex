@@ -3358,6 +3358,9 @@ def get_state_api():
         if TITAN_VIP_ACCESS_ENFORCE and not vip_access.get('allowed'):
             return jsonify({"status": "blocked", "message": "VIP access blocked: " + ",".join(vip_access.get('reasons') or []), "userSafety": vip_access}), int(vip_access.get('httpStatus') or 403)
         user_payments = [p for p in state.get("payments", []) if isinstance(p, dict) and p.get("userId") == vip_id]
+        vip_entry_settings = _default_entry_settings()
+        if isinstance(state.get("entrySettings"), dict):
+            vip_entry_settings.update(state.get("entrySettings") or {})
         isolated_state = {
             "activeId": vip_id,
             "broadcasts": state.get("broadcasts", []),
@@ -3372,7 +3375,7 @@ def get_state_api():
             "wallets": {vip_id: state.get("wallets", {}).get(vip_id, {})} if isinstance(state.get("wallets"), dict) else {},
             "walletTransactions": [t for t in _wallet_transactions_from_state(state, vip_id, 500)],
             "walletSettings": state.get("walletSettings", _default_wallet_settings()),
-            "entrySettings": state.get("entrySettings", _default_entry_settings()),
+            "entrySettings": vip_entry_settings,
             "entries": [e for e in state.get("entries", []) if isinstance(e, dict) and e.get("userId") == vip_id],
             "settlementRecords": {},
             "ledgerAutoMarkRecords": {},

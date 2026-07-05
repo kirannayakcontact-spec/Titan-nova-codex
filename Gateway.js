@@ -976,6 +976,9 @@ function parseEntryFieldsByTemplate(raw, template){
   ENTRY_FORMAT_PLACEHOLDERS.forEach(k => { fields[k] = String(match.groups[k] || "").trim(); });
   return fields;
 }
+function parseEntryCardDynamic(text, template=DEFAULT_ENTRY_FORMAT_TEMPLATE, state=null){
+  const raw = String(text || "").replace(/\r/g, "\n").trim();
+  template = String(template || DEFAULT_ENTRY_FORMAT_TEMPLATE).trim() || DEFAULT_ENTRY_FORMAT_TEMPLATE;
 function parseEntryCard(text, state=null){
   const raw = String(text || "").replace(/\r/g, "\n").trim();
   const template = entryFormatTemplate(state);
@@ -998,7 +1001,7 @@ function parseEntryCard(text, state=null){
   }
   const missing = [];
   for(const k of ["market", "type", "digits", "parDigit", "total"]) if(!fields[k]) missing.push(k);
-  if(missing.length) return { ok:false, reason:"missing_fields", message:`Missing field: ${missing.join(", ")}. Strict format: MARKET, TYPE, DIGITS, PAR DIGIT, TOTAL` };
+  if(missing.length) return { ok:false, reason:"missing_field", message:`Missing field: ${missing.join(", ")}. Strict format: MARKET, TYPE, DIGITS, PAR DIGIT, TOTAL` };
   let gameType = String(fields.type || "").trim().toUpperCase();
   if(gameType === "PANEL" || gameType === "PANNEL") gameType = "PENEL";
   if(!["ANK", "JODI", "PENEL"].includes(gameType)) return { ok:false, reason:"invalid_type", message:"TYPE sirf ANK, JODI, ya PENEL hona chahiye." };
@@ -1026,6 +1029,10 @@ function parseEntryCard(text, state=null){
   }
   return { ok:true, market, gameType, digits:normDigits, parDigit, total, rawText:raw };
 }
+function parseEntryCard(text, state=null){
+  return parseEntryCardDynamic(text, entryFormatTemplate(state), state);
+}
+
 function entrySettings(state){
   const s = state?.entrySettings || {};
   return {
@@ -2286,13 +2293,14 @@ async function handleIncomingEntryMessage(m){
     const chatJid = m.key?.remoteJid || "";
     if(!chatJid || chatJid === "status@broadcast") return;
     const text = getMessageText(m);
-    if(!/\bMARKET\s*:/i.test(text) || !/\bDIGITS?\s*:/i.test(text)) return;
-    trackIncomingMessage(m, "entry_card");
+    if(!String(text || "").trim()) return;
     const stateLite = await fetchFirebaseState();
     ensureMarketRegistry(stateLite);
-    const parsed = parseEntryCard(text, stateLite);
-    if(parsed.silent) return;
     const settings = entrySettings(stateLite);
+    const template = settings.entryFormatTemplate || DEFAULT_ENTRY_FORMAT_TEMPLATE;
+    const parsed = parseEntryCardDynamic(text, template, stateLite);
+    if(parsed.silent) return;
+    trackIncomingMessage(m, "entry_card");
     if(!settings.entryParserEnabled) return;
     if(settings.groupsOnly && !chatJid.endsWith("@g.us")) return;
     if(!parsed.ok){ await replyToMessage(chatJid, rejectedEntryText(parsed.message || parsed.reason || "Invalid entry."), m); return; }
