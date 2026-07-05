@@ -46,7 +46,27 @@ python titan_dead_code_audit.py
 
 Do not run checks against removed files such as `sitecustomize.py` or `usercustomize.py`.
 
-## 5. Start runtime
+## 5. Optional Phase 4 banner cleanup
+
+Dry-run first:
+
+```bash
+python titan_phase4_banner_cleanup.py
+```
+
+Apply only after preflight checks pass:
+
+```bash
+python titan_phase4_banner_cleanup.py --apply
+python -m py_compile flask_app.py
+node --check Gateway.js
+python titan_smoke_test.py
+python titan_dead_code_audit.py
+```
+
+The cleanup script writes `.phase4.bak` backups before changing runtime files.
+
+## 6. Start runtime
 
 Terminal 1:
 
