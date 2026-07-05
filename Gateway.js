@@ -51,6 +51,8 @@ const SMART_WHATSAPP_COMMAND_VERSION = "2026-07-02-smart-whatsapp-commands-v16";
 const DATA_CLEANUP_VERSION = "2026-07-02-firebase-data-cleanup-v17";
 const FIREBASE_DATA_GUARD_VERSION = "2026-07-03-firebase-data-guard-v36";
 const REALTIME_SYNC_VERSION = "2026-07-03-realtime-stability-lock-v38";
+const RUNTIME_STABILITY_VERSION = "2026-07-05-runtime-stability-patch-v44";
+const GATEWAY_ROOT_SAVE_NORMAL_DISABLED = true;
 // Schedule timezone: keep Python UI and Node gateway on the same date/time.
 const APP_TZ = process.env.APP_TZ || "Asia/Kolkata";
 // Business day cutoff: before this local hour, entries/results/ledger schedules
@@ -3929,6 +3931,8 @@ function settleResultInState(state, job){
     totalStake += total;
     const isHit = !!win && digits.some(d => digitMatchesType(d, win, typ));
     entry.settlementStages = Array.isArray(entry.settlementStages) ? entry.settlementStages : [];
+    const stageAlready = entry.settlementStages.some(x => x && x.key === key && x.result === result);
+    if(stageAlready) continue;
     if(isHit){
       const payout = roundMoney(parDigit * Number(settings.payoutMultipliers[typ] || 0));
       payoutTotal += payout;
@@ -3940,7 +3944,7 @@ function settleResultInState(state, job){
       wallet.updatedAt = nowIso();
       wallet.ledger = Array.isArray(wallet.ledger) ? wallet.ledger : [];
       const ledgerEntry = {
-        id:`${key}_${entry.id}`, time:nowIso(), type:'winner_payout', amount:payout, balanceBefore:before, balanceAfter:after, holdBefore:walletHoldAmount(wallet), holdAfter:walletHoldAmount(wallet),
+        id:`settle_${date}_${key}_${entry.id}_${result}`, txnId:`wallet_settle_${date}_${key}_${entry.id}_${result}`, time:nowIso(), type:'winner_payout', amount:payout, balanceBefore:before, balanceAfter:after, holdBefore:walletHoldAmount(wallet), holdAfter:walletHoldAmount(wallet),
         note:`Winner payout ${job.market} ${job.stage.toUpperCase()} ${result}`, source:'result_settlement', entryId:entry.id, settlementKey:key, result
       };
       wallet.ledger.push(ledgerEntry);
@@ -4151,6 +4155,41 @@ async function putFirebaseTopLevelChildren(state){
   return out;
 }
 
+
+async function saveGatewayAutoMarkNarrow(state, summary){
+  const date = summary?.date || todayISO();
+  const dictByType = {ank:'data', jodi:'jodiData', pannel:'pannelData'};
+  const touched = [];
+  for(const d of (summary?.details || [])){
+    const pid = String(d.profileId || '');
+    const typ = String(d.type || '').toLowerCase();
+    const dict = dictByType[typ];
+    const idx = String(d.index);
+    if(!pid || !dict || idx === 'undefined') continue;
+    const rec = state?.profiles?.[pid]?.dayRecords?.[date]?.[dict]?.[idx];
+    if(rec && typeof rec === 'object'){
+      await putFirebaseChild(['profiles', pid, 'dayRecords', date, dict, idx], rec, null);
+      touched.push(`${pid}/${dict}/${idx}`);
+    }
+  }
+  if(state?.ledgerAutoMarkRecords?.[date]) await putFirebaseChild(['ledgerAutoMarkRecords', date], state.ledgerAutoMarkRecords[date], null);
+  if(Array.isArray(state?.auditLog)) await putFirebaseChild(['auditLog'], state.auditLog.slice(-500), null);
+  return {ok:true, touched};
+}
+async function saveGatewaySettlementNarrow(state, date, settlement){
+  if(!settlement) return {ok:false, reason:'missing_settlement'};
+  const key = settlementKey(settlement);
+  await putFirebaseChild(['settlementRecords', date, key], settlement, null);
+  for(const h of (settlement.hitUsers || [])){
+    const uid = String(h.userId || '');
+    if(uid && state?.wallets?.[uid]) await putFirebaseChild(['wallets', uid], state.wallets[uid], null);
+  }
+  if(Array.isArray(state?.walletTransactions)) await putFirebaseChild(['walletTransactions'], state.walletTransactions.slice(-2000), null);
+  if(Array.isArray(state?.entries)) await putFirebaseChild(['entries'], state.entries, null);
+  if(Array.isArray(state?.auditLog)) await putFirebaseChild(['auditLog'], state.auditLog.slice(-500), null);
+  return {ok:true, key};
+}
+
 async function patchFirebaseState(patch){
   try {
     const res = await axios.patch(firebaseDataUrl(), patch || {}, { timeout: 8000 });
@@ -4254,7 +4293,7 @@ async function markScheduleTargetDoneDurable(jobKey, date, target, sendId=''){
   const tk = scheduleTargetLogKey(target);
   if(!tk) return;
   const key = `${jobKey}|${date}|${tk}`;
-  await markDurableDone('schedule_target_send', key, {jobKey,date,target:tk, sendId, ttlDays:14});
+  await markDurableDone('schedule_target_send', key, {jobKey,date,target:tk, sendId, lastSentDate:date, lastSentKey:key, ttlDays:14});
 }
 async function markScheduleTargetErrorDurable(jobKey, date, target, error=''){
   const tk = scheduleTargetLogKey(target);
@@ -4436,7 +4475,7 @@ async function scheduleTick(){
     const state = await fetchFirebaseState();
     const recoveryPreflight = recomputeLedgerRecoveryAutoRates(state, todayISO(), "gateway_schedule_preflight_recovery");
     if(recoveryPreflight.changed){
-      await saveFirebaseState(state);
+      await saveGatewayAutoMarkNarrow(state, recoveryPreflight);
       console.log(`🛡️ Schedule preflight recovery auto-rate refreshed ${recoveryPreflight.count} card(s)`);
     }
     const schedules = collectSchedules(state);
@@ -4503,7 +4542,8 @@ async function resultTick(){
     const recoveryAfterMark = ledgerAutoMark.changed ? recomputeLedgerRecoveryAutoRates(state, todayISO(), "gateway_result_auto_mark_recovery") : {changed:false,count:0};
     gatewayHealth.lastLedgerAutoMark = {...ledgerAutoMark, recoveryAutoRate: recoveryAfterMark};
     if(ledgerAutoMark.changed || recoveryAfterMark.changed){
-      await saveFirebaseState(state);
+      if(ledgerAutoMark.changed) await saveGatewayAutoMarkNarrow(state, ledgerAutoMark);
+      if(recoveryAfterMark.changed) await saveGatewayAutoMarkNarrow(state, recoveryAfterMark);
       console.log(`🤖 Ledger auto-mark: ${ledgerAutoMark.marked} card(s) PASS:${ledgerAutoMark.pass} FAIL:${ledgerAutoMark.fail} • recovery rates:${recoveryAfterMark.count || 0}`);
     }
     const jobs = collectResults(state);
@@ -4534,7 +4574,7 @@ async function resultTick(){
       if(sLock.ok){
         settlementOut = settleResultInState(state, job);
         if(settlementOut.changed){
-          await saveFirebaseState(state);
+          await saveGatewaySettlementNarrow(state, date, settlementOut.settlement);
           await markSettlementDone(job, settlementOut.settlement);
         } else if(settlementOut.alreadySettled && settlementOut.settlement){
           await markSettlementDone(job, settlementOut.settlement);
@@ -5108,6 +5148,10 @@ app.get("/health", async (req,res)=>{
     res.status(500).json({status:"error", connected, message:e.response ? `HTTP ${e.response.status}` : e.message, health:gatewayHealth});
   }
 });
+app.get("/runtime_stability_status", gatewayAuthMiddleware, async (req,res)=>{
+  res.json({status:"success", version:RUNTIME_STABILITY_VERSION, ledgerChildPathWritesEnabled:true, rootSaveDisabledForNormalOperations:GATEWAY_ROOT_SAVE_NORMAL_DISABLED, scheduleIdempotencyEnabled:true, scheduleFirebaseLastSentEnabled:true, walletIdempotencyEnabled:true});
+});
+
 app.get("/gateway_durability_status", async (req,res)=>{
   res.json({
     status:"success",

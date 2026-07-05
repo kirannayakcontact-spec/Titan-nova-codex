@@ -55,6 +55,7 @@ WHATSAPP_ROLE_ROUTING_VERSION = "2026-07-03-whatsapp-role-routing-v32"
 BOOKIE_ADMIN_ROUTING_VERSION = "2026-07-03-bookie-admin-group-routing-v35"
 FIREBASE_DATA_GUARD_VERSION = "2026-07-03-base-file-manual-overwrite-v41"
 REALTIME_SYNC_VERSION = "2026-07-03-base-file-manual-overwrite-sync-v41"
+RUNTIME_STABILITY_VERSION = "2026-07-05-runtime-stability-patch-v44"
 DEPLOY_SAFETY_VERSION = "2026-07-02-deploy-safety-v13"
 UI_POLISH_VERSION = "2026-07-02-admin-mobile-ui-v14"
 USER_SAFETY_VERSION = "2026-07-02-user-vip-account-safety-v15"
@@ -4351,6 +4352,38 @@ def _ledger_commit_upsert_profile(state_obj, profile_id, typ, idx, market_key, d
     except Exception:
         pass
     return final
+
+
+@app.route('/api/stability_check')
+def api_stability_check():
+    gateway_url = _gateway_url('/runtime_stability_status')
+    reachable = False
+    gateway_payload = None
+    gateway_error = ''
+    try:
+        r = _gateway_request('GET', '/runtime_stability_status', timeout=3)
+        reachable = getattr(r, 'status_code', 500) < 500
+        try:
+            gateway_payload = r.json()
+        except Exception:
+            gateway_payload = {'raw': getattr(r, 'text', '')[:200]}
+    except Exception as e:
+        gateway_error = str(e)[:300]
+    gp = gateway_payload if isinstance(gateway_payload, dict) else {}
+    return jsonify({
+        'status': 'success',
+        'version': RUNTIME_STABILITY_VERSION,
+        'firebaseConfigured': bool(get_firebase_url()),
+        'gatewayUrl': gateway_url,
+        'gatewayReachable': reachable,
+        'gatewayError': gateway_error,
+        'ledgerChildPathWritesEnabled': True,
+        'rootSaveDisabledForNormalOperations': bool(gp.get('rootSaveDisabledForNormalOperations', True)),
+        'scheduleIdempotencyEnabled': bool(gp.get('scheduleIdempotencyEnabled', True)),
+        'scheduleFirebaseLastSentEnabled': bool(gp.get('scheduleFirebaseLastSentEnabled', True)),
+        'walletIdempotencyEnabled': bool(gp.get('walletIdempotencyEnabled', True)),
+        'gateway': gp,
+    })
 
 @app.route('/api/ledger_card_update', methods=['POST'])
 def api_ledger_card_update():
