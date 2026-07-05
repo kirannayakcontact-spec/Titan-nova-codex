@@ -10753,8 +10753,8 @@ TOTAL: 300</pre>
             const hm = appState.healthMonitor || {};
             const fb = hm.firebase || {};
             const gw = hm.gateway || {};
-            const sec = (TITAN_CONFIG_STATUS && TITAN_CONFIG_STATUS.security) || {};
-            const cfg = TITAN_CONFIG_STATUS || {};
+            const cfg = (typeof TITAN_CONFIG_STATUS !== 'undefined' && TITAN_CONFIG_STATUS) ? TITAN_CONFIG_STATUS : {};
+            const sec = cfg.security || {};
             const bs = appState.backupSummary || {};
             const targets = appState.whatsappSafetyTargets || {};
             const targetCount = Object.keys(targets).length;
