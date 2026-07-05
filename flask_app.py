@@ -4534,6 +4534,14 @@ def save():
             }
             normal_updates = {k: v for k, v in incoming.items() if k in normal_save_allowed}
             _firebase_put_top_level_children(incoming, normal_updates, audit=False)
+            # v45.1: Capital/day target/card protocol live under profiles/*/config.
+            # The normal child-path save intentionally avoids writing the whole profiles
+            # tree because it contains large ledger dayRecords that are saved through
+            # dedicated atomic endpoints. Persist only the narrow config child paths so
+            # Market tab protocol edits survive refresh without risking ledger rollback.
+            for pid, profile in (incoming.get('profiles') or {}).items():
+                if isinstance(profile, dict) and isinstance(profile.get('config'), dict):
+                    _firebase_put_child(['profiles', str(pid), 'config'], profile.get('config'))
         except Exception as save_err:
             _obs_exception('normal_save_child_path_failed', save_err, {'route': '/save'})
             return jsonify({"status": "error", "message": "Firebase child-path save failed.", "manualOverwrite": False}), 500
