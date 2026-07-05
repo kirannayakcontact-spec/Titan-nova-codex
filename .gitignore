@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Termux/local runtime state
+auth_info_baileys/
+whatsapp_targets_cache.json
+titan_schedule_sent_log.json
+titan_spam_guard_state.json
+titan_result_scrape_confirm.json
+titan_live_result_state.json
+titan_whatsapp_safety_state.json
+titan_whatsapp_reliability_log.json
+titan_processed_messages.json
+gateway_observability_events.jsonl
+
+# Titan backups/local state
+titan_state_backups/
+last_known_good.json
+
+# Local secrets/env
+.env
+.env.*
+!.env.example

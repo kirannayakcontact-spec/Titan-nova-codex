@@ -41,6 +41,7 @@ export GATEWAY_URL="http://127.0.0.1:3000"
 python -m py_compile flask_app.py
 node --check Gateway.js
 python titan_smoke_test.py
+python titan_dead_code_audit.py
 ```
 
 Do not run checks against removed files such as `sitecustomize.py` or `usercustomize.py`.
@@ -72,3 +73,7 @@ Most tab-wide failures come from one shared layer, not from every tab separately
 - stale local process still running old code
 
 Run the checks above before testing Ledger, VIPs, Wallet, Withdrawal, Entries, Pay, Results, Market, Forward, Guard, Backup, Health, AI, Audit, and Setup.
+
+## Phase 1 dead-code cleanup rule
+
+Do not delete active Ledger/Wallet/Market/Gateway logic until the preflight checks pass. Phase 1 only removes repository noise and blocks old removed-file references from coming back.
