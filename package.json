@@ -7,7 +7,9 @@
   "scripts": {
     "gateway": "node Gateway.js",
     "start": "node Gateway.js",
-    "bot": "node bot/index.js"
+    "bot": "node bot/index.js",
+    "check": "node --check Gateway.js && node --check bot/index.js && node --check bot/config.js && node --check bot/firebase.js",
+    "audit:prod": "npm audit --omit=dev"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.18",
