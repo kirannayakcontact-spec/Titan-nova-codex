@@ -54,6 +54,9 @@ if [ "${TITAN_WHATSAPP_UI:-1}" = "1" ]; then
   python titan_whatsapp_ui_patch.py --apply
 fi
 
+info "Applying WhatsApp QR refresh fix"
+python titan_wa_qr_fix_patch.py --apply
+
 info "Running preflight checks"
 python -m py_compile flask_app.py
 node --check Gateway.js
