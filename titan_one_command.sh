@@ -60,6 +60,10 @@ python titan_wa_qr_fix_patch.py --apply
 info "Applying Market Control Pro"
 python titan_mcp_patch.py --apply
 
+info "Applying VIP profile persistence fix"
+python titan_profile_delete_guard_patch.py --apply
+python titan_vip_profile_fix_patch.py --apply
+
 info "Running preflight checks"
 python -m py_compile flask_app.py
 node --check Gateway.js
