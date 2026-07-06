@@ -1,0 +1,3 @@
+# Runtime dependencies are currently kept at repository root for Termux compatibility.
+# Use the root requirements.txt until the full backend split is completed.
+-r ../requirements.txt
