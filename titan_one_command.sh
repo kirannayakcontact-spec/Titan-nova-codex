@@ -57,6 +57,9 @@ fi
 info "Applying WhatsApp QR refresh fix"
 python titan_wa_qr_fix_patch.py --apply
 
+info "Applying Market Control Pro"
+python titan_mcp_patch.py --apply
+
 info "Running preflight checks"
 python -m py_compile flask_app.py
 node --check Gateway.js
@@ -96,6 +99,7 @@ fi
 
 info "Deploy complete"
 printf '\nDashboard: http://127.0.0.1:5000\n'
+printf 'Market Control Pro: http://127.0.0.1:5000/market_control_pro\n'
 printf 'Flask log:   %s\n' "$FLASK_LOG"
 printf 'Gateway log: %s\n' "$GATEWAY_LOG"
 printf '\nUseful commands:\n'
