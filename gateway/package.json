@@ -1,0 +1,10 @@
+{
+  "name": "titan-nova-gateway-wrapper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Wrapper package for Titan Nova Gateway. Root package.json remains source of truth during migration.",
+  "scripts": {
+    "start": "node Gateway.js",
+    "check": "node --check Gateway.js && node --check ../Gateway.js"
+  }
+}
