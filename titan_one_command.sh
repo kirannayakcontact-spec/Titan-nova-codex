@@ -57,6 +57,9 @@ fi
 info "Applying WhatsApp QR refresh fix"
 python titan_wa_qr_fix_patch.py --apply
 
+info "Applying owner number code login"
+python titan_owner_login_code_patch.py --apply
+
 info "Running preflight checks"
 python -m py_compile flask_app.py
 node --check Gateway.js
