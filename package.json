@@ -6,7 +6,8 @@
   "main": "Gateway.js",
   "scripts": {
     "gateway": "node Gateway.js",
-    "start": "node Gateway.js"
+    "start": "node Gateway.js",
+    "bot": "node bot/index.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.18",
