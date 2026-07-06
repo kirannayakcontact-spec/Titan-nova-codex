@@ -6,7 +6,9 @@
   "main": "Gateway.js",
   "scripts": {
     "gateway": "node Gateway.js",
-    "start": "node Gateway.js"
+    "start": "node Gateway.js",
+    "check:gateway": "node --check Gateway.js",
+    "smoke": "python3 scripts/titan_smoke_test.py"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.18",
