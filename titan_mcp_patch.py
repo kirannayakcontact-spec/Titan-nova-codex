@@ -1,8 +1,10 @@
 from pathlib import Path
 import argparse
+from titan_runtime_files import ensure_runtime_file
 
 ROOT = Path(__file__).resolve().parent
 TARGET = ROOT / 'flask_app.py'
+ensure_runtime_file('flask_app.py')
 MARKER = 'TITAN_MCP_V1'
 ANCHOR = """@app.route('/api/config_migration_status')
 def api_config_migration_status():
