@@ -29,6 +29,7 @@ import secrets
 import time
 import hashlib
 import traceback
+import base64
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("TITAN_FLASK_SECRET", os.environ.get("TITAN_ADMIN_TOKEN", secrets.token_hex(24)))
@@ -375,13 +376,12 @@ def api_config_migration_status():
 
 @app.route('/api/upload_image', methods=['POST'])
 def api_upload_image():
-    """Server-side image upload proxy so IMGBB_API_KEY is never exposed in browser JS."""
-    if not IMGBB_API_KEY:
-        return jsonify({
-            'status': 'error',
-            'message': 'Image upload not configured. Set IMGBB_API_KEY on server.',
-            'configCleanup': True
-        }), 503
+    """Server-side image upload proxy with an inline data-URL fallback.
+
+    IMGBB_API_KEY remains optional for QR/payment images. When it is not set,
+    return a validated data URL that can still be saved in Firebase/state and
+    rendered by the app, instead of blocking admins with a configuration error.
+    """
     file_obj = request.files.get('image') or request.files.get('file')
     if not file_obj:
         return jsonify({'status': 'error', 'message': 'image file missing'}), 400
@@ -393,6 +393,17 @@ def api_upload_image():
         return jsonify({'status': 'error', 'message': 'Empty image file'}), 400
     if len(raw) > TITAN_UPLOAD_MAX_BYTES:
         return jsonify({'status': 'error', 'message': f'Image too large. Max {TITAN_UPLOAD_MAX_BYTES // (1024*1024)} MB allowed.'}), 413
+    if not IMGBB_API_KEY:
+        safe_type = content_type if content_type.startswith('image/') else 'image/jpeg'
+        data_url = 'data:' + safe_type + ';base64,' + base64.b64encode(raw).decode('ascii')
+        return jsonify({
+            'status': 'success',
+            'url': data_url,
+            'display_url': data_url,
+            'storage': 'inline_data_url',
+            'message': 'Image saved inline because IMGBB_API_KEY is not configured.',
+            'configCleanup': True
+        })
     try:
         res = requests.post(
             'https://api.imgbb.com/1/upload',
@@ -696,7 +707,7 @@ def _config_migration_report():
     if using_default_firebase:
         warnings.append("FIREBASE_URL/FIREBASE_DB_URL env not set; compatibility default database URL is in use.")
     if not IMGBB_API_KEY:
-        warnings.append("IMGBB_API_KEY env not set; payment/QR image uploads will be disabled until configured.")
+        warnings.append("IMGBB_API_KEY env not set; image uploads will use inline data-URL storage instead of ImgBB hosting.")
     if not TITAN_ADMIN_TOKEN:
         warnings.append("TITAN_ADMIN_TOKEN env not set; admin security is compatibility-open.")
     if not os.environ.get("TITAN_GATEWAY_TOKEN"):
