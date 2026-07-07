@@ -1,8 +1,4 @@
-"""Compatibility entrypoint for the clean Andres Berlin era.
-
-The legacy root Flask monolith has been moved to ``legacy-backup/``. New active
-backend development lives in ``andres-berlin/backend``.
-"""
+"""Compatibility entrypoint for the clean Andres Berlin runtime."""
 
 from flask import Flask, jsonify
 
@@ -18,9 +14,9 @@ def health():
 
 @app.get("/")
 def index():
-    """Point callers to the new project folder."""
+    """Point callers to the active project folder."""
 
-    return jsonify({"message": "Use andres-berlin as the active clean project."})
+    return jsonify({"message": "Run the active app from andres-berlin."})
 
 
 __all__ = ["app"]

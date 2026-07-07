@@ -17,3 +17,15 @@ npm start
 The root package launches the Andres Berlin bot with `node andres-berlin/bot/index.js`. Runtime dependencies for that bot, including current and future WhatsApp/Baileys packages used by `andres-berlin/bot/`, must stay in the root `package.json` while this repository remains the launcher.
 
 The `andres-berlin/package.json` file is kept only as package metadata and convenience scripts for the nested starter; it should not declare runtime dependencies unless `andres-berlin/` is split into a standalone repository.
+
+## Clean runtime policy
+
+The active app is the modular `andres-berlin/` runtime. Historical monolith patchers and legacy backup blobs have been removed so new work does not duplicate old `flask_app.py` / `Gateway.js` logic.
+
+Useful commands:
+
+```bash
+npm install
+npm run check
+cd andres-berlin && python -m backend.app
+```
