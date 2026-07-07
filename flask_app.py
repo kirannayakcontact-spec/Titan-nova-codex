@@ -7991,6 +7991,75 @@ HTML_TEMPLATE = """
             padding: 14px 14px 8px; display: flex; justify-content: space-between; align-items: center;
         }
 
+
+
+        /* ── WHATSAPP-STYLE VIP MANAGEMENT ── */
+        .wa-vip-page {
+            background: #FFFFFF;
+            color: #111B21;
+            min-height: calc(100dvh - var(--header-h));
+            margin: -16px -12px 0;
+            padding: 14px 0 96px;
+        }
+        .wa-vip-page .wa-card {
+            background: #FFFFFF;
+            border: 0;
+            border-bottom: 1px solid #F0F2F5;
+            border-radius: 0;
+            box-shadow: none;
+            overflow: hidden;
+        }
+        .wa-vip-page .wa-panel { padding: 14px 18px; }
+        .wa-vip-page .wa-title { color: #111B21; font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+        .wa-vip-page .wa-subtitle { color: #667781; font-size: 13px; font-weight: 500; margin-top: 2px; }
+        .wa-vip-page .wa-section {
+            color: #008069;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: .02em;
+            padding: 18px 20px 8px;
+            text-transform: uppercase;
+        }
+        .wa-vip-page .wa-input {
+            background: #F0F2F5;
+            border: 1px solid transparent;
+            border-radius: 24px;
+            color: #111B21;
+            font-size: 15px;
+            font-weight: 500;
+            padding: 13px 18px;
+            text-align: left;
+        }
+        .wa-vip-page .wa-input:focus { border-color: #00A884; box-shadow: 0 0 0 3px rgba(0,168,132,.14); }
+        .wa-vip-page .wa-input::placeholder { color: #667781; }
+        .wa-vip-page .wa-green-btn {
+            background: #00A884;
+            color: #FFFFFF;
+            border-radius: 24px;
+            box-shadow: 0 6px 16px rgba(0,168,132,.20);
+        }
+        .wa-vip-page .wa-avatar {
+            width: 52px; height: 52px; border-radius: 999px;
+            background: #D9FDD3; color: #008069;
+            display: flex; align-items: center; justify-content: center;
+            flex: 0 0 auto; font-size: 20px;
+        }
+        .wa-vip-page .wa-name { color:#111B21; font-size:16px; line-height:1.2; font-weight:800; }
+        .wa-vip-page .wa-meta, .wa-vip-page .wa-phone { color:#667781; font-size:13px; font-weight:500; }
+        .wa-vip-page .wa-action {
+            width: 38px; height: 38px; border-radius: 999px;
+            background: #F0F2F5; color:#54656F;
+            display:flex; align-items:center; justify-content:center;
+        }
+        .wa-vip-page .wa-date-row, .wa-vip-page .wa-access-row {
+            border-top: 1px solid #F0F2F5;
+            margin-left: 70px;
+            padding: 10px 16px 10px 0;
+        }
+        .wa-vip-page input[type="date"] { background:#F0F2F5; color:#111B21; border-color:transparent; border-radius:18px; }
+        .wa-vip-page .switch .slider { background-color:#D1D7DB; }
+        .wa-vip-page .switch input:checked + .slider { background-color:#00A884; }
+
         /* ── SCROLLBAR FIX ── */
         .pill-tabs::-webkit-scrollbar { display: none; }
 
@@ -13188,38 +13257,38 @@ withdraw status</pre>
         function renderClients() {
             if(!IS_MASTER) return '';
             let html = `
-                <div class="px-3 py-4">
+                <div class="wa-vip-page">
                     
-                    <div class="native-card p-4 mb-3" style="border-color:rgba(42,171,238,0.25); background:rgba(42,171,238,0.04)">
+                    <div class="wa-card wa-panel">
                         <div class="flex items-center gap-3 mb-4">
-                            <div class="w-10 h-10 rounded-xl bg-[rgba(42,171,238,0.15)] text-[var(--primary)] flex items-center justify-center shrink-0"><i class="fas fa-bullhorn"></i></div>
+                            <div class="wa-avatar"><i class="fas fa-bullhorn"></i></div>
                             <div>
-                                <h3 class="text-[14px] font-black text-white">Live Push Broadcast</h3>
-                                <p class="text-[9px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Send Alert to all VIPs</p>
+                                <h3 class="wa-title">Live Push Broadcast</h3>
+                                <p class="wa-subtitle">Send alert to all VIPs</p>
                             </div>
                         </div>
-                        <input id="bcast-title" class="native-input text-[13px] py-3 mb-2" placeholder="Title (e.g. 🔥 Dhamaka Offer)">
-                        <textarea id="bcast-msg" rows="2" class="native-input text-[13px] py-3 mb-3" placeholder="Type your message here..."></textarea>
-                        <button onclick="sendBroadcast()" class="w-full bg-[var(--primary)] text-white py-3.5 rounded-xl font-black text-[11px] uppercase active:scale-95 shadow-lg shadow-[rgba(42,171,238,0.2)]"><i class="fas fa-paper-plane mr-1"></i> Send Push Notification</button>
+                        <input id="bcast-title" class="native-input wa-input mb-2" placeholder="Title (e.g. 🔥 Dhamaka Offer)">
+                        <textarea id="bcast-msg" rows="2" class="native-input wa-input mb-3" placeholder="Type your message here..."></textarea>
+                        <button onclick="sendBroadcast()" class="w-full wa-green-btn py-3.5 font-black text-[12px] uppercase active:scale-95"><i class="fas fa-paper-plane mr-1"></i> Send Push Notification</button>
                     </div>
 
-                    <div class="native-card p-4 mb-3" style="border-color:rgba(250,199,72,0.2); background:rgba(250,199,72,0.04)">
+                    <div class="wa-card wa-panel">
                         <div class="flex justify-between items-center mb-4">
                             <div>
-                                <h3 class="text-[14px] font-black text-white">VIP Connections</h3>
-                                <p class="text-[9px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Manage Client Links</p>
+                                <h3 class="wa-title">VIP Connections</h3>
+                                <p class="wa-subtitle">Manage client links</p>
                             </div>
-                            <button onclick="importContacts()" class="w-10 h-10 bg-[rgba(250,199,72,0.15)] text-[var(--amber)] rounded-xl flex items-center justify-center active:scale-95 border border-[rgba(250,199,72,0.2)]"><i class="fas fa-address-book"></i></button>
+                            <button onclick="importContacts()" class="wa-action active:scale-95"><i class="fas fa-address-book"></i></button>
                         </div>
                         <div class="space-y-3">
-                            <input id="c-name" class="native-input py-3 text-sm" placeholder="Client Display Name">
-                            <input id="c-phone" type="text" inputmode="numeric" class="native-input py-3 text-sm" placeholder="WhatsApp Number">
-                            <button onclick="addVIP()" class="w-full bg-[var(--amber)] text-black py-3.5 rounded-xl font-black text-[11px] uppercase active:scale-95">Add VIP Member</button>
+                            <input id="c-name" class="native-input wa-input" placeholder="Client Display Name">
+                            <input id="c-phone" type="text" inputmode="numeric" class="native-input wa-input" placeholder="WhatsApp Number">
+                            <button onclick="addVIP()" class="w-full wa-green-btn py-3.5 font-black text-[12px] uppercase active:scale-95">Add VIP Member</button>
                         </div>
                     </div>
 
-                    <p class="sec-header">Active Profiles</p>
-                    <div class="space-y-2">
+                    <p class="wa-section">Active Profiles</p>
+                    <div>
             `;
 
             Object.keys(appState.profiles).forEach(pid => {
@@ -13237,19 +13306,19 @@ withdraw status</pre>
                     expColor = dLeft > 0 ? 'text-[var(--green)]' : 'text-[var(--rose)]';
                 }
                 html += `
-                    <div class="native-card m-0 border-l-4 ${isPendingApproval ? 'border-l-[var(--amber)]' : (isDummy ? 'border-l-[var(--purple)]' : 'border-l-[var(--primary)]')}">
-                        <div onclick="openClient('${pid}')" class="p-4 flex justify-between items-center cursor-pointer active:opacity-70 transition-opacity">
+                    <div class="wa-card">
+                        <div onclick="openClient('${pid}')" class="px-4 py-3 flex justify-between items-center cursor-pointer active:bg-[#F5F6F6] transition-colors">
                             <div class="flex items-center gap-3">
-                                <div class="w-10 h-10 rounded-full bg-[var(--surface-light)] border border-[var(--border)] flex items-center justify-center ${isPendingApproval ? 'text-[var(--amber)]' : (isDummy ? 'text-[var(--purple)]' : 'text-[var(--primary)]')}"><i class="fas ${isPendingApproval ? 'fa-user-clock' : (isDummy ? 'fa-vial' : 'fa-user')}"></i></div>
+                                <div class="wa-avatar"><i class="fas ${isPendingApproval ? 'fa-user-clock' : (isDummy ? 'fa-vial' : 'fa-user')}"></i></div>
                                 <div>
-                                    <p class="${isPendingApproval ? 'text-[var(--amber)]' : (isDummy ? 'text-[var(--purple)]' : 'text-white')} font-black text-[14px] uppercase">${c.name || 'AUTO VIP'} ${isPendingApproval ? '<span class="ml-1 text-[8px] bg-[rgba(250,199,72,0.14)] border border-[rgba(250,199,72,0.25)] text-[var(--amber)] px-1.5 py-0.5 rounded-md align-middle">PENDING</span>' : ''}</p>
-                                    <p class="text-[10px] ${expColor} font-medium mt-0.5"><i class="fas fa-crown text-[8px] mr-1"></i>${isPendingApproval ? 'Admin approval required' : expLabel}</p>
-                                    ${c.phone ? `<p class="text-[9px] text-[var(--text-muted)] font-bold mt-0.5"><i class="fab fa-whatsapp mr-1"></i>${c.phone}</p>` : ''}
+                                    <p class="wa-name">${c.name || 'AUTO VIP'} ${isPendingApproval ? '<span class="ml-1 text-[10px] bg-[#FFF4D6] text-[#996A00] px-2 py-0.5 rounded-full align-middle">PENDING</span>' : ''}</p>
+                                    <p class="wa-meta mt-1"><i class="fas fa-crown text-[10px] mr-1"></i>${isPendingApproval ? 'Admin approval required' : expLabel}</p>
+                                    ${c.phone ? `<p class="wa-phone mt-0.5"><i class="fab fa-whatsapp mr-1 text-[#00A884]"></i>${c.phone}</p>` : ''}
                                 </div>
                             </div>
                             <div class="flex gap-2">
-                                <button onclick="event.stopPropagation(); shareVipApp('${pid}', '${c.name}')" class="w-9 h-9 text-[var(--primary)] bg-[rgba(42,171,238,0.1)] rounded-xl flex items-center justify-center active:scale-95 border border-[rgba(42,171,238,0.15)]"><i class="fas fa-link text-xs"></i></button>
-                                ${!isDummy ? `<button onclick="event.stopPropagation(); deleteProfile('${pid}')" class="w-9 h-9 text-[var(--rose)] bg-[rgba(255,93,93,0.1)] rounded-xl flex items-center justify-center active:scale-95 border border-[rgba(255,93,93,0.15)]"><i class="fas fa-trash-alt text-xs"></i></button>` : ''}
+                                <button onclick="event.stopPropagation(); shareVipApp('${pid}', '${c.name}')" class="wa-action active:scale-95"><i class="fas fa-link text-xs"></i></button>
+                                ${!isDummy ? `<button onclick="event.stopPropagation(); deleteProfile('${pid}')" class="wa-action text-[var(--rose)] active:scale-95"><i class="fas fa-trash-alt text-xs"></i></button>` : ''}
                             </div>
                         </div>
                         ${isPendingApproval ? `
@@ -13257,14 +13326,14 @@ withdraw status</pre>
                             <button onclick="event.stopPropagation(); approveVipProfile('${pid}')" class="bg-[rgba(0,194,111,0.16)] text-[var(--green)] border border-[rgba(0,194,111,0.28)] py-2.5 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-check mr-1"></i>Approve</button>
                             <button onclick="event.stopPropagation(); rejectVipProfile('${pid}')" class="bg-[rgba(255,93,93,0.10)] text-[var(--rose)] border border-[rgba(255,93,93,0.22)] py-2.5 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-times mr-1"></i>Reject</button>
                         </div>` : ''}
-                        <div class="px-4 pb-3 flex items-center gap-2 border-t border-[var(--border)]">
+                        <div class="wa-date-row flex items-center gap-2">
                             <i class="fas fa-calendar-check text-[var(--amber)] text-xs shrink-0"></i>
                             <input type="date" id="exp-${pid}" value="${expDate}" class="flex-1 min-w-0 bg-[var(--surface-light)] border border-[var(--border)] text-white rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-[var(--primary)]">
                             <button onclick="saveExpiryDate('${pid}')" class="bg-[rgba(250,199,72,0.15)] text-[var(--amber)] border border-[rgba(250,199,72,0.2)] px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase active:scale-95 shrink-0">Set</button>
                         </div>
-                        <div class="px-4 pb-3 flex items-center justify-between border-t border-[var(--border)]">
+                        <div class="wa-access-row flex items-center justify-between">
                             <div>
-                                <p class="text-[9px] font-bold text-[var(--text-muted)] uppercase">App Access</p>
+                                <p class="text-[12px] font-bold text-[#667781] uppercase">App Access</p>
                                 <p class="text-[10px] font-bold ${isPendingApproval ? 'text-[var(--amber)]' : (c.vipAccessEnabled !== false ? 'text-[var(--green)]' : 'text-[var(--rose)]')}">${isPendingApproval ? 'Pending — entry/app blocked until approval' : (c.vipAccessEnabled !== false ? 'Enabled — VIP can use app' : 'Disabled — Read-Only Mode')}</p>
                             </div>
                             <label class="switch m-0">
