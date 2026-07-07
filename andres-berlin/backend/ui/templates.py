@@ -25,6 +25,7 @@ HOME_TEMPLATE = """
     .module { min-height:138px; display:flex; flex-direction:column; justify-content:space-between; }
     .module strong { font-size:18px; }
     .status { margin-top:12px; font-size:13px; color:var(--muted); word-break:break-word; }
+    .module-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
     button, a.btn { appearance:none; border:0; border-radius:14px; padding:12px 14px; background:var(--blue); color:#001423; font-weight:900; text-decoration:none; display:inline-flex; justify-content:center; cursor:pointer; }
     a.secondary { background:var(--panel2); color:var(--text); border:1px solid var(--border); }
     .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
@@ -69,21 +70,35 @@ HOME_TEMPLATE = """
       const data = await res.json().catch(() => ({status:'error', error:'Invalid JSON'}));
       return {ok: res.ok, data};
     }
-    async function paintModule([name, url, desc]) {
+    function paintModule([name, url, desc], summary = {}) {
       const el = document.createElement('article');
       el.className = 'card module';
-      el.innerHTML = `<div><strong>${name}</strong><p class="muted">${desc}</p></div><div class="status">Loading...</div><a class="btn secondary" href="${url}">Open API</a>`;
+      const status = summary.status || 'ready';
+      el.innerHTML = `<div><strong>${name}</strong><p class="muted">${desc}</p></div><div class="status"><span class="${status === 'ok' ? 'ok' : 'warn'}">${status === 'ok' ? 'Summary ready' : 'Ready'}</span> ${short(summary)}</div><div class="module-actions"><button type="button">Load details</button><a class="btn secondary" href="${url}">Open API</a></div>`;
+      const statusEl = el.querySelector('.status');
+      const detailButton = el.querySelector('button');
+      detailButton.addEventListener('click', async () => {
+        detailButton.disabled = true;
+        statusEl.innerHTML = 'Loading details...';
+        try {
+          const result = await load(url);
+          statusEl.innerHTML = `<span class="${result.ok ? 'ok' : 'warn'}">${result.ok ? 'OK' : 'Needs attention'}</span> ${short(result.data)}`;
+        } catch (err) {
+          statusEl.innerHTML = `<span class="warn">Unavailable</span> ${err.message}`;
+        } finally {
+          detailButton.disabled = false;
+        }
+      });
       box.appendChild(el);
-      try {
-        const result = await load(url);
-        el.querySelector('.status').innerHTML = `<span class="${result.ok ? 'ok' : 'warn'}">${result.ok ? 'OK' : 'Needs attention'}</span> ${short(result.data)}`;
-      } catch (err) {
-        el.querySelector('.status').innerHTML = `<span class="warn">Unavailable</span> ${err.message}`;
-      }
     }
     load('/health').then(r => health.innerHTML = `<span class="ok">OK</span> ${short(r.data)}`).catch(e => health.innerHTML = `<span class="warn">Unavailable</span> ${e.message}`);
-    load('/api/whatsapp/status').then(r => whatsapp.innerHTML = `<span class="${r.ok ? 'ok' : 'warn'}">WhatsApp</span> ${short(r.data)}`).catch(e => whatsapp.innerHTML = `<span class="warn">Gateway unavailable</span> ${e.message}`);
-    modules.forEach(paintModule);
+    whatsapp.innerHTML = `<span class="warn">WhatsApp not checked</span> Click status link to fetch gateway status.`;
+    load('/api/dashboard/summary')
+      .then(r => {
+        const summary = r.data.modules || {};
+        modules.forEach(([name, url, desc]) => paintModule([name, url, desc], summary[name.toLowerCase()] || {}));
+      })
+      .catch(() => modules.forEach(module => paintModule(module)));
   </script>
 </body>
 </html>
