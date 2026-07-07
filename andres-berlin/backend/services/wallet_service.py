@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
-from backend.services.firebase import get_collection, get_record, push_record, set_record, update_record
+from backend.services.firebase import get_collection, get_record, mutate_record, push_record, set_record, update_record
 
 DEFAULT_CURRENCY = "EUR"
 
@@ -32,16 +32,48 @@ def _wallet_path(user_id: str) -> str:
     return f"wallets/{user_id}"
 
 
+def _index_key(created_at: str, record_id: str) -> str:
+    return f"{created_at}_{record_id}"
+
+
+def _limited(value: int, maximum: int) -> int:
+    return max(1, min(value, maximum))
+
+
+def _apply_wallet_totals(
+    balance_delta: Decimal = Decimal("0"),
+    held_delta: Decimal = Decimal("0"),
+    wallet_delta: int = 0,
+) -> None:
+    def update(summary: Any | None) -> dict:
+        current = summary if isinstance(summary, dict) else {}
+        wallets = int(current.get("wallets", 0)) + wallet_delta
+        total = Decimal(str(current.get("totalBalance", "0"))) + balance_delta
+        held = Decimal(str(current.get("totalHeld", "0"))) + held_delta
+        return {
+            "wallets": max(0, wallets),
+            "totalBalance": f"{total.quantize(Decimal('0.01'))}",
+            "totalHeld": f"{held.quantize(Decimal('0.01'))}",
+            "updatedAt": _now(),
+        }
+
+    mutate_record("wallet_summary_totals/global", update)
+
+
 def get_wallet(user_id: str) -> dict:
     """Return a user wallet, creating an empty wallet when needed."""
 
-    wallet = get_record(_wallet_path(user_id)) or {}
+    existing = get_record(_wallet_path(user_id))
+    created = not isinstance(existing, dict) or not existing
+    wallet = existing if isinstance(existing, dict) else {}
     wallet.setdefault("userId", user_id)
     wallet.setdefault("currency", DEFAULT_CURRENCY)
     wallet.setdefault("balance", "0.00")
     wallet.setdefault("held", "0.00")
     wallet.setdefault("updatedAt", _now())
     set_record(_wallet_path(user_id), wallet)
+    if created:
+        _apply_wallet_totals(wallet_delta=1)
     return wallet
 
 
@@ -52,19 +84,19 @@ def wallet_summary(user_id: str | None = None) -> dict:
         wallet = get_wallet(user_id)
         return {"status": "ok", "module": "wallet", "wallet": wallet}
 
-    wallets = get_collection("wallets")
-    total = sum((Decimal(str(wallet.get("balance", "0"))) for wallet in wallets.values()), Decimal("0"))
-    held = sum((Decimal(str(wallet.get("held", "0"))) for wallet in wallets.values()), Decimal("0"))
+    totals = get_record("wallet_summary_totals/global", {}) or {}
     return {
         "status": "ok",
         "module": "wallet",
-        "wallets": len(wallets),
-        "totalBalance": f"{total.quantize(Decimal('0.01'))}",
-        "totalHeld": f"{held.quantize(Decimal('0.01'))}",
+        "wallets": int(totals.get("wallets", 0)),
+        "totalBalance": str(totals.get("totalBalance", "0.00")),
+        "totalHeld": str(totals.get("totalHeld", "0.00")),
     }
 
 
-def apply_wallet_transaction(user_id: str, amount: Any, kind: str, description: str = "", reference: str = "") -> dict:
+def apply_wallet_transaction(
+    user_id: str, amount: Any, kind: str, description: str = "", reference: str = ""
+) -> dict:
     """Apply a credit/debit to a wallet and append an auditable transaction record."""
 
     delta = _amount(amount)
@@ -79,7 +111,11 @@ def apply_wallet_transaction(user_id: str, amount: Any, kind: str, description: 
 
     wallet["balance"] = f"{new_balance.quantize(Decimal('0.01'))}"
     wallet["updatedAt"] = _now()
-    update_record(_wallet_path(user_id), {"balance": wallet["balance"], "updatedAt": wallet["updatedAt"]})
+    update_record(
+        _wallet_path(user_id),
+        {"balance": wallet["balance"], "updatedAt": wallet["updatedAt"]},
+    )
+    _apply_wallet_totals(balance_delta=(delta if kind == "credit" else -delta))
 
     transaction = {
         "id": uuid4().hex,
@@ -93,12 +129,27 @@ def apply_wallet_transaction(user_id: str, amount: Any, kind: str, description: 
         "createdAt": _now(),
     }
     push_record("wallet_transactions", transaction, transaction["id"])
+    set_record(
+        f"wallet_transactions_by_user/{user_id}/{_index_key(transaction['createdAt'], transaction['id'])}",
+        transaction,
+    )
     return {"wallet": wallet, "transaction": transaction}
 
 
-def list_wallet_transactions(user_id: str | None = None, limit: int = 50) -> list[dict]:
-    transactions = list(get_collection("wallet_transactions").values())
+def list_wallet_transactions(
+    user_id: str | None = None,
+    limit: int = 50,
+    before_created_at: str | None = None,
+) -> list[dict]:
+    bounded_limit = _limited(limit, 200)
     if user_id:
-        transactions = [item for item in transactions if item.get("userId") == user_id]
-    transactions.sort(key=lambda item: item.get("createdAt", ""), reverse=True)
-    return transactions[: max(1, min(limit, 200))]
+        transactions = list(get_collection(f"wallet_transactions_by_user/{user_id}").values())
+    else:
+        transactions = list(get_collection("wallet_transactions").values())
+    if before_created_at:
+        transactions = [item for item in transactions if item.get("createdAt", "") < before_created_at]
+    transactions.sort(
+        key=lambda item: _index_key(item.get("createdAt", ""), item.get("id", "")),
+        reverse=True,
+    )
+    return transactions[:bounded_limit]

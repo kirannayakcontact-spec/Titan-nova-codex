@@ -23,7 +23,15 @@ from backend.config import get_config
 _LOCK = threading.RLock()
 _STORE = Path(os.environ.get("TITAN_STORE_PATH", Path(__file__).resolve().parents[2] / "data" / "runtime_store.json"))
 _MISSING = object()
-_HIGH_GROWTH_COLLECTIONS = ("wallet_transactions", "ledger_entries", "whatsapp/messages", "whatsapp/inbound")
+_HIGH_GROWTH_COLLECTIONS = (
+    "wallet_transactions",
+    "wallet_transactions_by_user",
+    "ledger_entries",
+    "ledger_entries_by_user",
+    "ledger_entries_by_account",
+    "whatsapp/messages",
+    "whatsapp/inbound",
+)
 _STORE_CACHE: dict[Path, tuple[int | None, dict]] = {}
 _FIREBASE_DEFAULT_TIMEOUT_SECONDS = 1.5
 _FIREBASE_DEFAULT_FAILURE_THRESHOLD = 2
