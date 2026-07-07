@@ -2343,10 +2343,39 @@ function receiverMatchesPayment(extracted, allowedReceivers, settings = {}){
   if(paidToUpi || paidToName) return { matched:false, strong:false, type:'receiver_mismatch', receiver:null, suspicious:true, reason:'paid_to_not_allowed_receiver' };
   return out;
 }
+function textLooksLikeDepositProofIntent(text){
+  const t = normalizeCommandText(text);
+  if(!t) return false;
+  if(/^(?:hi|hello|hey|photo|image|pic|picture|test|ok|okay|thanks?|thank you|done)$/i.test(t)) return false;
+  return /\b(?:payment|paid|deposit|deposited|recharge|add\s*money|utr|rrn|txn|transaction|trans(?:action)?\s*id|ref(?:erence)?|upi|paid\s*to|screenshot|proof)\b/i.test(t);
+}
+function ocrLooksLikePaymentProof(text){
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if(!t) return false;
+  const hasAmount = /(?:₹|rs\.?|inr|amount|amt)\s*[:#-]?\s*[0-9]+(?:\.[0-9]+)?/i.test(t) || /\b[0-9]+(?:\.[0-9]+)?\s*(?:rs|inr)\b/i.test(t);
+  const hasProofMarker = /\b(?:utr|rrn|txn|transaction(?:\s*id)?|trans(?:action)?\s*id|ref(?:erence)?|paid\s*to|credited\s*to|success|successful|completed)\b/i.test(t);
+  return hasAmount && hasProofMarker;
+}
+function hasRecentDepositIntent(profile, chatJid){
+  const at = profile?.lastDepositIntentAt ? Date.parse(profile.lastDepositIntentAt) : 0;
+  if(!at || Number.isNaN(at)) return false;
+  if(Date.now() - at > 30 * 60 * 1000) return false;
+  const lastChat = String(profile?.lastDepositIntentChatJid || '').trim();
+  return !lastChat || !chatJid || lastChat === chatJid;
+}
+function shouldHandleDepositScreenshot(m, caption, ocrText, profile){
+  const hasImage = !!m?.message?.imageMessage;
+  const chatJid = m?.key?.remoteJid || '';
+  if(!hasImage && !String(caption || '').trim()) return false;
+  if(textLooksLikeDepositProofIntent(caption)) return true;
+  if(ocrLooksLikePaymentProof(ocrText)) return true;
+  if(hasImage && hasRecentDepositIntent(profile, chatJid)) return true;
+  return false;
+}
 function parseDepositPaymentProof(text, hasImage = false){
   const raw = String(text || '').replace(/\r/g, '\n').trim();
   const oneLine = raw.replace(/\s+/g, ' ').trim();
-  const hasPaymentWords = /\b(?:payment|paid|deposit|recharge|utr|txn|transaction|trans(?:action)?\s*id|ref(?:erence)?|rrn|upi|paid\s*to)\b/i.test(oneLine);
+  const hasPaymentWords = textLooksLikeDepositProofIntent(oneLine);
   const utrMatch = oneLine.match(/\b(?:utr|rrn)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-]{5,35})\b/i);
   const txnMatch = oneLine.match(/\b(?:txn|transaction(?:\s*id)?|trans(?:action)?\s*id|ref(?:erence)?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-]{5,35})\b/i);
   const amountMatch = oneLine.match(/(?:₹|rs\.?|inr|amount|amt)\s*[:#-]?\s*([0-9]+(?:\.[0-9]+)?)/i) || oneLine.match(/\b(?:payment|paid|deposit|recharge)\s+([0-9]+(?:\.[0-9]+)?)(?:\b|$)/i);
@@ -2357,7 +2386,7 @@ function parseDepositPaymentProof(text, hasImage = false){
   const amount = amountMatch ? Math.round(Number(amountMatch[1] || 0) * 100) / 100 : 0;
   const utr = utrMatch ? String(utrMatch[1]).replace(/[^A-Za-z0-9-]/g, '').toUpperCase() : '';
   const transactionId = txnMatch ? String(txnMatch[1]).replace(/[^A-Za-z0-9-]/g, '').toUpperCase() : '';
-  const looksLikeProof = !!hasImage || !!utr || !!transactionId || (hasPaymentWords && amount > 0);
+  const looksLikeProof = hasPaymentWords || !!utr || !!transactionId || ocrLooksLikePaymentProof(oneLine);
   if(!looksLikeProof) return { ok:false, silent:true };
   return { ok:true, amount:Number.isFinite(amount) ? amount : 0, utr, transactionId, paidToUpi:upiMatch ? upiMatch[1] : '', paidToName:paidToNameMatch ? paidToNameMatch[1].trim() : '', status, paidAt:dateMatch ? dateMatch[1] : '', rawOcrText:raw, ocrConfidence: raw ? 0.75 : 0 };
 }
@@ -2480,12 +2509,17 @@ async function handleIncomingDepositScreenshotMessage(m){
     if(!m || m.key?.fromMe) return false;
     const chatJid = m.key?.remoteJid || ''; if(!chatJid || chatJid === 'status@broadcast') return false;
     const hasImage = !!m?.message?.imageMessage; const caption = getMessageText(m); if(!hasImage && !caption) return false;
-    trackIncomingMessage(m, 'deposit_payment_proof');
     const senderCandidates = senderCandidatesFromMessage(m, chatJid);
     const senderJid = chatJid.endsWith('@g.us') ? (senderCandidates[0] || m.key?.participant || '') : chatJid;
     const img = hasImage ? await downloadPaymentScreenshotImageData(m) : { data:'', buffer:null, note:'' };
     const ocr = hasImage ? await ocrPaymentScreenshot(img.buffer) : { text:'', confidence:0, provider:'none' };
-    const parsed = parseDepositPaymentProof([caption, ocr.text].filter(Boolean).join('\n'), hasImage);
+    const state = await fetchFirebaseState();
+    const found = findProfileBySender(state, senderJid, { chatJid, senderJid, senderCandidates, pushName:m.pushName || m.verifiedBizName || '' });
+    const profile = found?.profile || null;
+    if(!shouldHandleDepositScreenshot(m, caption, ocr.text, profile)) return false;
+    trackIncomingMessage(m, 'deposit_payment_proof');
+    let parsed = parseDepositPaymentProof([caption, ocr.text].filter(Boolean).join('\n'), hasImage);
+    if(parsed.silent && hasRecentDepositIntent(profile, chatJid)) parsed = { ok:true, amount:Number(profile?.lastDepositIntentAmount || 0), utr:'', transactionId:'', paidToUpi:'', paidToName:'', status:'unknown', paidAt:'', rawOcrText:[caption, ocr.text].filter(Boolean).join('\n'), ocrConfidence:0 };
     if(parsed.silent) return false;
     parsed.ocrConfidence = ocr.confidence || parsed.ocrConfidence || (caption ? 0.75 : 0);
     const saved = await saveDepositPaymentRequest(parsed, { chatJid, senderJid, senderCandidates, pushName:m.pushName || m.verifiedBizName || '', messageKey:messageUniqueKey(m) }, img.data, img.note || (ocr.provider !== 'none' ? `OCR: ${ocr.provider}` : ''));
