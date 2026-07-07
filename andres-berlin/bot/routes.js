@@ -10,28 +10,38 @@ function handleError(res, error) {
   res.status(error.statusCode || 500).json({ status: "error", error: error.message });
 }
 
+function asyncRoute(handler) {
+  return async (req, res) => {
+    try {
+      await handler(req, res);
+    } catch (error) {
+      handleError(res, error);
+    }
+  };
+}
+
 function registerRoutes(app) {
   app.get("/api/firebase/status", (req, res) => res.json(firebaseStatus()));
   app.get("/api/safety/status", (req, res) => res.json(safetyStatus()));
   app.post("/api/safety/check", (req, res) => res.json(evaluateMessage(req.body || {})));
-  app.get("/api/scheduler/status", (req, res) => res.json(schedulerStatus()));
-  app.post("/api/scheduler/jobs", (req, res) => {
-    try { res.status(201).json(scheduleJob(req.body.name, Number(req.body.intervalMs))); } catch (error) { handleError(res, error); }
-  });
-  app.get("/api/result-scraper/status", (req, res) => res.json(scraperStatus()));
-  app.get("/api/result-scraper/results", (req, res) => res.json({ results: listResults(req.query.limit) }));
-  app.post("/api/result-scraper/results", (req, res) => {
-    try { res.status(201).json(ingestResult(req.body)); } catch (error) { handleError(res, error); }
-  });
-  app.get("/api/whatsapp/status", (req, res) => res.json(whatsappStatus()));
-  app.post("/api/whatsapp/messages", (req, res) => {
-    try {
-      const decision = evaluateMessage(req.body || {});
-      if (!decision.allowed) return res.status(422).json({ status: "rejected", decision });
-      return res.status(202).json(sendMessage(req.body.to, req.body.message));
-    } catch (error) { return handleError(res, error); }
-  });
-  app.post("/api/whatsapp/inbound", (req, res) => res.status(201).json(recordInbound(req.body.from, req.body.message)));
+  app.get("/api/scheduler/status", asyncRoute(async (req, res) => res.json(await schedulerStatus())));
+  app.post("/api/scheduler/jobs", asyncRoute(async (req, res) => {
+    res.status(201).json(await scheduleJob(req.body.name, Number(req.body.intervalMs)));
+  }));
+  app.get("/api/result-scraper/status", asyncRoute(async (req, res) => res.json(await scraperStatus())));
+  app.get("/api/result-scraper/results", asyncRoute(async (req, res) => res.json({ results: await listResults(req.query.limit) })));
+  app.post("/api/result-scraper/results", asyncRoute(async (req, res) => {
+    res.status(201).json(await ingestResult(req.body));
+  }));
+  app.get("/api/whatsapp/status", asyncRoute(async (req, res) => res.json(await whatsappStatus())));
+  app.post("/api/whatsapp/messages", asyncRoute(async (req, res) => {
+    const decision = evaluateMessage(req.body || {});
+    if (!decision.allowed) return res.status(422).json({ status: "rejected", decision });
+    return res.status(202).json(await sendMessage(req.body.to, req.body.message));
+  }));
+  app.post("/api/whatsapp/inbound", asyncRoute(async (req, res) => {
+    res.status(201).json(await recordInbound(req.body.from, req.body.message));
+  }));
 }
 
 module.exports = { registerRoutes };
