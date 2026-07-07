@@ -5914,24 +5914,27 @@ def api_save_settlement_settings():
 
 @app.route('/api/ledger_auto_mark', methods=['POST'])
 def api_ledger_auto_mark():
-    data = request.json or {}
-    state = migrate_and_get_state()
-    _ensure_foundation_state(state)
-    date = data.get('date') or _safe_today()
-    market = data.get('market') or ''
-    stage = data.get('stage') or ''
-    result = data.get('result') or ''
-    force = bool(data.get('force'))
-    if market and result:
-        summary = _ledger_auto_mark_for_result(state, date, market, stage, result, force=force)
-    else:
-        summary = _ledger_auto_mark_all_available(state, date, force=force)
-    if summary.get('changed') or data.get('record', True):
-        _firebase_put_top_level_children(state, {
-            'profiles': state.get('profiles', {}),
-            'ledgerAutoMarkRecords': state.get('ledgerAutoMarkRecords', {})
-        }, audit=False)
-    return jsonify({'status': 'success', 'summary': summary, 'ledgerAutoMarkRecords': state.get('ledgerAutoMarkRecords', {}), 'profiles': state.get('profiles', {})})
+    try:
+        data = request.get_json(silent=True) or {}
+        state = migrate_and_get_state()
+        _ensure_foundation_state(state)
+        date = data.get('date') or _safe_today()
+        market = data.get('market') or ''
+        stage = data.get('stage') or ''
+        result = data.get('result') or ''
+        force = bool(data.get('force'))
+        if market and result:
+            summary = _ledger_auto_mark_for_result(state, date, market, stage, result, force=force)
+        else:
+            summary = _ledger_auto_mark_all_available(state, date, force=force)
+        if summary.get('changed') or data.get('record', True):
+            _firebase_put_top_level_children(state, {
+                'profiles': state.get('profiles', {}),
+                'ledgerAutoMarkRecords': state.get('ledgerAutoMarkRecords', {})
+            }, audit=False)
+        return jsonify({'status': 'success', 'summary': summary, 'ledgerAutoMarkRecords': state.get('ledgerAutoMarkRecords', {}), 'profiles': state.get('profiles', {})})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e), 'summary': {'changed': False, 'marked': 0, 'pass': 0, 'fail': 0}}), 500
 
 
 @app.route('/api/send_hitmiss_report', methods=['POST'])
@@ -11551,8 +11554,14 @@ withdraw status</pre>
             if(!IS_MASTER) return;
             try {
                 const res = await fetch('/api/ledger_auto_mark', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({date: currentDate, force: false})});
-                const data = await res.json();
-                if(data.status !== 'success') throw new Error(data.message || 'Auto mark failed');
+                const raw = await res.text();
+                let data = {};
+                try { data = raw ? JSON.parse(raw) : {}; }
+                catch(parseErr){
+                    const hint = raw && raw.trim().startsWith('<') ? 'Server ne HTML error/redirect return kiya, JSON nahi.' : 'Invalid JSON response.';
+                    throw new Error(`${hint} HTTP ${res.status || 'unknown'}`);
+                }
+                if(!res.ok || data.status !== 'success') throw new Error(data.message || `Auto mark failed (HTTP ${res.status})`);
                 const sum = data.summary || {};
                 appState.ledgerAutoMarkRecords = data.ledgerAutoMarkRecords || appState.ledgerAutoMarkRecords || {};
                 if(data.profiles) appState.profiles = data.profiles;
