@@ -2845,6 +2845,64 @@ def _payment_risk_flag(state_obj, user_id, amount, utr):
         return 'spam'
     return 'safe'
 
+
+
+def _payment_expected_upis(state_obj):
+    methods = (state_obj or {}).get('paymentMethods', {}) if isinstance(state_obj, dict) else {}
+    vals = []
+    if isinstance(methods, dict):
+        for key in ['upi', 'phonepeUpi', 'gpayUpi', 'paytmUpi']:
+            val = str(methods.get(key) or '').strip()
+            if val and val not in vals:
+                vals.append(val)
+    return vals
+
+def _payment_proof_review(state_obj, data, amount, utr):
+    proof = data.get('proof') if isinstance(data.get('proof'), dict) else {}
+    image = str(data.get('image') or '').strip()
+    upi = str(data.get('upi') or proof.get('upi') or '').strip()
+    payment_name = str(data.get('paymentName') or proof.get('paymentName') or proof.get('receiverName') or '').strip()
+    payer_name = str(data.get('payerName') or proof.get('payerName') or '').strip()
+    paid_at_date = str(data.get('paymentDate') or proof.get('paymentDate') or '').strip()
+    paid_at_time = str(data.get('paymentTime') or proof.get('paymentTime') or '').strip()
+    txn_id = str(data.get('transactionId') or proof.get('transactionId') or '').strip()
+    expected_upis = _payment_expected_upis(state_obj)
+    expected_name = str(((state_obj or {}).get('paymentMethods') or {}).get('name') or TITAN_PAYMENT_NAME).strip()
+    issues = []
+    if not image:
+        issues.append('screenshot_missing')
+    if not _normalize_utr(utr) or len(_normalize_utr(utr)) < 8:
+        issues.append('utr_invalid')
+    if amount <= 0:
+        issues.append('amount_invalid')
+    if expected_upis and upi:
+        upi_norm = upi.lower().replace(' ', '')
+        if all(upi_norm != x.lower().replace(' ', '') for x in expected_upis):
+            issues.append('upi_mismatch')
+    elif expected_upis and not upi:
+        issues.append('upi_missing')
+    if expected_name and payment_name:
+        got = ''.join(ch for ch in payment_name.lower() if ch.isalnum())
+        exp = ''.join(ch for ch in expected_name.lower() if ch.isalnum())
+        if got and exp and got != exp and got not in exp and exp not in got:
+            issues.append('payment_name_mismatch')
+    elif expected_name and not payment_name:
+        issues.append('payment_name_missing')
+    if not payer_name:
+        issues.append('payer_name_missing')
+    if not paid_at_date:
+        issues.append('date_missing')
+    if not paid_at_time:
+        issues.append('time_missing')
+    review_status = 'needs_review' if issues else 'complete'
+    if any(x in issues for x in ['screenshot_missing', 'upi_mismatch', 'payment_name_mismatch', 'utr_invalid']):
+        review_status = 'wrong_or_incomplete'
+    return {
+        'upi': upi, 'expectedUpis': expected_upis, 'paymentName': payment_name, 'expectedPaymentName': expected_name,
+        'payerName': payer_name, 'paymentDate': paid_at_date, 'paymentTime': paid_at_time, 'transactionId': txn_id,
+        'issues': issues, 'reviewStatus': review_status
+    }
+
 def _credit_wallet_from_payment(state_obj, payment, note=None):
     user_id = payment.get('userId')
     amount = _payment_float(payment.get('amount', 0))
@@ -4711,7 +4769,12 @@ def submit_payment():
             for pmt in state.get('payments', []):
                 if isinstance(pmt, dict) and _normalize_utr(pmt.get('utr')) == utr_norm and str(pmt.get('status','')).lower() != 'rejected':
                     return ({'status': 'success', 'flag': 'duplicate', 'paymentStatus': 'rejected', 'paymentId': pmt.get('id'), 'message': 'Duplicate UTR already exists; blocked safely.', 'duplicateSafe': True}, 200)
+        proof_review = _payment_proof_review(state, data, amount, utr)
         autoFlag = _payment_risk_flag(state, user_id, amount, utr)
+        if proof_review.get('reviewStatus') == 'wrong_or_incomplete':
+            autoFlag = 'wrong_screenshot'
+        elif proof_review.get('reviewStatus') == 'needs_review' and autoFlag == 'safe':
+            autoFlag = 'proof_incomplete'
         decision = 'pending'
         if autoFlag == 'duplicate' and settings.get('duplicateUtrBlock', True):
             decision = 'blocked'
@@ -4724,9 +4787,18 @@ def submit_payment():
             'utrNormalized': utr_norm,
             'planLabel': data.get('planLabel', ''),
             'image': data.get('image', ''),
+            'proof': proof_review,
+            'upi': proof_review.get('upi', ''),
+            'paymentName': proof_review.get('paymentName', ''),
+            'payerName': proof_review.get('payerName', ''),
+            'paymentDate': proof_review.get('paymentDate', ''),
+            'paymentTime': proof_review.get('paymentTime', ''),
+            'transactionId': proof_review.get('transactionId', ''),
+            'proofIssues': proof_review.get('issues', []),
+            'proofReviewStatus': proof_review.get('reviewStatus', ''),
             'status': 'pending' if decision != 'blocked' else 'rejected',
             'autoFlag': autoFlag,
-            'riskLevel': 'LOW' if autoFlag == 'safe' else ('HIGH' if autoFlag in ['duplicate', 'high_amount', 'utr_missing'] else 'MEDIUM'),
+            'riskLevel': 'LOW' if autoFlag == 'safe' else ('HIGH' if autoFlag in ['duplicate', 'high_amount', 'utr_missing', 'wrong_screenshot'] else 'MEDIUM'),
             'decision': decision,
             'walletCredited': False,
             'time': datetime.datetime.now().strftime('%d-%m-%Y %I:%M %p'),
@@ -4737,9 +4809,9 @@ def submit_payment():
             payment['rejectReason'] = 'Duplicate UTR blocked automatically.'
             payment['rejectedAt'] = _now_iso_local()
         state['payments'].append(payment)
-        _add_audit(state, 'payment_submitted_atomic', {'paymentId': payment['id'], 'userId': user_id, 'amount': amount, 'flag': autoFlag, 'status': payment['status']})
+        _add_audit(state, 'payment_submitted_atomic', {'paymentId': payment['id'], 'userId': user_id, 'amount': amount, 'flag': autoFlag, 'status': payment['status'], 'proofIssues': payment.get('proofIssues', [])})
         _queue_payment_message(state, user_id, f"💳 *PAYMENT SUBMITTED*\n━━━━━━━━━━━━━━━━━━━━\n🆔 *ID:* #{payment['id']}\n💵 *Amount:* ₹{amount:g}\n🔢 *UTR:* {utr or '-'}\n⚡ *Status:* {payment['status'].upper()}\n📝 Admin verification ke baad wallet update hoga.", {'type': 'payment_submitted', 'paymentId': payment['id']})
-        return ({'status': 'success', 'flag': autoFlag, 'paymentStatus': payment['status'], 'paymentId': payment['id']}, 200)
+        return ({'status': 'success', 'flag': autoFlag, 'paymentStatus': payment['status'], 'paymentId': payment['id'], 'proofReviewStatus': payment.get('proofReviewStatus'), 'proofIssues': payment.get('proofIssues', [])}, 200)
 
     return _json_money_response(_money_atomic_commit('submit_payment', data, ['userId','amount','utr','planLabel'], mutator))
 
@@ -13910,6 +13982,15 @@ withdraw status</pre>
                     <input id="pay-utr" type="text" placeholder="UTR / Transaction ID"
                       class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white font-bold rounded-2xl pl-11 pr-4 py-3.5 outline-none text-sm focus:border-[var(--primary)] transition-colors">
                   </div>
+                  <div class="grid grid-cols-1 gap-3 mb-3">
+                    <input id="pay-upi" type="text" placeholder="Paid To UPI ID (screenshot me jo hai)" class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white font-bold rounded-2xl px-4 py-3.5 outline-none text-sm focus:border-[var(--primary)] transition-colors">
+                    <input id="pay-name" type="text" placeholder="Receiver / Payment Name" class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white font-bold rounded-2xl px-4 py-3.5 outline-none text-sm focus:border-[var(--primary)] transition-colors">
+                    <input id="pay-payer" type="text" placeholder="Sender / Banking Name" class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white font-bold rounded-2xl px-4 py-3.5 outline-none text-sm focus:border-[var(--primary)] transition-colors">
+                    <div class="grid grid-cols-2 gap-2">
+                      <input id="pay-date" type="date" class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white font-bold rounded-2xl px-4 py-3.5 outline-none text-sm focus:border-[var(--primary)] transition-colors">
+                      <input id="pay-time" type="time" class="w-full bg-[var(--surface-light)] border border-[var(--border)] text-white font-bold rounded-2xl px-4 py-3.5 outline-none text-sm focus:border-[var(--primary)] transition-colors">
+                    </div>
+                  </div>
                   <label for="pay-image"
                     class="flex items-center gap-3 bg-[var(--surface-light)] border border-dashed border-[var(--surface-mid)] rounded-2xl p-3.5 mb-4 cursor-pointer active:scale-98 transition-transform">
                     <div class="w-9 h-9 bg-[rgba(123,143,255,0.12)] rounded-xl flex items-center justify-center shrink-0">
@@ -14021,10 +14102,16 @@ withdraw status</pre>
         async function submitPayment() {
             const amount = document.getElementById('pay-amount').value;
             const utr    = document.getElementById('pay-utr').value;
+            const upi = document.getElementById('pay-upi')?.value.trim() || '';
+            const paymentName = document.getElementById('pay-name')?.value.trim() || '';
+            const payerName = document.getElementById('pay-payer')?.value.trim() || '';
+            const paymentDate = document.getElementById('pay-date')?.value || '';
+            const paymentTime = document.getElementById('pay-time')?.value || '';
             const fileInput = document.getElementById('pay-image');
             const submitBtn = document.getElementById('pay-submit-btn');
 
-            if (!amount || !utr) { showRealNotification('⚠️ Error', 'Amount aur UTR zaroor daalein', 'danger'); return; }
+            if (!amount || !utr || !upi || !paymentName || !payerName || !paymentDate || !paymentTime) { showRealNotification('⚠️ Proof Incomplete', 'Amount, UTR, UPI, payment name, sender name, date/time sab bharna hoga.', 'danger'); return; }
+            if (!fileInput || !fileInput.files[0]) { showRealNotification('⚠️ Screenshot Missing', 'Payment screenshot upload karna zaroori hai.', 'danger'); return; }
 
             const originalBtnText = submitBtn.innerHTML;
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Uploading...';
@@ -14036,7 +14123,7 @@ withdraw status</pre>
                     imageUrl = await titanUploadImage(fileInput.files[0]);
                 }
 
-                await sendPayment(amount, utr, imageUrl);
+                await sendPayment(amount, utr, imageUrl, {upi, paymentName, payerName, paymentDate, paymentTime});
             } catch(error) {
                 showRealNotification('❌ Upload Failed', error.message, 'danger');
             } finally {
@@ -14045,7 +14132,7 @@ withdraw status</pre>
             }
         }
 
-        async function sendPayment(amount, utr, image) {
+        async function sendPayment(amount, utr, image, proof = {}) {
             const profile = appState.profiles[appState.activeId];
             const planLabels = {day:'1 Din - ₹500', week:'Weekly - ₹1500', month:'Monthly - ₹4000'};
             try {
@@ -14058,7 +14145,12 @@ withdraw status</pre>
                         amount: amount,
                         utr: utr,
                         image: image,
-                        planLabel: planLabels[_selectedPlan] || _selectedPlan
+                        planLabel: planLabels[_selectedPlan] || _selectedPlan,
+                        upi: proof.upi,
+                        paymentName: proof.paymentName,
+                        payerName: proof.payerName,
+                        paymentDate: proof.paymentDate,
+                        paymentTime: proof.paymentTime
                     })
                 });
                 const data = await res.json();
@@ -14068,13 +14160,21 @@ withdraw status</pre>
                     low_amount: '⚠️ Amount too low',
                     high_amount:'⚠️ Amount too high',
                     utr_missing:'⚠️ UTR missing',
-                    safe:       '✅ Payment submitted successfully'
+                    safe:       '✅ Payment submitted successfully',
+                    proof_incomplete: '⚠️ Proof details incomplete',
+                    wrong_screenshot: '❌ Wrong screenshot / mismatch detected'
                 };
-                const flagTypes = { duplicate: 'danger', spam: 'danger', low_amount: 'danger', high_amount:'danger', utr_missing:'danger', safe: 'success' };
-                showRealNotification(flagMessages[data.flag] || '✅ Submitted', 'Admin jald verify karenge.', flagTypes[data.flag] || 'success');
+                const flagTypes = { duplicate: 'danger', spam: 'danger', low_amount: 'danger', high_amount:'danger', utr_missing:'danger', safe: 'success', proof_incomplete: 'danger', wrong_screenshot: 'danger' };
+                if(data.status !== 'success') throw new Error(data.message || 'Payment submit failed');
+                showRealNotification(flagMessages[data.flag] || '✅ Submitted', (data.proofIssues && data.proofIssues.length) ? data.proofIssues.join(', ') : 'Admin jald verify karenge.', flagTypes[data.flag] || 'success');
                 document.getElementById('pay-amount').value = '';
                 document.getElementById('pay-utr').value = '';
                 document.getElementById('pay-file-label').textContent = 'Screenshot Upload Karein';
+                if (document.getElementById('pay-time')) document.getElementById('pay-time').value = '';
+                if (document.getElementById('pay-date')) document.getElementById('pay-date').value = '';
+                if (document.getElementById('pay-payer')) document.getElementById('pay-payer').value = '';
+                if (document.getElementById('pay-name')) document.getElementById('pay-name').value = '';
+                if (document.getElementById('pay-upi')) document.getElementById('pay-upi').value = '';
                 try {
                     const stateRes = await fetch('/api/state');
                     const newState = await stateRes.json();
@@ -14168,6 +14268,13 @@ withdraw status</pre>
                         <span class="${flagColor} text-[10px] font-black uppercase">⚡ ${flagText.toUpperCase()}</span>
                         ${p.riskLevel ? `<span class="text-[10px] font-black uppercase text-[var(--purple)]">🛡️ ${p.riskLevel}</span>` : ''}
                         ${p.walletCredited ? `<span class="text-[10px] font-black uppercase text-[var(--green)]">💳 WALLET +₹${p.walletCreditAmount || p.amount}</span>` : ''}
+                    </div>
+                    <div class="mb-3 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl p-2.5 text-[10px] text-[var(--text-muted)] space-y-1">
+                        <div><b class="text-white">UPI:</b> ${p.upi || p.proof?.upi || '-'} ${p.proof?.expectedUpis?.length ? `<span class="block">Expected: ${p.proof.expectedUpis.join(', ')}</span>` : ''}</div>
+                        <div><b class="text-white">Payment Name:</b> ${p.paymentName || p.proof?.paymentName || '-'} ${p.proof?.expectedPaymentName ? `<span class="block">Expected: ${p.proof.expectedPaymentName}</span>` : ''}</div>
+                        <div><b class="text-white">Sender:</b> ${p.payerName || p.proof?.payerName || '-'}</div>
+                        <div><b class="text-white">Paid Date/Time:</b> ${p.paymentDate || p.proof?.paymentDate || '-'} ${p.paymentTime || p.proof?.paymentTime || ''}</div>
+                        ${p.proofIssues?.length ? `<div class="text-[var(--rose)] font-black">Issues: ${p.proofIssues.join(', ')}</div>` : ''}
                     </div>
                     ${p.rejectReason ? `<div class="mb-3 bg-[rgba(255,93,93,0.08)] border border-[rgba(255,93,93,0.18)] rounded-xl p-2 text-[10px] text-[var(--rose)] font-bold">Reason: ${p.rejectReason}</div>` : ''}
                     ${p.image ? `<img src="${p.image}" class="w-full rounded-xl mb-3 border border-[var(--border)] max-h-48 object-contain"/>` : ''}
