@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
@@ -21,6 +22,47 @@ from backend.config import get_config
 _LOCK = threading.RLock()
 _STORE = Path(os.environ.get("TITAN_STORE_PATH", Path(__file__).resolve().parents[2] / "data" / "runtime_store.json"))
 _MISSING = object()
+_FIREBASE_DEFAULT_TIMEOUT_SECONDS = 1.5
+_FIREBASE_DEFAULT_FAILURE_THRESHOLD = 2
+_FIREBASE_DEFAULT_COOLDOWN_SECONDS = 15.0
+_firebase_consecutive_failures = 0
+_firebase_unavailable_until = 0.0
+
+
+def _env_float(name: str, default: float, minimum: float | None = None) -> float:
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    return value
+
+
+def _env_int(name: str, default: int, minimum: int | None = None) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    return value
+
+
+def _firebase_timeout_seconds() -> float:
+    return _env_float("FIREBASE_TIMEOUT_SECONDS", _FIREBASE_DEFAULT_TIMEOUT_SECONDS, minimum=0.1)
+
+
+def _firebase_failure_threshold() -> int:
+    return _env_int("FIREBASE_FAILURE_THRESHOLD", _FIREBASE_DEFAULT_FAILURE_THRESHOLD, minimum=1)
+
+
+def _firebase_cooldown_seconds() -> float:
+    return _env_float("FIREBASE_CIRCUIT_BREAKER_SECONDS", _FIREBASE_DEFAULT_COOLDOWN_SECONDS, minimum=0.0)
+
+
+def _firebase_circuit_open(now: float | None = None) -> bool:
+    return (time.monotonic() if now is None else now) < _firebase_unavailable_until
 
 
 def _clean_path(path: str) -> str:
@@ -31,10 +73,23 @@ def _clean_path(path: str) -> str:
 
 
 def firebase_status() -> dict:
-    """Return Firebase configuration status without exposing secrets."""
+    """Return Firebase configuration and fallback status without exposing secrets."""
 
     url = get_config().firebase_url
-    return {"configured": bool(url), "urlPreview": url[:24] + "..." if url else "", "fallbackStore": str(_STORE)}
+    now = time.monotonic()
+    unavailable_for = max(0.0, _firebase_unavailable_until - now)
+    return {
+        "configured": bool(url),
+        "urlPreview": url[:24] + "..." if url else "",
+        "fallbackStore": str(_STORE),
+        "timeoutSeconds": _firebase_timeout_seconds(),
+        "failureThreshold": _firebase_failure_threshold(),
+        "circuitBreakerSeconds": _firebase_cooldown_seconds(),
+        "consecutiveFailures": _firebase_consecutive_failures,
+        "usingLocalFallback": not bool(url) or unavailable_for > 0,
+        "firebaseUnavailable": unavailable_for > 0,
+        "firebaseUnavailableForSeconds": round(unavailable_for, 3),
+    }
 
 
 def _firebase_url(path: str, params: dict[str, str] | None = None) -> str:
@@ -49,16 +104,34 @@ def _auth_params() -> dict[str, str]:
 
 
 def _firebase_request(method: str, path: str, payload: Any | None = None) -> Any:
+    """Call Firebase unless the fallback circuit is open."""
+
+    global _firebase_consecutive_failures, _firebase_unavailable_until
+
     if not get_config().firebase_url:
         return _MISSING
+
+    now = time.monotonic()
+    if _firebase_circuit_open(now):
+        return _MISSING
+
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(_firebase_url(path, _auth_params()), data=data, method=method, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=6) as response:  # nosec - configured service URL
+        with urlopen(request, timeout=_firebase_timeout_seconds()) as response:  # nosec - configured service URL
             body = response.read().decode("utf-8")
-            return json.loads(body) if body else None
+            result = json.loads(body) if body else None
     except (OSError, URLError, json.JSONDecodeError):
+        with _LOCK:
+            _firebase_consecutive_failures += 1
+            if _firebase_consecutive_failures >= _firebase_failure_threshold():
+                _firebase_unavailable_until = time.monotonic() + _firebase_cooldown_seconds()
         return _MISSING
+
+    with _LOCK:
+        _firebase_consecutive_failures = 0
+        _firebase_unavailable_until = 0.0
+    return result
 
 
 def _read_store() -> dict:
