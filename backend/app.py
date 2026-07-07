@@ -1,15 +1,30 @@
-"""Backend entrypoint for the Titan Nova Flask application.
+"""Compatibility entrypoint for the clean Andres Berlin era.
 
-The production Flask app currently lives in the repository-root ``flask_app.py``
-for backward compatibility with existing deployments. Importing and re-exporting
-``app`` here gives new code a stable package path without breaking legacy
-commands such as ``python flask_app.py``.
+The legacy root Flask monolith has been moved to ``legacy-backup/``. New active
+backend development lives in ``andres-berlin/backend``.
 """
 
-from flask_app import app
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+
+@app.get("/health")
+def health():
+    """Return a small compatibility health response."""
+
+    return {"status": "ok", "activeProject": "andres-berlin"}
+
+
+@app.get("/")
+def index():
+    """Point callers to the new project folder."""
+
+    return jsonify({"message": "Use andres-berlin as the active clean project."})
+
 
 __all__ = ["app"]
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=False)
