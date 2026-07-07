@@ -11,12 +11,11 @@ from backend.config import get_config
 
 
 def _call_gateway(method: str, path: str, payload: dict | None = None) -> tuple[int, Any]:
-    config = get_config()
-    url = f"{config.gateway_url.rstrip('/')}{path}"
+    url = f"{get_config().gateway_url.rstrip('/')}{path}"
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=config.gateway_timeout_seconds) as response:  # nosec - configured gateway URL
+        with urlopen(request, timeout=4) as response:  # nosec - configured gateway URL
             body = response.read().decode("utf-8")
             return response.status, json.loads(body) if body else {}
     except (OSError, URLError, json.JSONDecodeError) as exc:

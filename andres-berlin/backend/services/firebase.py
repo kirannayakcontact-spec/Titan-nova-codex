@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
@@ -22,17 +21,6 @@ from backend.config import get_config
 _LOCK = threading.RLock()
 _STORE = Path(os.environ.get("TITAN_STORE_PATH", Path(__file__).resolve().parents[2] / "data" / "runtime_store.json"))
 _MISSING = object()
-_REMOTE_PAUSED_UNTIL = 0.0
-
-
-def _remote_paused() -> bool:
-    return time.monotonic() < _REMOTE_PAUSED_UNTIL
-
-
-def _pause_remote() -> None:
-    global _REMOTE_PAUSED_UNTIL
-    delay = get_config().firebase_circuit_breaker_seconds
-    _REMOTE_PAUSED_UNTIL = time.monotonic() + delay
 
 
 def _clean_path(path: str) -> str:
@@ -61,17 +49,15 @@ def _auth_params() -> dict[str, str]:
 
 
 def _firebase_request(method: str, path: str, payload: Any | None = None) -> Any:
-    config = get_config()
-    if not config.firebase_url or _remote_paused():
+    if not get_config().firebase_url:
         return _MISSING
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(_firebase_url(path, _auth_params()), data=data, method=method, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=config.firebase_timeout_seconds) as response:  # nosec - configured service URL
+        with urlopen(request, timeout=6) as response:  # nosec - configured service URL
             body = response.read().decode("utf-8")
             return json.loads(body) if body else None
     except (OSError, URLError, json.JSONDecodeError):
-        _pause_remote()
         return _MISSING
 
 

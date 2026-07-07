@@ -1,8 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -e
 
+echo "🔄 Titan Nova: pulling latest GitHub update..."
 cd "$(dirname "$0")"
-echo "🔄 Pulling latest update..."
 git pull
 
 echo "🐍 Installing Python requirements..."
@@ -11,6 +11,9 @@ pip install -r requirements.txt
 echo "📦 Installing Node packages..."
 npm install
 
+echo "🛠️ Restoring Titan Nova runtime files if missing..."
+python titan_runtime_files.py --ensure
+
 echo "✅ Update complete."
-echo "Run backend: bash termux-flask.sh"
-echo "Run gateway: npm start"
+echo "Run Flask:   bash termux-flask.sh"
+echo "Run Gateway: bash termux-gateway.sh"
