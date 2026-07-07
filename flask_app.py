@@ -14829,7 +14829,7 @@ import urllib.request as _urlrequest
 import urllib.error as _urlerror
 import uuid as _uuid
 
-DEPOSIT_FLOW_V1_VERSION = "2026-07-05-deposit-flow-v1-backend-u1"
+DEPOSIT_FLOW_V1_VERSION = "2026-07-07-deposit-flow-v1-backend-u2"
 _ALLOWED_STATUS = {
     "new",
     "payment_pending",
@@ -14838,6 +14838,24 @@ _ALLOWED_STATUS = {
     "approved",
     "rejected",
     "cancelled",
+}
+_DEPOSIT_STATUS_META = {
+    "new": {"label": "New", "tone": "info", "userText": "Deposit draft bana hai. Amount confirm karke payment karein."},
+    "payment_pending": {"label": "Payment Pending", "tone": "warn", "userText": "UPI/QR se payment karein, phir UTR ya screenshot submit karein."},
+    "payment_submitted": {"label": "Submitted", "tone": "info", "userText": "Payment proof receive ho gaya. Admin verification pending hai."},
+    "under_verification": {"label": "Verifying", "tone": "warn", "userText": "Admin payment verify kar raha hai. Thoda wait karein."},
+    "approved": {"label": "Approved", "tone": "ok", "userText": "Deposit approved hai. Wallet credit flow ke liye ready hai."},
+    "rejected": {"label": "Rejected", "tone": "danger", "userText": "Deposit reject hua. Reason check karein aur correct proof bhejein."},
+    "cancelled": {"label": "Cancelled", "tone": "muted", "userText": "Deposit request cancel ho chuki hai."},
+}
+_DEPOSIT_ACTIONS = {
+    "payment_pending": ["payment_submitted", "cancelled"],
+    "payment_submitted": ["under_verification", "approved", "rejected"],
+    "under_verification": ["approved", "rejected"],
+    "approved": [],
+    "rejected": [],
+    "cancelled": [],
+    "new": ["payment_pending", "cancelled"],
 }
 _DEFAULT_FIREBASE_DB_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/"
 
@@ -14946,6 +14964,82 @@ def _money_amount(value):
     return round(amt, 2)
 
 
+def _deposit_public_status(status: str) -> dict:
+    key = str(status or "payment_pending").strip().lower()
+    meta = dict(_DEPOSIT_STATUS_META.get(key) or _DEPOSIT_STATUS_META["payment_pending"])
+    meta["key"] = key
+    meta["nextStatuses"] = list(_DEPOSIT_ACTIONS.get(key, []))
+    return meta
+
+
+def _upi_payment_link(upi_id: str, name: str, amount, note: str) -> str:
+    upi_id = str(upi_id or "").strip()
+    if not upi_id:
+        return ""
+    params = {"pa": upi_id, "pn": str(name or "TITAN NOVA").strip() or "TITAN NOVA", "cu": "INR", "tn": str(note or "Titan Nova Deposit")[:80]}
+    if amount:
+        params["am"] = f"{float(amount):.2f}"
+    return "upi://pay?" + _urlparse.urlencode(params)
+
+
+def _deposit_user_steps(status: str, has_proof: bool = False) -> list:
+    status = str(status or "payment_pending").lower()
+    if status == "payment_pending":
+        return [
+            "Amount verify karein.",
+            "UPI app me Pay Now link/QR se payment karein.",
+            "Payment ke baad UTR number ya screenshot submit karein.",
+        ]
+    if status in ("payment_submitted", "under_verification"):
+        base = ["Proof receive ho gaya." if has_proof else "UTR/proof missing ho to submit karein.", "Admin verification ka wait karein."]
+        return base
+    if status == "approved":
+        return ["Deposit approved hai.", "Wallet credit/update ke liye admin ledger flow ready hai."]
+    if status == "rejected":
+        return ["Reject reason check karein.", "Correct UTR/screenshot ke saath nayi request banayein."]
+    if status == "cancelled":
+        return ["Request cancel ho gayi hai.", "Zarurat ho to nayi deposit request banayein."]
+    return ["Deposit status check karein."]
+
+
+def _enrich_deposit_record(rec: dict, settings: dict | None = None) -> dict:
+    if not isinstance(rec, dict):
+        return rec
+    out = dict(rec)
+    settings = settings or {}
+    payment = dict(out.get("payment") or {})
+    upi_id = payment.get("upiId") or settings.get("upiId") or ""
+    payment_name = payment.get("paymentName") or settings.get("paymentName") or "TITAN NOVA"
+    out["publicStatus"] = _deposit_public_status(out.get("status"))
+    out["allowedNextStatuses"] = out["publicStatus"].get("nextStatuses", [])
+    out["userSteps"] = _deposit_user_steps(out.get("status"), bool(out.get("utr") or out.get("proofUrl")))
+    out["payLink"] = _upi_payment_link(upi_id, payment_name, out.get("amount"), f"TITAN NOVA {out.get('depositId') or out.get('id')}")
+    out["adminFlags"] = {
+        "needsProof": str(out.get("status") or "") == "payment_pending" and not (out.get("utr") or out.get("proofUrl")),
+        "needsVerification": str(out.get("status") or "") in ("payment_submitted", "under_verification"),
+        "canApprove": str(out.get("status") or "") in ("payment_submitted", "under_verification"),
+    }
+    return out
+
+
+def _deposit_stats(items: list) -> dict:
+    stats = {"total": 0, "amount": 0.0, "byStatus": {}, "pendingCount": 0, "pendingAmount": 0.0}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        stats["total"] += 1
+        amt = float(item.get("amount") or 0)
+        stats["amount"] = round(stats["amount"] + amt, 2)
+        st = str(item.get("status") or "payment_pending").lower()
+        bucket = stats["byStatus"].setdefault(st, {"count": 0, "amount": 0.0})
+        bucket["count"] += 1
+        bucket["amount"] = round(bucket["amount"] + amt, 2)
+        if st in ("payment_pending", "payment_submitted", "under_verification"):
+            stats["pendingCount"] += 1
+            stats["pendingAmount"] = round(stats["pendingAmount"] + amt, 2)
+    return stats
+
+
 def _deposit_settings_default() -> dict:
     return {
         "version": DEPOSIT_FLOW_V1_VERSION,
@@ -15033,7 +15127,7 @@ def _register_deposit_routes(app):
                 "/api/deposit_flow_v1/detail/<depositId>",
                 "/api/deposit_flow_v1/update",
             ],
-            "note": "Update 1 backend APIs only. Wallet credit and WhatsApp automation come in later updates.",
+            "note": "Update 2 adds guided user pay links, admin stats, status actions, and richer deposit records.",
         })
 
     @app.route("/api/deposit_flow_v1/settings", methods=["GET", "POST"])
@@ -15105,7 +15199,7 @@ def _register_deposit_routes(app):
             if utr:
                 _fb_put(["depositUtrIndex", _utr_hash(utr)], {"depositId": deposit_id, "utr": utr, "amount": amount, "createdAt": rec["createdAt"]})
             _audit(deposit_id, "deposit_request_created", {"status": current_status, "amount": amount, "userId": user_id})
-            return jsonify({"status": "success", "deposit": rec, "settings": settings, "version": DEPOSIT_FLOW_V1_VERSION})
+            return jsonify({"status": "success", "deposit": _enrich_deposit_record(rec, settings), "settings": settings, "nextSteps": _deposit_user_steps(current_status, bool(utr or proof_url)), "version": DEPOSIT_FLOW_V1_VERSION})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
 
@@ -15120,7 +15214,9 @@ def _register_deposit_routes(app):
             if status_filter:
                 items = [x for x in items if isinstance(x, dict) and str(x.get("status") or "").lower() == status_filter]
             items.sort(key=lambda x: str((x or {}).get("updatedAt") or (x or {}).get("createdAt") or ""), reverse=True)
-            return jsonify({"status": "success", "deposits": items[:limit], "count": len(items), "version": DEPOSIT_FLOW_V1_VERSION})
+            settings = _get_deposit_settings()
+            enriched = [_enrich_deposit_record(x, settings) for x in items[:limit]]
+            return jsonify({"status": "success", "deposits": enriched, "count": len(items), "stats": _deposit_stats(items), "statusMeta": _DEPOSIT_STATUS_META, "version": DEPOSIT_FLOW_V1_VERSION})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
 
@@ -15131,7 +15227,7 @@ def _register_deposit_routes(app):
             if not rec:
                 return jsonify({"status": "error", "message": "Deposit not found", "version": DEPOSIT_FLOW_V1_VERSION}), 404
             audit = _fb_get(["depositAuditLog", deposit_id], default={})
-            return jsonify({"status": "success", "deposit": rec, "audit": audit or {}, "version": DEPOSIT_FLOW_V1_VERSION})
+            return jsonify({"status": "success", "deposit": _enrich_deposit_record(rec, _get_deposit_settings()), "audit": audit or {}, "version": DEPOSIT_FLOW_V1_VERSION})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
 
@@ -15150,8 +15246,18 @@ def _register_deposit_routes(app):
             if new_status:
                 if new_status not in _ALLOWED_STATUS:
                     return jsonify({"status": "error", "message": "Invalid deposit status", "allowed": sorted(_ALLOWED_STATUS), "version": DEPOSIT_FLOW_V1_VERSION}), 400
+                current_status = str(rec.get("status") or "payment_pending").lower()
+                allowed_next = _DEPOSIT_ACTIONS.get(current_status, [])
+                force = bool(data.get("force"))
+                if allowed_next and new_status not in allowed_next and not force:
+                    return jsonify({"status": "error", "message": f"Status flow blocked: {current_status} -> {new_status}", "allowedNextStatuses": allowed_next, "version": DEPOSIT_FLOW_V1_VERSION}), 409
                 updates["status"] = new_status
                 updates["stage"] = new_status
+                if new_status == "approved":
+                    updates["approvedAt"] = _now_iso()
+                    updates["approvedBy"] = str(data.get("updatedBy") or "admin").strip()[:80]
+                if new_status == "rejected":
+                    updates["rejectedAt"] = _now_iso()
             for key in ("adminNote", "rejectReason", "verificationNote", "proofUrl", "utr"):
                 if key in data:
                     updates[key] = str(data.get(key) or "").strip()[:1000]
@@ -15165,12 +15271,12 @@ def _register_deposit_routes(app):
             fresh = dict(rec)
             fresh.update(updates)
             _audit(deposit_id, "deposit_request_updated", {"updates": updates})
-            return jsonify({"status": "success", "deposit": fresh, "updates": updates, "version": DEPOSIT_FLOW_V1_VERSION})
+            return jsonify({"status": "success", "deposit": _enrich_deposit_record(fresh, _get_deposit_settings()), "updates": updates, "version": DEPOSIT_FLOW_V1_VERSION})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
 
 
-DEPOSIT_FLOW_V1_UI_VERSION = "2026-07-05-deposit-flow-v1-setup-ui-u2"
+DEPOSIT_FLOW_V1_UI_VERSION = "2026-07-07-deposit-flow-v1-setup-ui-u3"
 
 
 def _deposit_setup_html() -> str:
@@ -15186,7 +15292,7 @@ def _deposit_setup_html() -> str:
     *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#07111f,#0c1728);color:var(--txt);font-family:Inter,Arial,sans-serif;padding:16px}
     .wrap{max-width:860px;margin:0 auto}.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}.title{font-size:22px;font-weight:900}.badge{font-size:11px;color:#062013;background:var(--ok);border-radius:999px;padding:7px 10px;font-weight:900}
     .grid{display:grid;grid-template-columns:1fr;gap:14px}@media(min-width:760px){.grid{grid-template-columns:1.1fr .9fr}}
-    .card{background:rgba(16,28,46,.96);border:1px solid rgba(42,171,238,.22);border-radius:18px;padding:16px;box-shadow:0 14px 38px rgba(0,0,0,.28)}
+    .card{background:rgba(16,28,46,.96);border:1px solid rgba(42,171,238,.22);border-radius:18px;padding:16px;box-shadow:0 14px 38px rgba(0,0,0,.28)} .flow{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}.step{border:1px solid var(--line);border-radius:14px;padding:9px;background:#0b1727;text-align:center;font-size:11px;color:var(--muted)}.step.on{border-color:var(--brand);color:#dff4ff;background:#10243a}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.actions button{width:auto;margin:0;padding:8px 10px;font-size:12px}.pill.ok{background:rgba(30,215,96,.18);color:#9dffba}.pill.warn{background:rgba(255,204,102,.18);color:#ffe19a}.pill.danger{background:rgba(255,77,109,.2);color:#ffc2cc}.pill.info{background:#1a2d48;color:#b8d8ff}
     label{display:block;font-size:12px;color:var(--muted);margin:12px 0 7px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}input,textarea,select{width:100%;background:#07111f;border:1px solid var(--line);color:var(--txt);border-radius:13px;padding:13px;font-size:15px;outline:none}textarea{min-height:78px;resize:vertical}
     input:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(42,171,238,.14)}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:10px}.toggle input{width:auto;transform:scale(1.2)}
     button{border:0;border-radius:13px;padding:13px 14px;font-weight:900;color:white;background:var(--brand);width:100%;margin-top:12px;font-size:14px}.secondary{background:#263b59}.danger{background:var(--danger)}.ok{background:var(--ok);color:#062013}.hint{color:var(--muted);font-size:12px;line-height:1.45}.status{padding:11px 12px;border-radius:14px;margin:12px 0;background:#0b1727;border:1px solid var(--line);color:var(--muted);font-size:13px;white-space:pre-wrap}.status.good{border-color:rgba(30,215,96,.45);color:#b9ffd0}.status.bad{border-color:rgba(255,77,109,.55);color:#ffc7d2}.qr{width:100%;min-height:230px;background:#07111f;border:1px dashed var(--line);border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden}.qr img{max-width:100%;max-height:320px;display:block}.mini{font-size:12px;color:var(--muted)}.list{display:flex;flex-direction:column;gap:9px;margin-top:10px}.item{padding:11px;border:1px solid var(--line);border-radius:14px;background:#0b1727}.item b{font-size:13px}.pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#1a2d48;color:#b8d8ff;font-size:11px;font-weight:900;margin-left:6px}.copy{font-size:12px;color:#9fd3ff;word-break:break-all}.footer{margin-top:14px;color:var(--muted);font-size:12px;text-align:center}
@@ -15243,12 +15349,23 @@ def _deposit_setup_html() -> str:
       <button class="ok" onclick="copyPaymentMessage()">📋 Copy Payment Message</button>
       <button class="secondary" onclick="openStatus()">🧪 Open Backend Status</button>
 
-      <h3 style="margin:18px 0 8px">Latest Deposits</h3>
+      <h3 style="margin:18px 0 8px">Admin Deposit Desk</h3>
+      <div class="status" id="depositStats">Loading deposit stats...</div>
+      <div class="row">
+        <select id="statusFilter" onchange="loadDeposits()">
+          <option value="">All Status</option>
+          <option value="payment_pending">Payment Pending</option>
+          <option value="payment_submitted">Submitted</option>
+          <option value="under_verification">Under Verification</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <button class="secondary" onclick="loadDeposits()" style="margin-top:0">Refresh</button>
+      </div>
       <div id="depositList" class="list"><div class="hint">Loading...</div></div>
-      <button class="secondary" onclick="loadDeposits()">Refresh Deposits</button>
     </div>
   </div>
-  <div class="footer">Titan Nova Deposit Flow v1 · Setup UI Update 2</div>
+  <div class="footer">Titan Nova Deposit Flow v1 · Setup UI Update 3</div>
 </div>
 
 <script>
@@ -15277,7 +15394,7 @@ function fill(s){
   qs('autoWhatsapp').checked = !!s.autoWhatsapp;
   qs('adminNote').value = s.adminNote || '';
   previewQr();
-  qs('summary').textContent = `Name: ${s.paymentName || '-'}\nUPI: ${s.upiId || '-'}\nLimit: ₹${s.minDeposit || 0} - ₹${s.maxDeposit || 0}\nManual Approval: ${s.manualApproval?'ON':'OFF'}\nAuto WhatsApp: ${s.autoWhatsapp?'ON':'OFF'}`;
+  qs('summary').textContent = `User Flow:\n1) Amount enter → Pay link/QR\n2) UTR/screenshot submit\n3) Admin verify → approve/reject\n\nName: ${s.paymentName || '-'}\nUPI: ${s.upiId || '-'}\nLimit: ₹${s.minDeposit || 0} - ₹${s.maxDeposit || 0}\nManual Approval: ${s.manualApproval?'ON':'OFF'}\nAuto WhatsApp: ${s.autoWhatsapp?'ON':'OFF'}`;
 }
 async function loadSettings(){
   try{ setStatus('Loading settings...'); const j=await jfetch(API+'/settings'); fill(j.settings||{}); setStatus('Settings loaded ✅', true); }
@@ -15300,7 +15417,7 @@ function previewQr(){
   qs('qrBox').innerHTML = url ? `<img src="${url.replace(/"/g,'&quot;')}" onerror="this.parentElement.innerHTML='<span class=hint>QR image load nahi hua. URL check karo.</span>'">` : '<span class="hint">QR URL save karne ke baad preview dikhega</span>';
 }
 function paymentMessage(){
-  return `💳 TITAN NOVA PAYMENT\n\nName: ${qs('paymentName').value || '-'}\nUPI: ${qs('upiId').value || '-'}\nReceiver: ${qs('accountName').value || '-'}\nMin: ₹${qs('minDeposit').value || 0}\nMax: ₹${qs('maxDeposit').value || 0}\n\nPayment ke baad UTR aur screenshot submit kare.`;
+  return `💳 TITAN NOVA PAYMENT\n\n1️⃣ Amount confirm karein\n2️⃣ UPI/QR se payment karein\n3️⃣ UTR ya screenshot submit karein\n\nName: ${qs('paymentName').value || '-'}\nUPI: ${qs('upiId').value || '-'}\nReceiver: ${qs('accountName').value || '-'}\nMin: ₹${qs('minDeposit').value || 0}\nMax: ₹${qs('maxDeposit').value || 0}`;
 }
 async function copyPaymentMessage(){
   const msg = paymentMessage();
@@ -15308,10 +15425,27 @@ async function copyPaymentMessage(){
   catch(e){ prompt('Copy payment message:', msg); }
 }
 function openStatus(){ window.open(API+'/status','_blank'); }
+function esc(v){ return String(v ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function actionButtons(d){
+  const next = d.allowedNextStatuses || [];
+  return next.length ? `<div class="actions">${next.map(st=>`<button class="${st==='approved'?'ok':st==='rejected'?'danger':'secondary'}" onclick="updateDeposit('${esc(d.depositId||d.id)}','${st}')">${st.replace('_',' ')}</button>`).join('')}</div>` : '';
+}
+function flowHtml(d){
+  const st = d.status || '';
+  const steps = [['payment_pending','Pay'],['payment_submitted','Proof'],['under_verification','Verify'],['approved','Done']];
+  return `<div class="flow">${steps.map(x=>`<div class="step ${st===x[0] || (st==='approved'&&x[0]!=='payment_pending')?'on':''}">${x[1]}</div>`).join('')}</div>`;
+}
+async function updateDeposit(id, status){
+  const extra = status==='rejected' ? {rejectReason: prompt('Reject reason?', 'UTR/proof not matched') || ''} : {};
+  try{ await jfetch(API+'/update',{method:'POST', body:JSON.stringify(Object.assign({depositId:id,status,updatedBy:'setup_ui'}, extra))}); setStatus('Deposit '+status+' ✅', true); await loadDeposits(); }
+  catch(e){ setStatus('Deposit update failed: '+e.message, false, true); }
+}
 async function loadDeposits(){
   try{
-    const j = await jfetch(API+'/list?limit=8'); const arr = j.deposits || [];
-    qs('depositList').innerHTML = arr.length ? arr.map(d=>`<div class="item"><b>${d.depositId||d.id}</b><span class="pill">${d.status||'-'}</span><div class="mini">₹${d.amount||0} · ${d.customerName||d.userId||'guest'}</div><div class="copy">${d.utr||''}</div></div>`).join('') : '<div class="hint">No deposits yet.</div>';
+    const filter = qs('statusFilter')?.value || '';
+    const j = await jfetch(API+'/list?limit=12'+(filter?'&status='+encodeURIComponent(filter):'')); const arr = j.deposits || []; const stats=j.stats||{};
+    qs('depositStats').textContent = `Total: ${stats.total||0} · Pending: ${stats.pendingCount||0} / ₹${stats.pendingAmount||0} · Amount: ₹${stats.amount||0}`;
+    qs('depositList').innerHTML = arr.length ? arr.map(d=>{ const ps=d.publicStatus||{}; return `<div class="item"><b>${esc(d.depositId||d.id)}</b><span class="pill ${esc(ps.tone||'info')}">${esc(ps.label||d.status||'-')}</span><div class="mini">₹${esc(d.amount||0)} · ${esc(d.customerName||d.userId||'guest')} · ${esc(d.phoneNumber||'')}</div>${flowHtml(d)}<div class="copy">UTR: ${esc(d.utr||'pending')} ${d.payLink?`<br>Pay: ${esc(d.payLink)}`:''}</div><div class="mini">${esc((d.userSteps||[]).join(' → '))}</div>${actionButtons(d)}</div>`}).join('') : '<div class="hint">No deposits yet.</div>';
   }catch(e){ qs('depositList').innerHTML = '<div class="hint">Deposit list load failed: '+e.message+'</div>'; }
 }
 loadSettings(); loadDeposits();
