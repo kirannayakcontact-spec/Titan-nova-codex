@@ -7,8 +7,5 @@
   "scripts": {
     "start": "node bot/index.js",
     "check": "node --check bot/index.js && node --check bot/gateway.js && node --check bot/config.js && node --check bot/firebase.js && node --check bot/whatsapp.js && node --check bot/scheduler.js && node --check bot/result_scraper.js && node --check bot/safety.js && node --check bot/routes.js"
-  },
-  "dependencies": {
-    "express": "4.21.2"
   }
 }
