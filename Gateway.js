@@ -2053,19 +2053,26 @@ function paymentUpiLink(upi, name, amount, note){
   return `upi://pay?pa=${pa}&pn=${pn}${am}&cu=INR&tn=${tn}`;
 }
 function getDepositPaymentConfig(state){
+  const pm = state?.paymentMethods || {};
+  const paymentMethodUpis = [
+    ['Default UPI', pm.upi],
+    ['PhonePe', pm.phonepeUpi],
+    ['GPay', pm.gpayUpi],
+    ['Paytm', pm.paytmUpi]
+  ].filter(([,v], idx, arr) => v && arr.findIndex(([,x]) => String(x).trim().toLowerCase() === String(v).trim().toLowerCase()) === idx);
   const ds = state?.depositSettings?.v1 || {};
   if(ds && typeof ds === 'object' && (ds.upiId || ds.qrImageUrl || ds.paymentName || ds.accountName)){
+    const dsUpis = [['UPI', ds.upiId]].filter(([,v]) => v);
     return {
       source: 'depositSettings.v1',
-      name: ds.paymentName || ds.accountName || 'TITAN NOVA',
-      receiver: ds.accountName || ds.paymentName || 'TITAN NOVA',
-      bankName: ds.bankName || '',
-      phone: ds.phone || '',
-      qr: ds.qrImageUrl || '',
-      upis: [['UPI', ds.upiId]].filter(([,v]) => v)
+      name: ds.paymentName || ds.accountName || pm.name || 'TITAN NOVA',
+      receiver: ds.accountName || ds.paymentName || pm.name || 'TITAN NOVA',
+      bankName: ds.bankName || pm.bankName || '',
+      phone: ds.phone || pm.phone || '',
+      qr: ds.qrImageUrl || pm.qr || '',
+      upis: dsUpis.length ? dsUpis : paymentMethodUpis
     };
   }
-  const pm = state?.paymentMethods || {};
   return {
     source: 'paymentMethods',
     name: pm.name || 'TITAN NOVA',
@@ -2073,12 +2080,7 @@ function getDepositPaymentConfig(state){
     bankName: pm.bankName || '',
     phone: pm.phone || '',
     qr: pm.qr || '',
-    upis: [
-      ['Default UPI', pm.upi],
-      ['PhonePe', pm.phonepeUpi],
-      ['GPay', pm.gpayUpi],
-      ['Paytm', pm.paytmUpi]
-    ].filter(([,v], idx, arr) => v && arr.findIndex(([,x]) => String(x).trim().toLowerCase() === String(v).trim().toLowerCase()) === idx)
+    upis: paymentMethodUpis
   };
 }
 function depositInstructionsText(state, userId, amount = 0){
