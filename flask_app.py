@@ -888,7 +888,7 @@ def _firebase_protected_keys():
         'auditLog', 'paymentOutbox', 'loadForwarderOutbox', 'spamGuardEvents', 'whatsappSafetyTargets',
         'whatsappSafetyEvents', 'resultTargets', 'loadForwarder', 'entrySettings', 'resultSettings',
         'paymentMethods', 'withdrawalSettings', 'walletSettings', 'spamGuardSettings',
-        'whatsappSafetySettings', 'moneyIdempotency', 'gatewayDurability'
+        'whatsappSafetySettings', 'depositSettings', 'moneyIdempotency', 'gatewayDurability'
     ]
 
 def _firebase_default_state_like(state_obj):
@@ -10988,6 +10988,51 @@ withdraw status</pre>
                 return acc;
             }, {groups:0, contacts:0});
         }
+
+        function normalizeDepositReceiverAccount(raw, idx){
+            const r = raw || {};
+            const idBase = String(r.id || r.upiId || r.label || ('receiver-' + (idx + 1))).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || ('receiver-' + (idx + 1));
+            const aliases = Array.isArray(r.aliases) ? r.aliases : String(r.aliases || '').split(',');
+            return { id:idBase, enabled:r.enabled !== false, label:String(r.label || r.name || r.accountName || ('Receiver ' + (idx + 1))).trim(), accountName:String(r.accountName || r.name || '').trim(), upiId:String(r.upiId || '').trim(), phone:String(r.phone || '').trim(), bankName:String(r.bankName || '').trim(), qrImageUrl:String(r.qrImageUrl || r.qr || '').trim(), aliases:aliases.map(x => String(x || '').trim()).filter(Boolean), priority:Number(r.priority ?? idx) || 0 };
+        }
+        function ensureDepositReceiverSettings(){
+            const dsRoot = appState.depositSettings || (appState.depositSettings = {});
+            const ds = dsRoot.v1 || (dsRoot.v1 = {});
+            let accounts = Array.isArray(ds.allowedReceiverAccounts) ? ds.allowedReceiverAccounts.map(normalizeDepositReceiverAccount) : [];
+            if(!accounts.length && (ds.upiId || ds.qrImageUrl || ds.paymentName || ds.accountName)) accounts.push(normalizeDepositReceiverAccount({ id:'legacy-deposit-receiver', enabled:true, label:ds.paymentName || ds.accountName || 'Legacy Receiver', accountName:ds.accountName || ds.paymentName || '', upiId:ds.upiId || '', phone:ds.phone || '', bankName:ds.bankName || '', qrImageUrl:ds.qrImageUrl || '', aliases:[ds.paymentName, ds.accountName].filter(Boolean), priority:0 }, 0));
+            if(!accounts.length){ const pm = appState.paymentMethods || {}; if(pm.upi || pm.qr || pm.name) accounts.push(normalizeDepositReceiverAccount({ id:'legacy-payment-method', enabled:true, label:pm.name || 'Payment Method', accountName:pm.name || '', upiId:pm.upi || '', phone:pm.phone || '', qrImageUrl:pm.qr || '', aliases:[pm.name].filter(Boolean), priority:0 }, 0)); }
+            ds.allowedReceiverAccounts = accounts;
+            if(!ds.activeReceiverId && accounts[0]) ds.activeReceiverId = accounts[0].id;
+            if(typeof ds.receiverMatchRequired === 'undefined') ds.receiverMatchRequired = true;
+            if(typeof ds.allowWeakNameMatch === 'undefined') ds.allowWeakNameMatch = true;
+            return ds;
+        }
+        function renderDepositReceiverAccountsCard(){
+            const ds = ensureDepositReceiverSettings();
+            const accounts = ds.allowedReceiverAccounts || [];
+            const rows = accounts.map((r, idx) => `<div class="bg-[var(--surface-light)] border border-[var(--border)] rounded-xl p-3 mb-2">
+                <div class="flex items-center justify-between gap-2 mb-2"><label class="flex items-center gap-2 text-[10px] text-white font-black uppercase"><input type="radio" name="deposit-active-receiver" value="${attrEscape(r.id)}" ${ds.activeReceiverId === r.id ? 'checked' : ''}> Active</label><label class="switch m-0"><input id="dr-enabled-${idx}" type="checkbox" ${r.enabled !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+                <div class="grid grid-cols-2 gap-2 mb-2"><input id="dr-label-${idx}" class="native-input text-[11px]" placeholder="Label" value="${attrEscape(r.label || '')}"><input id="dr-priority-${idx}" type="number" class="native-input text-[11px]" placeholder="Priority" value="${Number(r.priority || 0)}"></div>
+                <input id="dr-account-${idx}" class="native-input text-[11px] mb-2" placeholder="Account / receiver name" value="${attrEscape(r.accountName || '')}">
+                <input id="dr-upi-${idx}" class="native-input text-[11px] mb-2" placeholder="UPI ID" value="${attrEscape(r.upiId || '')}">
+                <div class="grid grid-cols-2 gap-2 mb-2"><input id="dr-phone-${idx}" class="native-input text-[11px]" placeholder="Phone" value="${attrEscape(r.phone || '')}"><input id="dr-bank-${idx}" class="native-input text-[11px]" placeholder="Bank" value="${attrEscape(r.bankName || '')}"></div>
+                <input id="dr-qr-${idx}" class="native-input text-[11px] mb-2" placeholder="QR image URL / data URL" value="${attrEscape(r.qrImageUrl || '')}">
+                <input id="dr-aliases-${idx}" class="native-input text-[11px]" placeholder="Aliases comma separated" value="${attrEscape((r.aliases || []).join(', '))}">
+            </div>`).join('');
+            const body = `<div id="deposit-receiver-count" data-count="${accounts.length}">${rows || '<p class="text-[var(--text-muted)] text-[10px] mb-2">No receiver accounts yet.</p>'}</div>
+                <div class="grid grid-cols-2 gap-2 mb-2"><label class="flex items-center justify-between gap-2 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl p-3 text-[10px] text-white font-black uppercase"><span>Receiver Match Required</span><input id="deposit-receiver-match-required" type="checkbox" ${ds.receiverMatchRequired !== false ? 'checked' : ''}></label><label class="flex items-center justify-between gap-2 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl p-3 text-[10px] text-white font-black uppercase"><span>Weak Name Match</span><input id="deposit-weak-name-match" type="checkbox" ${ds.allowWeakNameMatch !== false ? 'checked' : ''}></label></div>
+                <div class="grid grid-cols-2 gap-2"><button onclick="addDepositReceiverAccount()" class="bg-[var(--surface-light)] border border-[var(--border)] text-white py-3 rounded-xl font-black text-[10px] uppercase">Add Receiver</button><button onclick="saveDepositReceiverAccounts()" class="bg-[var(--green)] text-white py-3 rounded-xl font-black text-[10px] uppercase">Save Receivers</button></div>`;
+            return setupCard('Deposit Receiver Accounts','fa-building-columns',setupStatusBadge(!!accounts.length, accounts.length + ' Receiver'),body,'','var(--green)');
+        }
+        function addDepositReceiverAccount(){ const ds = ensureDepositReceiverSettings(); ds.allowedReceiverAccounts.push(normalizeDepositReceiverAccount({label:'New Receiver', enabled:true, priority:ds.allowedReceiverAccounts.length}, ds.allowedReceiverAccounts.length)); render(true); }
+        async function saveDepositReceiverAccounts(){
+            const ds = ensureDepositReceiverSettings(); const count = Number(document.getElementById('deposit-receiver-count')?.dataset.count || 0);
+            const accounts = []; for(let i=0;i<count;i++){ accounts.push(normalizeDepositReceiverAccount({ enabled:document.getElementById('dr-enabled-'+i)?.checked, label:document.getElementById('dr-label-'+i)?.value, accountName:document.getElementById('dr-account-'+i)?.value, upiId:document.getElementById('dr-upi-'+i)?.value, phone:document.getElementById('dr-phone-'+i)?.value, bankName:document.getElementById('dr-bank-'+i)?.value, qrImageUrl:document.getElementById('dr-qr-'+i)?.value, aliases:document.getElementById('dr-aliases-'+i)?.value, priority:document.getElementById('dr-priority-'+i)?.value }, i)); }
+            const activeReceiverId = document.querySelector('input[name="deposit-active-receiver"]:checked')?.value || accounts[0]?.id || '';
+            const payload = { allowedReceiverAccounts:accounts, activeReceiverId, receiverMatchRequired:document.getElementById('deposit-receiver-match-required')?.checked !== false, allowWeakNameMatch:document.getElementById('deposit-weak-name-match')?.checked !== false };
+            const res = await fetch('/api/deposit_flow_v1/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}); const data = await res.json(); if(data.status !== 'success') throw new Error(data.message || 'Save failed'); appState.depositSettings = appState.depositSettings || {}; appState.depositSettings.v1 = data.settings; showRealNotification('✅ Receiver Accounts Saved','Deposit receiver accounts Firebase me save ho gaye.','success');
+        }
+
         function renderSetupMarketSettingsCard(marketCount){
             const cfg = state.config || {};
             const visibleMarkets = (baseMarkets || []).filter(m => !(m && m.hiddenForLedger)).length;
@@ -11090,6 +11135,7 @@ withdraw status</pre>
                 ${renderSetupMarketSettingsCard(marketCount)}
                 ${renderSetupScheduleSettingsCard(scheduleCount)}
                 ${renderSetupWhatsAppTargetsCard()}
+                ${renderDepositReceiverAccountsCard()}
                 ${setupCard('Backup / Restore','fa-file-zipper',setupStatusBadge(true, (bs.auditEvents || 0) + ' Audit'),`Last backup: <span class="text-white">${bs.lastBackupAt ? String(bs.lastBackupAt).replace('T',' ').slice(0,19) : 'Never'}</span><br>Exports and backups remain in the existing Backup tab.`,setupLinkButton('Open Backup','backup','fa-file-export') + `<button onclick="downloadBackupZip()" class="w-full bg-[var(--primary)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-download mr-1"></i>Download Backup</button>`,'var(--amber)')}
                 ${setupCard('Danger Zone','fa-triangle-exclamation',setupStatusBadge(false,'Confirm'),`Dangerous actions require confirmation. Existing features are not removed; this only adds a safer launch point.`,setupLinkButton('Review Audit','backup','fa-clipboard-list') + `<button onclick="setupConfirmAction('Audit log clear', 'clearAuditLog')" class="w-full bg-[rgba(255,93,93,0.16)] text-[var(--rose)] border border-[rgba(255,93,93,0.28)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-trash-alt mr-1"></i>Clear Audit Log</button>`,'var(--rose)')}
             </div>`;
@@ -15205,13 +15251,37 @@ def _save_deposit_settings(data: dict) -> dict:
     cur = _get_deposit_settings()
     allowed = {
         "enabled", "paymentName", "upiId", "accountName", "bankName", "qrImageUrl",
-        "minDeposit", "maxDeposit", "manualApproval", "autoWhatsapp", "adminNote"
+        "minDeposit", "maxDeposit", "manualApproval", "autoWhatsapp", "adminNote",
+        "allowedReceiverAccounts", "activeReceiverId", "receiverMatchRequired", "allowWeakNameMatch"
     }
     for key in allowed:
         if key in data:
             cur[key] = data.get(key)
     for k in ("enabled", "manualApproval", "autoWhatsapp"):
         cur[k] = bool(cur.get(k))
+    for k in ("receiverMatchRequired", "allowWeakNameMatch"):
+        if k in cur:
+            cur[k] = bool(cur.get(k))
+    if isinstance(cur.get("allowedReceiverAccounts"), list):
+        cleaned = []
+        for idx, raw in enumerate(cur.get("allowedReceiverAccounts") or []):
+            if not isinstance(raw, dict):
+                continue
+            rid = str(raw.get("id") or raw.get("upiId") or raw.get("label") or f"receiver-{idx+1}").strip().lower()
+            rid = _re.sub(r"[^a-z0-9]+", "-", rid).strip("-") or f"receiver-{idx+1}"
+            aliases = raw.get("aliases") if isinstance(raw.get("aliases"), list) else str(raw.get("aliases") or "").split(",")
+            cleaned.append({
+                "id": rid, "enabled": bool(raw.get("enabled", True)),
+                "label": str(raw.get("label") or raw.get("name") or raw.get("accountName") or f"Receiver {idx+1}").strip(),
+                "accountName": str(raw.get("accountName") or raw.get("name") or "").strip(),
+                "upiId": str(raw.get("upiId") or "").strip(), "phone": str(raw.get("phone") or "").strip(),
+                "bankName": str(raw.get("bankName") or "").strip(), "qrImageUrl": str(raw.get("qrImageUrl") or raw.get("qr") or "").strip(),
+                "aliases": [str(x).strip() for x in aliases if str(x).strip()],
+                "priority": float(raw.get("priority") or idx),
+            })
+        cur["allowedReceiverAccounts"] = cleaned
+        if not cur.get("activeReceiverId") and cleaned:
+            cur["activeReceiverId"] = cleaned[0]["id"]
     for k in ("minDeposit", "maxDeposit"):
         try:
             cur[k] = float(cur.get(k) or 0)
