@@ -2182,7 +2182,15 @@ async function handleSmartUserCommandMessage(m){
     if(cmd === "profile") text = profileSmartText(profile, wallet, found.userId, found);
     else if(cmd === "entries") text = entriesHistoryText(state, found.userId);
     else if(cmd === "payments") text = paymentStatusTextSmart(state, found.userId);
-    else if(cmd === "deposit"){ await replyDepositInstructions(chatJid, state, found.userId, parseDepositAmount(getMessageText(m)), m); return true; }
+    else if(cmd === "deposit"){
+      const depositAmount = parseDepositAmount(getMessageText(m));
+      profile.lastDepositIntentAmount = depositAmount;
+      profile.lastDepositIntentAt = nowIso();
+      profile.lastDepositIntentChatJid = chatJid;
+      try{ await saveGatewayProfileSync(state, found.userId); }catch(e){}
+      await replyDepositInstructions(chatJid, state, found.userId, depositAmount, m);
+      return true;
+    }
     else if(cmd === "wallet") text = walletBalanceText(profile, wallet);
     else if(cmd === "withdrawal_status") text = withdrawalsHistoryText(state, found.userId);
     else text = userSummaryText(state, found.userId, profile, wallet);
@@ -2286,6 +2294,146 @@ async function saveWithdrawalRequestToFirebase(parsed, meta, qrImageData = ""){
   }catch(e){
     await markDurableError('whatsapp_withdrawal_request', lockKey, { error:e.response ? `HTTP ${e.response.status}` : (e.message || String(e)), ttlMs:2*60*1000 });
     throw e;
+  }
+}
+
+
+function parseDepositPaymentProof(text, hasImage = false){
+  const raw = String(text || '').replace(/\r/g, '\n').trim();
+  const oneLine = raw.replace(/\s+/g, ' ').trim();
+  const hasPaymentWords = /\b(?:payment|paid|deposit|recharge|utr|txn|transaction|trans(?:action)?\s*id|ref(?:erence)?|rrn)\b/i.test(oneLine);
+  const utrMatch = oneLine.match(/\b(?:utr|txn|transaction(?:\s*id)?|trans(?:action)?\s*id|ref(?:erence)?|rrn)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-]{5,35})\b/i)
+    || (hasPaymentWords ? oneLine.match(/\b([A-Z0-9]{8,35})\b/i) : oneLine.match(/^\s*([A-Z0-9]{10,35})\s*$/i));
+  const utr = utrMatch ? String(utrMatch[1] || '').replace(/[^A-Za-z0-9-]/g, '').toUpperCase() : '';
+  const amountMatch = oneLine.match(/(?:^|\b)(?:amount|amt|rs\.?|inr|₹)\s*[:#-]?\s*([0-9]+(?:\.[0-9]+)?)(?:\b|$)/i)
+    || oneLine.match(/\b(?:payment|paid|deposit|recharge)\s+([0-9]+(?:\.[0-9]+)?)(?:\b|$)/i);
+  const amount = amountMatch ? Math.round(Number(amountMatch[1] || 0) * 100) / 100 : 0;
+  const looksLikeProof = !!hasImage || !!utr || (hasPaymentWords && amount > 0);
+  if(!looksLikeProof) return { ok:false, silent:true };
+  return { ok:true, amount:Number.isFinite(amount) ? amount : 0, utr, rawText:raw };
+}
+function nextPaymentId(state){
+  const n = Array.isArray(state.payments) ? state.payments.length + 1 : 1;
+  return 'P' + todayISO().replace(/-/g, '').slice(2) + '-' + String(n).padStart(4, '0');
+}
+function depositPaymentMessageLockKey(parsed, meta){
+  return meta?.messageKey || [meta?.chatJid, meta?.senderJid, parsed?.amount, parsed?.utr, String(parsed?.rawText||'').slice(0,300)].join('|');
+}
+async function downloadPaymentScreenshotImageData(m){
+  try{
+    const image = m?.message?.imageMessage;
+    if(!image) return { data:'', note:'' };
+    const stream = await downloadContentFromMessage(image, 'image');
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of stream){
+      const b = Buffer.from(chunk);
+      total += b.length;
+      if(total > 1200000) return { data:'', note:'Screenshot received, preview unavailable' };
+      chunks.push(b);
+    }
+    const buf = Buffer.concat(chunks);
+    if(!buf.length) return { data:'', note:'Screenshot received, preview unavailable' };
+    const mime = image.mimetype || 'image/jpeg';
+    return { data:`data:${mime};base64,${buf.toString('base64')}`, note:'' };
+  }catch(e){ console.log('Payment screenshot download failed:', e.message); return { data:'', note:'Screenshot received, preview unavailable' }; }
+}
+async function saveDepositPaymentRequestUnlocked(parsed, meta, screenshotImageData = '', screenshotNote = ''){
+  const state = await fetchFirebaseState();
+  if(!Array.isArray(state.payments)) state.payments = [];
+  const found = findProfileBySender(state, meta.senderJid, meta);
+  if(!found){
+    return { ok:false, reason:'profile_not_found', message:'Aapka profile pending/admin approval required hai. Admin approval ke baad payment request accept hogi.' };
+  }
+  const profile = found.profile || {};
+  const approvalStatus = profileApprovalStatus(profile);
+  const isAdminUser = String(found.userId || '').startsWith('admin');
+  if(entrySettings(state).requireProfileApproval !== false && !isAdminUser && approvalStatus !== 'approved'){
+    profile.approvalStatus = approvalStatus || 'pending';
+    profile.vipAccessEnabled = false;
+    profile.lastPaymentProofAt = nowIso();
+    ensureWalletInState(state, found.userId);
+    await saveGatewayProfileSync(state, found.userId);
+    return { ok:false, reason:'profile_pending_approval', message:'Aapka profile pending/admin approval required hai. Admin approve karega uske baad payment verify hoga.' };
+  }
+  const intentAmount = Number(profile.lastDepositIntentAmount || 0);
+  const amount = Number(parsed.amount || 0) > 0 ? Number(parsed.amount) : (intentAmount > 0 ? intentAmount : 0);
+  if(!(amount > 0)) return { ok:false, reason:'missing_amount', message:'Amount missing hai. Screenshot ke saath amount bhejein. Example: payment 500 UTR 123456' };
+  const payment = {
+    id: nextPaymentId(state),
+    userId: found.userId,
+    userName: profile.name || found.userId,
+    phone: profile.phone || found.matchedPhone || '',
+    senderJid: meta.senderJid || '',
+    chatJid: meta.chatJid || '',
+    amount,
+    utr: parsed.utr || '',
+    screenshotImageData: screenshotImageData || '',
+    image: screenshotImageData || '',
+    note: screenshotNote || '',
+    status: 'pending',
+    paymentStatus: 'pending_approval',
+    source: 'whatsapp_screenshot',
+    createdAt: nowIso(),
+    time: new Date().toLocaleString('en-IN', { timeZone: APP_TZ, day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }),
+    requestNotified: true,
+    approvalNotified: false,
+    rejectionNotified: false,
+    walletCredited: false,
+    autoFlag: parsed.utr ? 'whatsapp_screenshot' : 'utr_missing',
+    riskLevel: parsed.utr ? 'MEDIUM' : 'HIGH'
+  };
+  state.payments.push(payment);
+  if(!Array.isArray(state.auditLog)) state.auditLog = [];
+  state.auditLog.push({ id:payment.id, time:nowIso(), action:'whatsapp_payment_screenshot_received', detail:{ userId:payment.userId, amount:payment.amount, utr:payment.utr, phone:payment.phone } });
+  const adminText = `🔔 *NEW PAYMENT SCREENSHOT*\n━━━━━━━━━━━━━━━━━━━━\n🆔 *ID:* #${payment.id}\n👤 *User:* ${payment.userName}\n📱 *Phone:* ${payment.phone || '-'}\n💵 *Amount:* ${money(payment.amount)}\n🔢 *UTR:* ${payment.utr || '-'}\n⚡ *Status:* Pending\n\nAdmin panel me Approve/Reject karein.`;
+  for(const t of adminNotifyTargets(state)) queueWhatsAppOutbox(state, t, adminText, { type:'payment_screenshot_admin_notify', paymentId:payment.id });
+  await saveGatewayChildren(state, ['payments', 'paymentOutbox']);
+  if(Array.isArray(state.auditLog)) await putFirebaseChild(['auditLog'], state.auditLog.slice(-500), null);
+  return { ok:true, payment };
+}
+async function saveDepositPaymentRequest(parsed, meta, screenshotImageData = '', screenshotNote = ''){
+  const lockKey = depositPaymentMessageLockKey(parsed, meta || {});
+  const lock = await acquireDurableLock('whatsapp_deposit_payment', lockKey, 2 * 60 * 1000, { chatJid:meta?.chatJid || '', senderJid:meta?.senderJid || '', amount:Number(parsed?.amount || 0), utr:parsed?.utr || '' });
+  if(!lock.ok){
+    const existing = lock.existing || {};
+    if(lock.done) return { ok:false, reason:'duplicate_message_done', message: existing.message || 'Ye payment proof already process ho chuka hai. Duplicate request nahi banega.' };
+    return { ok:false, reason:'duplicate_message_processing', message:'Ye payment proof abhi process ho raha hai. Duplicate request nahi banega.' };
+  }
+  try{
+    const out = await saveDepositPaymentRequestUnlocked(parsed, meta || {}, screenshotImageData || '', screenshotNote || '');
+    await markDurableDone('whatsapp_deposit_payment', lockKey, { ok:!!out.ok, reason:out.reason || '', message:out.message || '', paymentId:out.payment?.id || '', userId:out.payment?.userId || '', amount:Number(out.payment?.amount || parsed?.amount || 0), ttlDays:30 });
+    return out;
+  }catch(e){
+    await markDurableError('whatsapp_deposit_payment', lockKey, { error:e.response ? `HTTP ${e.response.status}` : (e.message || String(e)), ttlMs:2*60*1000 });
+    throw e;
+  }
+}
+async function handleIncomingDepositPaymentMessage(m){
+  try{
+    if(!m || m.key?.fromMe) return false;
+    const chatJid = m.key?.remoteJid || '';
+    if(!chatJid || chatJid === 'status@broadcast') return false;
+    const text = getMessageText(m);
+    const hasImage = !!m?.message?.imageMessage;
+    const parsed = parseDepositPaymentProof(text, hasImage);
+    if(parsed.silent) return false;
+    trackIncomingMessage(m, 'deposit_payment_proof');
+    const senderCandidates = senderCandidatesFromMessage(m, chatJid);
+    const senderJid = chatJid.endsWith('@g.us') ? (senderCandidates[0] || m.key?.participant || '') : chatJid;
+    const img = hasImage ? await downloadPaymentScreenshotImageData(m) : { data:'', note:'' };
+    const saved = await saveDepositPaymentRequest(parsed, { chatJid, senderJid, senderCandidates, pushName:m.pushName || m.verifiedBizName || '', messageKey:messageUniqueKey(m) }, img.data, img.note);
+    if(!saved.ok){
+      if(saved.reason === 'missing_amount') await replyToMessage(chatJid, 'Amount missing hai. Screenshot ke saath amount bhejein. Example: “payment 500 UTR 123456”', m);
+      else await replyToMessage(chatJid, saved.message || 'Aapka profile pending/admin approval required hai.', m);
+      return true;
+    }
+    await replyToMessage(chatJid, `✅ Payment screenshot received.\nPayment ID: #${saved.payment.id}\nStatus: Pending admin approval.`, m);
+    console.log(`💳 Payment screenshot ${saved.payment.id}: ${saved.payment.userId} ${saved.payment.amount}`);
+    return true;
+  }catch(e){
+    console.log('Deposit payment proof error:', e.response ? `HTTP ${e.response.status}` : e.message);
+    return false;
   }
 }
 
@@ -5221,8 +5369,11 @@ async function startWhatsApp(){
         if(smartCommandHandled) continue;
         const stopped = await handleSpamGuardMessage(m);
         if(!stopped){
-          const withdrawalHandled = await handleIncomingWithdrawalMessage(m);
-          if(!withdrawalHandled) await handleIncomingEntryMessage(m);
+          const depositHandled = await handleIncomingDepositPaymentMessage(m);
+          if(!depositHandled) {
+            const withdrawalHandled = await handleIncomingWithdrawalMessage(m);
+            if(!withdrawalHandled) await handleIncomingEntryMessage(m);
+          }
         }
       }
       saveProcessedMessageCache();

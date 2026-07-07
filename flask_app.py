@@ -14286,7 +14286,8 @@ withdraw status</pre>
                         ${p.proofIssues?.length ? `<div class="text-[var(--rose)] font-black">Issues: ${p.proofIssues.join(', ')}</div>` : ''}
                     </div>
                     ${p.rejectReason ? `<div class="mb-3 bg-[rgba(255,93,93,0.08)] border border-[rgba(255,93,93,0.18)] rounded-xl p-2 text-[10px] text-[var(--rose)] font-bold">Reason: ${p.rejectReason}</div>` : ''}
-                    ${p.image ? `<img src="${p.image}" class="w-full rounded-xl mb-3 border border-[var(--border)] max-h-48 object-contain"/>` : ''}
+                    ${(p.image || p.screenshotImageData) ? `<img src="${p.image || p.screenshotImageData}" class="w-full rounded-xl mb-3 border border-[var(--border)] max-h-48 object-contain"/>` : ''}
+                    ${p.source === 'whatsapp_screenshot' ? `<div class="mb-3 bg-[rgba(37,211,102,0.08)] border border-[rgba(37,211,102,0.18)] rounded-xl p-2 text-[10px] text-[var(--green)] font-black uppercase">WhatsApp screenshot payment${p.note ? ` · ${p.note}` : ''}</div>` : ''}
                     ${p.status === 'pending' ? `
                     <div class="flex gap-2">
                         <button onclick="approvePayment('${p.id}')" class="flex-1 bg-[var(--green)] text-white py-2.5 rounded-xl font-black text-xs active:scale-95">Approve</button>
