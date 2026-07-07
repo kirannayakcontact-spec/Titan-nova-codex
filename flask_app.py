@@ -7701,7 +7701,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#2AABEE">
+    <meta name="theme-color" content="#075E54">
 
     <link rel="manifest" href="{{ manifest_url }}">
     <link rel="apple-touch-icon" href="/icon.svg">
@@ -7718,18 +7718,18 @@ HTML_TEMPLATE = """
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
         :root {
-            --app-bg:       #17212B;
-            --surface:      #232E3C;
-            --surface-light:#2B3A4D;
-            --surface-mid:  #374F65;
-            --primary:      #2AABEE;
-            --primary-glow: rgba(42,171,238,0.20);
-            --primary-dark: #1A8FC4;
-            --green:        #00C26F;
-            --green-dark:   #00A05E;
-            --green-glow:   rgba(0,194,111,0.18);
-            --cyan:         #2AABEE;
-            --cyan-glow:    rgba(42,171,238,0.18);
+            --app-bg:       #0B141A;
+            --surface:      #111B21;
+            --surface-light:#202C33;
+            --surface-mid:  #2A3942;
+            --primary:      #00A884;
+            --primary-glow: rgba(0,168,132,0.22);
+            --primary-dark: #008069;
+            --green:        #25D366;
+            --green-dark:   #00A884;
+            --green-glow:   rgba(37,211,102,0.18);
+            --cyan:         #00A884;
+            --cyan-glow:    rgba(0,168,132,0.18);
             --rose:         #FF5D5D;
             --rose-glow:    rgba(255,93,93,0.18);
             --purple:       #7B8FFF;
@@ -7746,7 +7746,11 @@ HTML_TEMPLATE = """
 
         * { box-sizing: border-box; }
         body {
-            background: var(--app-bg);
+            background:
+                radial-gradient(circle at 16% 0%, rgba(0,168,132,0.22), transparent 30%),
+                radial-gradient(circle at 88% 12%, rgba(37,211,102,0.10), transparent 26%),
+                linear-gradient(180deg, #0B141A 0%, #111B21 48%, #0B141A 100%);
+            background-attachment: fixed;
             color: var(--text-main);
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             -webkit-tap-highlight-color: transparent;
@@ -7758,6 +7762,21 @@ HTML_TEMPLATE = """
             overflow-y: auto;
             min-height: 100dvh;
             padding-bottom: 88px;
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(135deg, rgba(233,237,239,0.025) 25%, transparent 25%),
+                linear-gradient(225deg, rgba(233,237,239,0.025) 25%, transparent 25%),
+                linear-gradient(45deg, rgba(233,237,239,0.018) 25%, transparent 25%),
+                linear-gradient(315deg, rgba(233,237,239,0.018) 25%, rgba(11,20,26,0.04) 25%);
+            background-position: 12px 0, 12px 0, 0 0, 0 0;
+            background-size: 24px 24px;
+            opacity: 0.68;
         }
         input, textarea { -webkit-user-select: auto; user-select: auto; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -7807,7 +7826,7 @@ HTML_TEMPLATE = """
         /* ── APP BAR ── */
         .app-bar {
             position: sticky; top: 0; z-index: 50;
-            background: #1C2733;
+            background: #075E54;
             border-bottom: 1px solid rgba(42,171,238,0.15);
             height: var(--header-h);
             padding: 0 12px;
