@@ -22,11 +22,25 @@ def register(app):
     def wallet_transaction(user_id):
         body = request.get_json(silent=True) or {}
         try:
-            result = apply_wallet_transaction(user_id, body.get("amount"), body.get("type", "credit"), body.get("description", ""), body.get("reference", ""))
+            result = apply_wallet_transaction(
+                user_id,
+                body.get("amount"),
+                body.get("type", "credit"),
+                body.get("description", ""),
+                body.get("reference", ""),
+            )
             return jsonify(result), 201
         except ValueError as exc:
             return _error(exc)
 
     @app.get("/api/wallet/transactions")
     def wallet_transactions():
-        return jsonify({"transactions": list_wallet_transactions(request.args.get("userId"), int(request.args.get("limit", 50)))})
+        return jsonify(
+            {
+                "transactions": list_wallet_transactions(
+                    user_id=request.args.get("userId"),
+                    limit=int(request.args.get("limit", 50)),
+                    before_created_at=request.args.get("beforeCreatedAt"),
+                )
+            }
+        )
