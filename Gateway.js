@@ -15,6 +15,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const axios = require("axios");
 const qrcode = require("qrcode-terminal");
@@ -810,11 +811,25 @@ function isResultTargetAlreadySent(key, signature, rawTarget){
 function phoneKey(v){
   const raw = String(v || "").trim();
   // New WhatsApp/Baileys group messages can sometimes expose a @lid sender id.
-  // @lid digits are not the real phone number, so never use them for VIP linking.
+  // @lid digits are not the real phone number, so never use them for VIP phone linking.
   if(raw.includes("@") && !raw.includes("@s.whatsapp.net")) return "";
   const d = raw.replace(/\D/g, "");
   if(d.length < 10) return "";
   return d.length > 10 ? d.slice(-10) : d;
+}
+function whatsappIdentityKey(v){
+  const raw = String(v || "").trim().toLowerCase();
+  if(!raw || !raw.includes("@")) return "";
+  // Keep @lid/@g.us-safe sender aliases for identity matching, but never use them as phone numbers.
+  return raw.replace(/[^0-9a-z@._:-]/g, "").slice(0, 120);
+}
+function whatsappIdentityHash(keys){
+  const seed = (Array.isArray(keys) ? keys : [keys]).map(whatsappIdentityKey).filter(Boolean).sort().join("|");
+  return seed ? crypto.createHash("sha1").update(seed).digest("hex").slice(0, 16) : "";
+}
+function profileWhatsappIdentityKeys(profile){
+  const raw = [profile?.whatsappSenderJid, profile?.whatsappLid, profile?.whatsappIdentityKey, ...(Array.isArray(profile?.whatsappJids) ? profile.whatsappJids : [])];
+  return [...new Set(raw.map(whatsappIdentityKey).filter(Boolean))];
 }
 function senderCandidatesFromMessage(m, chatJid){
   const key = m?.key || {};
@@ -832,10 +847,13 @@ function senderCandidatesFromMessage(m, chatJid){
   if(chatJid && !String(chatJid).endsWith("@g.us")) candidates.push(chatJid);
   return [...new Set(candidates.map(x => String(x || "").trim()).filter(Boolean))];
 }
-function profileTemplateForAutoLink(phone, name){
+function profileTemplateForAutoLink(phone, name, identityKeys = []){
+  const waKeys = [...new Set((Array.isArray(identityKeys) ? identityKeys : [identityKeys]).map(whatsappIdentityKey).filter(Boolean))];
   return {
-    name: name || (phone ? `VIP ${phone}` : "AUTO VIP"),
+    name: name || (phone ? `VIP ${phone}` : (waKeys[0] ? `WA ${waKeys[0].slice(0, 10)}` : "AUTO VIP")),
     phone: phone || "",
+    whatsappJids: waKeys,
+    whatsappSenderJid: waKeys[0] || "",
     config: { ankSplit:true, panSplit:true, capital:0, dayTarget:0, ank:{cap:0,tgt:0}, jodi:{cap:0,tgt:0}, pannel:{cap:0,tgt:0} },
     dayRecords: {},
     expiryDate: "",
@@ -1217,7 +1235,8 @@ function findProfileBySender(state, senderJid, meta = {}){
   const profiles = state.profiles;
   const candidates = [senderJid, ...(Array.isArray(meta.senderCandidates) ? meta.senderCandidates : [])];
   const keys = [...new Set(candidates.map(phoneKey).filter(Boolean))];
-  if(!keys.length) return null;
+  const identityKeys = [...new Set(candidates.map(whatsappIdentityKey).filter(Boolean))];
+  if(!keys.length && !identityKeys.length) return null;
 
   // 1) Existing profile means the WhatsApp phone is already linked on a profile.
   // New users must NOT be matched to an empty-phone VIP profile, otherwise they reach
@@ -1225,6 +1244,8 @@ function findProfileBySender(state, senderJid, meta = {}){
   for(const [pid, prof] of Object.entries(profiles)){
     const pk = phoneKey(prof?.phone || "");
     if(pk && keys.includes(pk)) return { userId:pid, profile:prof, matchedPhone:pk, existingProfile:true };
+    const profIdentity = profileWhatsappIdentityKeys(prof);
+    if(identityKeys.length && profIdentity.some(x => identityKeys.includes(x))) return { userId:pid, profile:prof, matchedPhone:pk || "", matchedIdentity:true, existingProfile:true };
   }
 
   // 2) Fallback: if a wallet already has this phone and the same user profile exists,
@@ -1240,12 +1261,19 @@ function findProfileBySender(state, senderJid, meta = {}){
   // 3) True unknown WhatsApp number: create its own pending profile first.
   // Admin approval must happen before the first entry can be accepted.
   if(settings.autoCreatePendingProfiles !== false){
-    const uid = `client_${keys[0]}`;
+    const identityHash = whatsappIdentityHash(identityKeys);
+    const uid = keys[0] ? `client_${keys[0]}` : `client_wa_${identityHash}`;
     if(!profiles[uid]){
-      profiles[uid] = profileTemplateForAutoLink(keys[0], meta.pushName || `VIP ${keys[0]}`);
-      return { userId:uid, profile:profiles[uid], matchedPhone:keys[0], autoCreated:true, pendingApproval:true };
+      profiles[uid] = profileTemplateForAutoLink(keys[0] || "", meta.pushName || (keys[0] ? `VIP ${keys[0]}` : "WhatsApp VIP"), identityKeys);
+      profiles[uid].phoneDetectionStatus = keys[0] ? "detected" : "identity_only";
+      return { userId:uid, profile:profiles[uid], matchedPhone:keys[0] || "", matchedIdentity:!keys[0], autoCreated:true, pendingApproval:true };
     }
-    return { userId:uid, profile:profiles[uid], matchedPhone:keys[0], existingProfile:true };
+    const prof = profiles[uid];
+    if(Array.isArray(prof.whatsappJids)){
+      for(const k of identityKeys) if(k && !prof.whatsappJids.includes(k)) prof.whatsappJids.push(k);
+    } else if(identityKeys.length) prof.whatsappJids = identityKeys;
+    if(keys[0] && !phoneKey(prof.phone || "")) prof.phone = keys[0];
+    return { userId:uid, profile:prof, matchedPhone:keys[0] || phoneKey(prof.phone || ""), matchedIdentity:!keys[0], existingProfile:true };
   }
 
   // 4) Optional legacy fallback only when auto profile creation is disabled.
