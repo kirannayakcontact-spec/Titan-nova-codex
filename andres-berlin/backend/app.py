@@ -1,9 +1,10 @@
 """Flask application factory for Andres Berlin."""
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template_string
 
 from backend.config import get_config
 from backend.routes import register_routes
+from backend.ui.templates import HOME_TEMPLATE
 
 
 def create_app() -> Flask:
@@ -16,6 +17,10 @@ def create_app() -> Flask:
     @app.get("/health")
     def health():
         return jsonify({"status": "ok", "app": config.app_name})
+
+    @app.get("/")
+    def home():
+        return render_template_string(HOME_TEMPLATE)
 
     register_routes(app)
     return app
