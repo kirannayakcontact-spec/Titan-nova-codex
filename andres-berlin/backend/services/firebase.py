@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -22,6 +23,8 @@ from backend.config import get_config
 _LOCK = threading.RLock()
 _STORE = Path(os.environ.get("TITAN_STORE_PATH", Path(__file__).resolve().parents[2] / "data" / "runtime_store.json"))
 _MISSING = object()
+_HIGH_GROWTH_COLLECTIONS = ("wallet_transactions", "ledger_entries", "whatsapp/messages", "whatsapp/inbound")
+_STORE_CACHE: dict[Path, tuple[int | None, dict]] = {}
 _FIREBASE_DEFAULT_TIMEOUT_SECONDS = 1.5
 _FIREBASE_DEFAULT_FAILURE_THRESHOLD = 2
 _FIREBASE_DEFAULT_COOLDOWN_SECONDS = 15.0
@@ -82,6 +85,7 @@ def firebase_status() -> dict:
         "configured": bool(url),
         "urlPreview": url[:24] + "..." if url else "",
         "fallbackStore": str(_STORE),
+        "shardedCollections": list(_HIGH_GROWTH_COLLECTIONS),
         "timeoutSeconds": _firebase_timeout_seconds(),
         "failureThreshold": _firebase_failure_threshold(),
         "circuitBreakerSeconds": _firebase_cooldown_seconds(),
@@ -134,18 +138,82 @@ def _firebase_request(method: str, path: str, payload: Any | None = None) -> Any
     return result
 
 
-def _read_store() -> dict:
-    if not _STORE.exists():
-        return {}
+def _collection_store_path(collection: str) -> Path:
+    safe_name = collection.replace("/", "__")
+    return _STORE.with_suffix("") / f"{safe_name}.json"
+
+
+def _local_store_for(path: str) -> tuple[Path, str | None]:
+    cleaned = _clean_path(path)
+    for collection in _HIGH_GROWTH_COLLECTIONS:
+        if cleaned == collection:
+            return _collection_store_path(collection), None
+        prefix = f"{collection}/"
+        if cleaned.startswith(prefix):
+            return _collection_store_path(collection), cleaned[len(prefix) :]
+    return _STORE, cleaned
+
+
+def _file_mtime_ns(path: Path) -> int | None:
     try:
-        return json.loads(_STORE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
 
 
-def _write_store(data: dict) -> None:
-    _STORE.parent.mkdir(parents=True, exist_ok=True)
-    _STORE.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+def _read_store_file(path: Path) -> dict:
+    mtime = _file_mtime_ns(path)
+    cached = _STORE_CACHE.get(path)
+    if cached and cached[0] == mtime:
+        return json.loads(json.dumps(cached[1]))
+    if mtime is None:
+        data: dict = {}
+    else:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            data = loaded if isinstance(loaded, dict) else {}
+        except json.JSONDecodeError:
+            data = {}
+    _STORE_CACHE[path] = (mtime, data)
+    return json.loads(json.dumps(data))
+
+
+def _write_store_file(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, indent=2, sort_keys=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+            temp_file.write(payload)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+    _STORE_CACHE[path] = (_file_mtime_ns(path), json.loads(json.dumps(data)))
+
+
+def _read_local(path: str) -> Any | None:
+    store_path, inner_path = _local_store_for(path)
+    data = _read_store_file(store_path)
+    if inner_path is None:
+        return data
+    cursor: Any = data
+    for part in inner_path.split("/"):
+        if not isinstance(cursor, dict) or part not in cursor:
+            return _MISSING
+        cursor = cursor[part]
+    return cursor
+
+
+def _write_local(path: str, mutator: Callable[[dict, str | None], Any]) -> Any:
+    store_path, inner_path = _local_store_for(path)
+    data = _read_store_file(store_path)
+    result = mutator(data, inner_path)
+    _write_store_file(store_path, data)
+    return result
 
 
 def _walk(data: dict, path: str, create: bool = False) -> tuple[dict, str]:
@@ -169,12 +237,8 @@ def get_record(path: str, default: Any | None = None) -> Any | None:
     if remote is not _MISSING:
         return default if remote is None else remote
     with _LOCK:
-        cursor: Any = _read_store()
-        for part in _clean_path(path).split("/"):
-            if not isinstance(cursor, dict) or part not in cursor:
-                return default
-            cursor = cursor[part]
-        return cursor
+        value = _read_local(path)
+        return default if value is _MISSING else value
 
 
 def set_record(path: str, value: Any) -> Any:
@@ -184,11 +248,19 @@ def set_record(path: str, value: Any) -> Any:
     if remote is not _MISSING:
         return remote
     with _LOCK:
-        data = _read_store()
-        cursor, leaf = _walk(data, path, create=True)
-        cursor[leaf] = value
-        _write_store(data)
-        return value
+        def mutator(data: dict, inner_path: str | None) -> Any:
+            if inner_path is None:
+                data.clear()
+                if isinstance(value, dict):
+                    data.update(value)
+                else:
+                    data["value"] = value
+            else:
+                cursor, leaf = _walk(data, inner_path, create=True)
+                cursor[leaf] = value
+            return value
+
+        return _write_local(path, mutator)
 
 
 def update_record(path: str, updates: dict) -> dict:
@@ -200,15 +272,19 @@ def update_record(path: str, updates: dict) -> dict:
     if remote is not _MISSING:
         return remote if isinstance(remote, dict) else updates
     with _LOCK:
-        data = _read_store()
-        cursor, leaf = _walk(data, path, create=True)
-        current = cursor.get(leaf, {})
-        if not isinstance(current, dict):
-            current = {}
-        current.update(updates)
-        cursor[leaf] = current
-        _write_store(data)
-        return current
+        def mutator(data: dict, inner_path: str | None) -> dict:
+            if inner_path is None:
+                data.update(updates)
+                return data
+            cursor, leaf = _walk(data, inner_path, create=True)
+            current = cursor.get(leaf, {})
+            if not isinstance(current, dict):
+                current = {}
+            current.update(updates)
+            cursor[leaf] = current
+            return current
+
+        return _write_local(path, mutator)
 
 
 def delete_record(path: str) -> bool:
@@ -218,12 +294,16 @@ def delete_record(path: str) -> bool:
     if remote is not _MISSING:
         return True
     with _LOCK:
-        data = _read_store()
-        cursor, leaf = _walk(data, path)
-        if leaf in cursor:
-            del cursor[leaf]
-            _write_store(data)
-        return True
+        def mutator(data: dict, inner_path: str | None) -> bool:
+            if inner_path is None:
+                data.clear()
+                return True
+            cursor, leaf = _walk(data, inner_path)
+            if leaf in cursor:
+                del cursor[leaf]
+            return True
+
+        return _write_local(path, mutator)
 
 
 def get_collection(path: str) -> dict:
