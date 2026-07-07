@@ -1,7 +1,7 @@
 """Firebase client facade placeholder for package-based backend code.
 
-New backend services should use the modular helpers in ``andres-berlin/backend``
-instead of adding duplicate compatibility logic here.
+The legacy implementation is still centralized in ``flask_app.py``. New backend
+services can depend on this module as the future home for Firebase access logic.
 """
 
 from backend.config import get_config
