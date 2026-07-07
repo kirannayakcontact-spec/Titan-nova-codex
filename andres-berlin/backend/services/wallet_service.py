@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
-from backend.services.firebase import append_record, get_collection, get_record, set_record
+from backend.services.firebase import get_collection, get_record, push_record, set_record, update_record
 
 DEFAULT_CURRENCY = "EUR"
 
@@ -79,7 +79,7 @@ def apply_wallet_transaction(user_id: str, amount: Any, kind: str, description: 
 
     wallet["balance"] = f"{new_balance.quantize(Decimal('0.01'))}"
     wallet["updatedAt"] = _now()
-    set_record(_wallet_path(user_id), wallet)
+    update_record(_wallet_path(user_id), {"balance": wallet["balance"], "updatedAt": wallet["updatedAt"]})
 
     transaction = {
         "id": uuid4().hex,
@@ -92,7 +92,7 @@ def apply_wallet_transaction(user_id: str, amount: Any, kind: str, description: 
         "reference": reference,
         "createdAt": _now(),
     }
-    append_record("wallet_transactions", transaction["id"], transaction)
+    push_record("wallet_transactions", transaction, transaction["id"])
     return {"wallet": wallet, "transaction": transaction}
 
 

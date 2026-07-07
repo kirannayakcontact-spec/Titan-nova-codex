@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
-from backend.services.firebase import append_record, get_collection, set_record
+from backend.services.firebase import get_collection, push_record, set_record
 
 
 def _now() -> str:
@@ -35,7 +35,7 @@ def create_ledger_entry(account: str, amount: Any, entry_type: str, description:
         "reference": reference,
         "createdAt": _now(),
     }
-    append_record("ledger_entries", entry["id"], entry)
+    push_record("ledger_entries", entry, entry["id"])
     return entry
 
 
