@@ -2052,36 +2052,41 @@ function paymentUpiLink(upi, name, amount, note){
   const am = amount > 0 ? `&am=${encodeURIComponent(String(amount))}` : '';
   return `upi://pay?pa=${pa}&pn=${pn}${am}&cu=INR&tn=${tn}`;
 }
+function normalizeDepositReceiverAccount(raw, idx = 0){
+  const r = raw || {};
+  const id = String(r.id || r.upiId || r.label || r.accountName || `receiver-${idx + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || `receiver-${idx + 1}`;
+  const aliases = Array.isArray(r.aliases) ? r.aliases : String(r.aliases || '').split(',');
+  return { id, enabled:r.enabled !== false, label:String(r.label || r.name || r.accountName || `Receiver ${idx + 1}`).trim(), name:String(r.name || r.accountName || r.label || '').trim(), accountName:String(r.accountName || r.name || '').trim(), upiId:String(r.upiId || '').trim(), phone:String(r.phone || '').trim(), bankName:String(r.bankName || '').trim(), qrImageUrl:String(r.qrImageUrl || r.qr || '').trim(), aliases:aliases.map(x => String(x || '').trim()).filter(Boolean), priority:Number(r.priority ?? idx) || 0 };
+}
+function getDepositReceiverAccounts(state){
+  const ds = state?.depositSettings?.v1 || {};
+  let accounts = Array.isArray(ds.allowedReceiverAccounts) ? ds.allowedReceiverAccounts.map(normalizeDepositReceiverAccount) : [];
+  accounts = accounts.filter(r => r && r.enabled !== false && (r.upiId || r.qrImageUrl || r.accountName || r.name || r.label));
+  if(!accounts.length && Array.isArray(ds.allowedReceivers)) accounts = ds.allowedReceivers.map((r,i) => normalizeDepositReceiverAccount({...r, accountName:r.accountName || r.name, qrImageUrl:r.qrImageUrl || r.qr}, i)).filter(r => r.enabled !== false && (r.upiId || r.accountName || r.name));
+  if(!accounts.length && (ds.upiId || ds.qrImageUrl || ds.paymentName || ds.accountName)) accounts.push(normalizeDepositReceiverAccount({ id:'legacy-deposit-receiver', enabled:true, label:ds.paymentName || ds.accountName || 'Legacy Receiver', accountName:ds.accountName || ds.paymentName || '', name:ds.paymentName || ds.accountName || '', upiId:ds.upiId || '', phone:ds.phone || '', bankName:ds.bankName || '', qrImageUrl:ds.qrImageUrl || '', aliases:[ds.paymentName, ds.accountName].filter(Boolean), priority:0 }, 0));
+  const pm = state?.paymentMethods || {};
+  if(!accounts.length){
+    const upis = [['Default UPI', pm.upi], ['PhonePe', pm.phonepeUpi], ['GPay', pm.gpayUpi], ['Paytm', pm.paytmUpi]].filter(([,v]) => v);
+    accounts = upis.map(([label, upi], i) => normalizeDepositReceiverAccount({ id:`payment-${label}`, enabled:true, label, accountName:pm.name || 'TITAN NOVA', name:pm.name || 'TITAN NOVA', upiId:upi, phone:pm.phone || '', qrImageUrl:i === 0 ? (pm.qr || '') : '', aliases:[pm.name].filter(Boolean), priority:i }, i));
+    if(!accounts.length && (pm.qr || pm.name || pm.phone)) accounts.push(normalizeDepositReceiverAccount({ id:'legacy-payment-method', enabled:true, label:pm.name || 'Payment Method', accountName:pm.name || '', name:pm.name || '', phone:pm.phone || '', qrImageUrl:pm.qr || '', priority:0 }, 0));
+  }
+  return accounts.sort((a,b) => (Number(a.priority || 0) - Number(b.priority || 0)) || String(a.label).localeCompare(String(b.label)));
+}
+function getActiveDepositReceiver(state){
+  const ds = state?.depositSettings?.v1 || {};
+  const accounts = getDepositReceiverAccounts(state);
+  return accounts.find(r => r.id === ds.activeReceiverId) || accounts[0] || null;
+}
 function getDepositPaymentConfig(state){
   const pm = state?.paymentMethods || {};
-  const paymentMethodUpis = [
-    ['Default UPI', pm.upi],
-    ['PhonePe', pm.phonepeUpi],
-    ['GPay', pm.gpayUpi],
-    ['Paytm', pm.paytmUpi]
-  ].filter(([,v], idx, arr) => v && arr.findIndex(([,x]) => String(x).trim().toLowerCase() === String(v).trim().toLowerCase()) === idx);
-  const ds = state?.depositSettings?.v1 || {};
-  if(ds && typeof ds === 'object' && (ds.upiId || ds.qrImageUrl || ds.paymentName || ds.accountName)){
-    const dsUpis = [['UPI', ds.upiId]].filter(([,v]) => v);
-    return {
-      source: 'depositSettings.v1',
-      name: ds.paymentName || ds.accountName || pm.name || 'TITAN NOVA',
-      receiver: ds.accountName || ds.paymentName || pm.name || 'TITAN NOVA',
-      bankName: ds.bankName || pm.bankName || '',
-      phone: ds.phone || pm.phone || '',
-      qr: ds.qrImageUrl || pm.qr || '',
-      upis: dsUpis.length ? dsUpis : paymentMethodUpis
-    };
+  const receiverAccount = getActiveDepositReceiver(state);
+  if(receiverAccount){
+    const name = receiverAccount.label || receiverAccount.name || receiverAccount.accountName || pm.name || 'TITAN NOVA';
+    const receiver = receiverAccount.accountName || receiverAccount.name || receiverAccount.label || name;
+    return { source:'depositSettings.v1.allowedReceiverAccounts', receiverAccount, activeReceiverId:receiverAccount.id, name, receiver, bankName:receiverAccount.bankName || pm.bankName || '', phone:receiverAccount.phone || pm.phone || '', qr:receiverAccount.qrImageUrl || pm.qr || '', upis:receiverAccount.upiId ? [[receiverAccount.label || 'UPI', receiverAccount.upiId]] : [] };
   }
-  return {
-    source: 'paymentMethods',
-    name: pm.name || 'TITAN NOVA',
-    receiver: pm.name || 'TITAN NOVA',
-    bankName: pm.bankName || '',
-    phone: pm.phone || '',
-    qr: pm.qr || '',
-    upis: paymentMethodUpis
-  };
+  const paymentMethodUpis = [['Default UPI', pm.upi], ['PhonePe', pm.phonepeUpi], ['GPay', pm.gpayUpi], ['Paytm', pm.paytmUpi]].filter(([,v], idx, arr) => v && arr.findIndex(([,x]) => String(x).trim().toLowerCase() === String(v).trim().toLowerCase()) === idx);
+  return { source:'paymentMethods', name:pm.name || 'TITAN NOVA', receiver:pm.name || 'TITAN NOVA', bankName:pm.bankName || '', phone:pm.phone || '', qr:pm.qr || '', upis:paymentMethodUpis };
 }
 function depositInstructionsText(state, userId, amount = 0){
   const cfg = getDepositPaymentConfig(state);
@@ -2316,17 +2321,16 @@ function receiverNameSimilarity(a, b){
   return inter / union;
 }
 function allowedDepositReceivers(state){
-  const ds = state?.depositSettings?.v1 || {};
-  const configured = Array.isArray(ds.allowedReceivers) ? ds.allowedReceivers : [];
-  if(configured.length) return configured.filter(x => x && (x.name || x.upiId));
+  const accounts = getDepositReceiverAccounts(state);
+  if(accounts.length) return accounts.map(r => ({...r, name:r.accountName || r.name || r.label, aliases:[r.label, r.name, r.accountName, ...(Array.isArray(r.aliases) ? r.aliases : [])].filter(Boolean)}));
   const cfg = getDepositPaymentConfig(state);
   return (cfg.upis || []).map(([,upi]) => ({ name:cfg.receiver || cfg.name || '', upiId:upi, aliases:[cfg.name, cfg.receiver].filter(Boolean) }));
 }
-function receiverMatchesPayment(extracted, allowedReceivers){
+function receiverMatchesPayment(extracted, allowedReceivers, settings = {}){
   const paidToUpi = normalizeUpi(extracted?.paidToUpi);
   const paidToName = normalizeReceiverName(extracted?.paidToName);
   const out = { matched:false, strong:false, type:'missing_receiver', receiver:null, suspicious:false, reason:'receiver_missing_or_unclear' };
-  if(!paidToUpi && !paidToName) return out;
+  if(!paidToUpi && !paidToName) return settings.receiverMatchRequired === false ? { matched:true, strong:false, type:'not_required', receiver:null, suspicious:false, reason:'' } : out;
   for(const r of (allowedReceivers || [])){
     const allowedUpi = normalizeUpi(r.upiId);
     const names = [r.name, ...(Array.isArray(r.aliases) ? r.aliases : [])].filter(Boolean);
@@ -2334,7 +2338,7 @@ function receiverMatchesPayment(extracted, allowedReceivers){
     const nameMatch = !!paidToName && names.some(n => receiverNameSimilarity(paidToName, n) >= 0.82);
     if(paidToUpi && allowedUpi && !upiMatch) continue;
     if(upiMatch) return { matched:true, strong:true, type:nameMatch ? 'upi_and_name' : 'upi', receiver:r, suspicious:false, reason:'' };
-    if(!paidToUpi && nameMatch) return { matched:true, strong:false, type:'name', receiver:r, suspicious:false, reason:'name_only_needs_admin_review' };
+    if(!paidToUpi && nameMatch && settings.allowWeakNameMatch !== false) return { matched:true, strong:false, type:'name', receiver:r, suspicious:false, reason:'name_only_needs_admin_review' };
   }
   if(paidToUpi || paidToName) return { matched:false, strong:false, type:'receiver_mismatch', receiver:null, suspicious:true, reason:'paid_to_not_allowed_receiver' };
   return out;
@@ -2440,7 +2444,7 @@ async function saveDepositPaymentRequestUnlocked(parsed, meta, screenshotImageDa
   const intentAmount = Number(profile.lastDepositIntentAmount || 0);
   const amount = Number(parsed.amount || 0) > 0 ? Number(parsed.amount) : (intentAmount > 0 ? intentAmount : 0);
   const allowedReceivers = allowedDepositReceivers(state);
-  const receiverMatch = receiverMatchesPayment(parsed, allowedReceivers);
+  const receiverMatch = receiverMatchesPayment(parsed, allowedReceivers, state?.depositSettings?.v1 || {});
   const scored = scoreDepositScreenshot({...parsed, amount}, receiverMatch, null, 7);
   let paymentStatus = 'needs_review';
   if(receiverMatch.suspicious) paymentStatus = 'suspicious_receiver_mismatch';
