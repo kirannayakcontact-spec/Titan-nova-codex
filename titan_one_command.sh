@@ -20,6 +20,9 @@ fi
 cd "$APP_DIR"
 mkdir -p "$LOG_DIR"
 
+info "Ensuring Titan runtime files"
+python titan_runtime_files.py --ensure
+
 # Load saved Termux env if present.
 if [ -f "$HOME/.bashrc" ]; then
   # shellcheck disable=SC1090
