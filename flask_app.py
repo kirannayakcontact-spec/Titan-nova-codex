@@ -14957,7 +14957,7 @@ import urllib.request as _urlrequest
 import urllib.error as _urlerror
 import uuid as _uuid
 
-DEPOSIT_FLOW_V1_VERSION = "2026-07-07-deposit-flow-v1-backend-u2"
+DEPOSIT_FLOW_V1_VERSION = "2026-07-07-deposit-flow-v1-backend-u3"
 _ALLOWED_STATUS = {
     "new",
     "payment_pending",
@@ -15235,6 +15235,110 @@ def _audit(deposit_id: str, event: str, detail=None):
     return rec
 
 
+
+
+def _deposit_phone_target(rec: dict) -> str:
+    user_id = str((rec or {}).get("userId") or (rec or {}).get("profileId") or "").strip()
+    profile = _fb_get(["profiles", user_id], default={}) if user_id else {}
+    raw = (profile or {}).get("phone") or (rec or {}).get("phoneNumber") or (rec or {}).get("phone") or ""
+    digits = _normalize_phone(raw)
+    return digits or ""
+
+
+def _queue_deposit_message(rec: dict, text: str, meta=None):
+    if not isinstance(rec, dict) or not text:
+        return None
+    settings = _get_deposit_settings()
+    if settings.get("autoWhatsapp") is False and settings.get("notifyUserPrivate") is False:
+        return None
+    target = _deposit_phone_target(rec)
+    if not target:
+        return None
+    outbox = _fb_get(["paymentOutbox"], default=[])
+    if not isinstance(outbox, list):
+        outbox = []
+    msg = {
+        "id": _uuid.uuid4().hex[:8].upper(),
+        "time": _now_iso(),
+        "target": target,
+        "text": str(text),
+        "status": "pending",
+        "attempts": 0,
+        "meta": meta or {},
+    }
+    outbox.append(msg)
+    if len(outbox) > 300:
+        outbox = outbox[-300:]
+    _fb_put(["paymentOutbox"], outbox)
+    return msg
+
+
+def _deposit_wallet_credit(rec: dict, updated_by: str = "admin") -> tuple[dict | None, dict]:
+    if not isinstance(rec, dict):
+        return None, {"applied": False, "reason": "deposit_missing"}
+    user_id = str(rec.get("userId") or rec.get("profileId") or "").strip()
+    amount = _money_amount(rec.get("amount"))
+    if not user_id or user_id == "guest":
+        return None, {"applied": False, "reason": "user_missing"}
+    if amount is None:
+        return None, {"applied": False, "reason": "amount_invalid"}
+    wallet_credit = rec.get("walletCredit") if isinstance(rec.get("walletCredit"), dict) else {}
+    if wallet_credit.get("applied"):
+        wallet = _fb_get(["wallets", user_id], default=None)
+        return wallet if isinstance(wallet, dict) else None, wallet_credit
+    profile = _fb_get(["profiles", user_id], default={})
+    wallet = _fb_get(["wallets", user_id], default=None)
+    if not isinstance(wallet, dict):
+        wallet = {
+            "userId": user_id,
+            "name": (profile or {}).get("name") or rec.get("customerName") or user_id,
+            "phone": (profile or {}).get("phone") or rec.get("phoneNumber") or "",
+            "balance": 0,
+            "hold": 0,
+            "walletHold": 0,
+            "creditLimit": 0,
+            "ledger": [],
+            "createdAt": _now_iso(),
+        }
+    before = round(float(wallet.get("balance") or 0), 2)
+    after = round(before + amount, 2)
+    ledger_entry = {
+        "id": _uuid.uuid4().hex[:8].upper(),
+        "time": _now_iso(),
+        "type": "deposit_credit",
+        "amount": amount,
+        "balanceBefore": before,
+        "balanceAfter": after,
+        "note": f"Deposit approved #{rec.get('depositId') or rec.get('id')}",
+        "source": "deposit_flow_v1",
+        "depositId": rec.get("depositId") or rec.get("id"),
+        "utr": rec.get("utr") or "",
+    }
+    wallet["balance"] = after
+    wallet["updatedAt"] = _now_iso()
+    wallet.setdefault("ledger", []).append(ledger_entry)
+    _fb_put(["wallets", user_id], wallet)
+    txns = _fb_get(["walletTransactions"], default=[])
+    if not isinstance(txns, list):
+        txns = []
+    txns.append({
+        "id": ledger_entry["id"], "userId": user_id, "name": wallet.get("name") or user_id,
+        "phone": wallet.get("phone") or "", "time": ledger_entry["time"], "type": ledger_entry["type"],
+        "amount": amount, "balanceBefore": before, "balanceAfter": after, "note": ledger_entry["note"],
+        "source": ledger_entry["source"], "refId": ledger_entry["depositId"], "depositId": ledger_entry["depositId"],
+    })
+    _fb_put(["walletTransactions"], txns[-2000:])
+    return wallet, {
+        "applied": True,
+        "amount": amount,
+        "balanceBefore": before,
+        "balanceAfter": after,
+        "ledgerId": ledger_entry["id"],
+        "appliedAt": ledger_entry["time"],
+        "appliedBy": updated_by or "admin",
+    }
+
+
 def _register_deposit_routes(app):
     if getattr(app, "_titan_deposit_flow_v1_registered", False):
         return
@@ -15327,6 +15431,12 @@ def _register_deposit_routes(app):
             if utr:
                 _fb_put(["depositUtrIndex", _utr_hash(utr)], {"depositId": deposit_id, "utr": utr, "amount": amount, "createdAt": rec["createdAt"]})
             _audit(deposit_id, "deposit_request_created", {"status": current_status, "amount": amount, "userId": user_id})
+            if current_status == "payment_submitted":
+                msg = f"💳 *PAYMENT PROOF RECEIVED*\n━━━━━━━━━━━━━━━━━━━━\n🆔 *ID:* #{deposit_id}\n💵 *Amount:* ₹{amount:g}\n🔢 *UTR:* {utr or '-'}\n📷 *Proof:* {'Screenshot received' if proof_url else 'UTR received'}\n⏳ Admin verification pending hai. Approve hote hi wallet update notification milega."
+                queued = _queue_deposit_message(rec, msg, {"type": "deposit_proof_received", "depositId": deposit_id})
+                if queued:
+                    rec["whatsapp"] = {"queued": True, "sent": False, "lastQueuedAt": queued.get("time"), "messageType": "deposit_proof_received"}
+                    _fb_patch(["depositRequests", deposit_id], {"whatsapp": rec["whatsapp"]})
             return jsonify({"status": "success", "deposit": _enrich_deposit_record(rec, settings), "settings": settings, "nextSteps": _deposit_user_steps(current_status, bool(utr or proof_url)), "version": DEPOSIT_FLOW_V1_VERSION})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
@@ -15384,6 +15494,14 @@ def _register_deposit_routes(app):
                 if new_status == "approved":
                     updates["approvedAt"] = _now_iso()
                     updates["approvedBy"] = str(data.get("updatedBy") or "admin").strip()[:80]
+                    wallet, wallet_credit = _deposit_wallet_credit({**rec, **updates}, updates["approvedBy"])
+                    updates["walletCredit"] = wallet_credit
+                    if wallet_credit.get("applied"):
+                        updates["walletCredited"] = True
+                        updates["walletCreditAmount"] = wallet_credit.get("amount")
+                        updates["walletBalanceAfter"] = wallet_credit.get("balanceAfter")
+                    else:
+                        updates["walletCreditError"] = wallet_credit.get("reason") or "wallet_credit_failed"
                 if new_status == "rejected":
                     updates["rejectedAt"] = _now_iso()
             for key in ("adminNote", "rejectReason", "verificationNote", "proofUrl", "utr"):
@@ -15399,6 +15517,23 @@ def _register_deposit_routes(app):
             fresh = dict(rec)
             fresh.update(updates)
             _audit(deposit_id, "deposit_request_updated", {"updates": updates})
+            if new_status == "approved":
+                wc = fresh.get("walletCredit") if isinstance(fresh.get("walletCredit"), dict) else {}
+                if wc.get("applied"):
+                    text = f"✅ *WALLET ADDED SUCCESSFULLY*\n━━━━━━━━━━━━━━━━━━━━\n🆔 *Deposit ID:* #{deposit_id}\n💵 *Added:* ₹{float(wc.get('amount') or fresh.get('amount') or 0):g}\n💰 *Wallet Balance:* ₹{float(wc.get('balanceAfter') or 0):g}\n📝 Payment verify ho gaya aur wallet update complete hai."
+                else:
+                    text = f"⚠️ *PAYMENT APPROVED, WALLET ADD FAILED*\n━━━━━━━━━━━━━━━━━━━━\n🆔 *Deposit ID:* #{deposit_id}\n💵 *Amount:* ₹{float(fresh.get('amount') or 0):g}\n📝 *Reason:* {fresh.get('walletCreditError') or wc.get('reason') or 'Wallet profile/amount issue'}\nAdmin se contact karein."
+                queued = _queue_deposit_message(fresh, text, {"type": "deposit_approved", "depositId": deposit_id, "walletApplied": bool(wc.get("applied"))})
+                if queued:
+                    fresh["whatsapp"] = {"queued": True, "sent": False, "lastQueuedAt": queued.get("time"), "messageType": "deposit_approved"}
+                    _fb_patch(["depositRequests", deposit_id], {"whatsapp": fresh["whatsapp"]})
+            elif new_status == "rejected":
+                reason = fresh.get("rejectReason") or fresh.get("verificationNote") or fresh.get("adminNote") or "Payment proof verify nahi hua."
+                text = f"❌ *PAYMENT / WALLET ADD FAILED*\n━━━━━━━━━━━━━━━━━━━━\n🆔 *Deposit ID:* #{deposit_id}\n💵 *Amount:* ₹{float(fresh.get('amount') or 0):g}\n📝 *Reason:* {reason}\nCorrect UTR/screenshot ke saath nayi request bhejein."
+                queued = _queue_deposit_message(fresh, text, {"type": "deposit_rejected", "depositId": deposit_id})
+                if queued:
+                    fresh["whatsapp"] = {"queued": True, "sent": False, "lastQueuedAt": queued.get("time"), "messageType": "deposit_rejected"}
+                    _fb_patch(["depositRequests", deposit_id], {"whatsapp": fresh["whatsapp"]})
             return jsonify({"status": "success", "deposit": _enrich_deposit_record(fresh, _get_deposit_settings()), "updates": updates, "version": DEPOSIT_FLOW_V1_VERSION})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e), "version": DEPOSIT_FLOW_V1_VERSION}), 500
