@@ -14279,11 +14279,16 @@ withdraw status</pre>
                         ${p.walletCredited ? `<span class="text-[10px] font-black uppercase text-[var(--green)]">💳 WALLET +₹${p.walletCreditAmount || p.amount}</span>` : ''}
                     </div>
                     <div class="mb-3 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl p-2.5 text-[10px] text-[var(--text-muted)] space-y-1">
-                        <div><b class="text-white">UPI:</b> ${p.upi || p.proof?.upi || '-'} ${p.proof?.expectedUpis?.length ? `<span class="block">Expected: ${p.proof.expectedUpis.join(', ')}</span>` : ''}</div>
-                        <div><b class="text-white">Payment Name:</b> ${p.paymentName || p.proof?.paymentName || '-'} ${p.proof?.expectedPaymentName ? `<span class="block">Expected: ${p.proof.expectedPaymentName}</span>` : ''}</div>
-                        <div><b class="text-white">Sender:</b> ${p.payerName || p.proof?.payerName || '-'}</div>
-                        <div><b class="text-white">Paid Date/Time:</b> ${p.paymentDate || p.proof?.paymentDate || '-'} ${p.paymentTime || p.proof?.paymentTime || ''}</div>
-                        ${p.proofIssues?.length ? `<div class="text-[var(--rose)] font-black">Issues: ${p.proofIssues.join(', ')}</div>` : ''}
+                        <div><b class="text-white">Paid To Name:</b> ${htmlEscape(p.paidToName || p.paymentName || p.proof?.paymentName || '-')}</div>
+                        <div><b class="text-white">Paid To UPI:</b> ${htmlEscape(p.paidToUpi || p.upi || p.proof?.upi || '-')}</div>
+                        <div><b class="text-white">Expected Receiver:</b> ${htmlEscape((p.expectedReceiver && (p.expectedReceiver.name || p.expectedReceiver.upiId)) || p.proof?.expectedPaymentName || '-')} ${p.expectedReceiver?.upiId ? `<span class="block">UPI: ${htmlEscape(p.expectedReceiver.upiId)}</span>` : ''}</div>
+                        <div><b class="text-white">Transaction ID:</b> ${htmlEscape(p.transactionId || '-')}</div>
+                        <div><b class="text-white">Score:</b> ${htmlEscape(p.verificationScore ?? '-')} <b class="text-white ml-2">Match:</b> ${htmlEscape(p.receiverMatchType || '-')}</div>
+                        <div><b class="text-white">Payment Status:</b> ${htmlEscape(p.paymentStatus || '-')}</div>
+                        <div><b class="text-white">Sender:</b> ${htmlEscape(p.payerName || p.proof?.payerName || '-')}</div>
+                        <div><b class="text-white">Paid Date/Time:</b> ${htmlEscape(p.paidAt || p.paymentDate || p.proof?.paymentDate || '-')} ${htmlEscape(p.paymentTime || p.proof?.paymentTime || '')}</div>
+                        ${(p.riskFlags||p.proofIssues||[]).length ? `<div class="text-[var(--rose)] font-black">Risk Flags: ${(p.riskFlags||p.proofIssues||[]).map(htmlEscape).join(', ')}</div>` : ''}
+                        ${p.rawOcrText ? `<details><summary class="text-[var(--primary)] font-black cursor-pointer">Raw OCR Text</summary><pre class="whitespace-pre-wrap break-words mt-1">${htmlEscape(String(p.rawOcrText).slice(0,1200))}</pre></details>` : ''}
                     </div>
                     ${p.rejectReason ? `<div class="mb-3 bg-[rgba(255,93,93,0.08)] border border-[rgba(255,93,93,0.18)] rounded-xl p-2 text-[10px] text-[var(--rose)] font-bold">Reason: ${p.rejectReason}</div>` : ''}
                     ${(p.image || p.screenshotImageData) ? `<img src="${p.image || p.screenshotImageData}" class="w-full rounded-xl mb-3 border border-[var(--border)] max-h-48 object-contain"/>` : ''}
