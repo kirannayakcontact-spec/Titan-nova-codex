@@ -92,7 +92,19 @@ HOME_TEMPLATE = """
       box.appendChild(el);
     }
     load('/health').then(r => health.innerHTML = `<span class="ok">OK</span> ${short(r.data)}`).catch(e => health.innerHTML = `<span class="warn">Unavailable</span> ${e.message}`);
-    whatsapp.innerHTML = `<span class="warn">WhatsApp not checked</span> Click status link to fetch gateway status.`;
+    function paintWhatsappStatus(result) {
+      const data = result.data || {};
+      const unavailable = data.status === 'unavailable' || data.gatewayReachable === false || !result.ok;
+      const stale = data.stale ? ' stale cached status shown;' : '';
+      whatsapp.innerHTML = `<span class="${unavailable ? 'warn' : 'ok'}">${unavailable ? 'Gateway unavailable' : 'Gateway OK'}</span>${stale} ${short(data)}`;
+    }
+    function refreshWhatsappStatus() {
+      whatsapp.innerHTML = `<span class="warn">Refreshing WhatsApp gateway in background...</span>`;
+      load('/api/whatsapp/status')
+        .then(paintWhatsappStatus)
+        .catch(e => whatsapp.innerHTML = `<span class="warn">Gateway unavailable</span> ${e.message}`);
+    }
+    window.setTimeout(refreshWhatsappStatus, 0);
     load('/api/dashboard/summary')
       .then(r => {
         const summary = r.data.modules || {};
