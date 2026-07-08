@@ -6,7 +6,7 @@ App-wide realtime without UI jank:
 - slower background sync
 - debounced render through requestAnimationFrame
 - no overwrite while typing/scrolling/touching
-- Entries tab render-lock so open panels do not collapse during realtime sync
+- Entries/Forward tab render-lock so open panels do not collapse during realtime sync
 """
 
 
@@ -23,12 +23,13 @@ def register_titan_realtime_global(app):
         return jsonify({
             "status": "success",
             "feature": "titan_global_realtime_smooth",
-            "version": "2026-07-08-global-realtime-smooth-v3-entries-render-lock",
+            "version": "2026-07-08-global-realtime-smooth-v4-entries-forward-render-lock",
             "pollMs": 1800,
             "writeRefresh": True,
             "smoothMode": True,
             "allTabs": True,
             "entriesRenderLock": True,
+            "forwardRenderLock": True,
             "checkedAt": int(time.time() * 1000),
         })
 
@@ -54,7 +55,7 @@ def register_titan_realtime_global(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "titan-global-realtime-smooth-v3-entries-render-lock" in html or "</body>" not in html.lower():
+            if not html or "titan-global-realtime-smooth-v4-entries-forward-render-lock" in html or "</body>" not in html.lower():
                 return resp
             idx = html.lower().rfind("</body>")
             html = html[:idx] + REALTIME_SCRIPT + html[idx:]
@@ -66,25 +67,26 @@ def register_titan_realtime_global(app):
 
 
 REALTIME_SCRIPT = r'''
-<script id="titan-global-realtime-smooth-v3-entries-render-lock">
+<script id="titan-global-realtime-smooth-v4-entries-forward-render-lock">
 (function(){
-  if(window.__TITAN_GLOBAL_REALTIME_SMOOTH_V3__) return;
-  window.__TITAN_GLOBAL_REALTIME_SMOOTH_V3__ = true;
+  if(window.__TITAN_GLOBAL_REALTIME_SMOOTH_V4__) return;
+  window.__TITAN_GLOBAL_REALTIME_SMOOTH_V4__ = true;
 
-  const VERSION = '2026-07-08-global-realtime-smooth-v3-entries-render-lock';
+  const VERSION = '2026-07-08-global-realtime-smooth-v4-entries-forward-render-lock';
   const POLL_MS = Math.max(900, Number(localStorage.getItem('TITAN_REALTIME_POLL_MS') || 1800));
   const WRITE_REFRESH_DELAYS = [180, 720];
   const RENDER_DEBOUNCE_MS = 160;
   const INPUT_HOLD_MS = 1800;
   const SCROLL_HOLD_MS = 900;
-  const ENTRIES_HOLD_MS = 8500;
+  const TAB_HOLD_MS = 8500;
   let syncBusy = false;
   let lastRaw = '';
   let lastAppliedAt = 0;
   let writeLockUntil = 0;
   let pausedUntil = 0;
   let interactionUntil = 0;
-  let entriesHoldUntil = 0;
+  let protectedHoldUntil = 0;
+  let protectedHoldNav = '';
   let renderTimer = null;
   let renderQueued = false;
   let pendingRenderReason = '';
@@ -113,7 +115,9 @@ REALTIME_SCRIPT = r'''
   }
   function sep(url){ return String(url).includes('?') ? '&' : '?'; }
   function currentNav(){ return String(directEval('return typeof mainNav !== "undefined" ? mainNav : ""') || '').toLowerCase(); }
+  function isProtectedNav(nav){ nav = nav || currentNav(); return nav === 'entries' || nav === 'forward'; }
   function isEntriesNav(){ return currentNav() === 'entries'; }
+  function isForwardNav(){ return currentNav() === 'forward'; }
   function editing(){
     try{
       const el=document.activeElement;
@@ -122,40 +126,52 @@ REALTIME_SCRIPT = r'''
       return tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||el.isContentEditable;
     }catch(e){ return false; }
   }
-  function entriesPanelOpen(){
-    if(!isEntriesNav()) return false;
+  function protectedKeywords(nav){
+    if(nav === 'forward') return ['forward','target','schedule','message','template','group','contact','whatsapp','market','load','time'];
+    return ['entry','entries','market','time','timing','setting','parser','risk','wallet'];
+  }
+  function protectedPanelOpen(){
+    const nav = currentNav();
+    if(!isProtectedNav(nav)) return false;
     try{
-      if(now() < entriesHoldUntil) return true;
+      if(now() < protectedHoldUntil && (!protectedHoldNav || protectedHoldNav === nav)) return true;
       const active = document.activeElement;
       if(active && active.closest && active.closest('input,textarea,select,[contenteditable="true"]')) return true;
+      const keys = protectedKeywords(nav);
       const openDetails = Array.from(document.querySelectorAll('details[open]')).some(d => {
-        const t = String(d.textContent || '').toUpperCase();
-        return t.includes('ENTRY') || t.includes('MARKET') || t.includes('TIME') || t.includes('SETTING');
+        const t = String(d.textContent || '').toLowerCase();
+        return keys.some(k => t.includes(k));
       });
       if(openDetails) return true;
       const visiblePanels = Array.from(document.querySelectorAll('[id], [class]')).some(el => {
         const key = String((el.id || '') + ' ' + (el.className || '')).toLowerCase();
-        if(!(key.includes('entry') || key.includes('market') || key.includes('time') || key.includes('setting'))) return false;
+        if(!keys.some(k => key.includes(k))) return false;
         const cs = window.getComputedStyle(el);
         return cs && cs.display !== 'none' && cs.visibility !== 'hidden' && el.getBoundingClientRect && el.getBoundingClientRect().height > 36;
       });
-      return !!visiblePanels && now() < entriesHoldUntil + 1200;
-    }catch(e){ return now() < entriesHoldUntil; }
+      return !!visiblePanels && now() < protectedHoldUntil + 1200;
+    }catch(e){ return now() < protectedHoldUntil; }
   }
   function interacting(){ return now() < interactionUntil; }
   function shouldAvoidRender(force){
-    if(entriesPanelOpen()) return true;
-    if(force && now() < entriesHoldUntil && isEntriesNav()) return true;
+    if(protectedPanelOpen()) return true;
+    if(force && isProtectedNav() && now() < protectedHoldUntil) return true;
     if(force) return false;
     return document.hidden || editing() || interacting() || now() < pausedUntil || now() < writeLockUntil;
   }
   function touchInteraction(){ interactionUntil = Math.max(interactionUntil, now() + SCROLL_HOLD_MS); }
-  function entriesInteraction(){ if(isEntriesNav()) entriesHoldUntil = Math.max(entriesHoldUntil, now() + ENTRIES_HOLD_MS); }
+  function protectedInteraction(){
+    const nav = currentNav();
+    if(isProtectedNav(nav)){
+      protectedHoldNav = nav;
+      protectedHoldUntil = Math.max(protectedHoldUntil, now() + TAB_HOLD_MS);
+    }
+  }
   ['touchstart','touchmove','wheel','scroll','pointerdown'].forEach(ev=>{
-    try { window.addEventListener(ev, function(){ touchInteraction(); entriesInteraction(); }, {passive:true, capture:true}); } catch(e) {}
+    try { window.addEventListener(ev, function(){ touchInteraction(); protectedInteraction(); }, {passive:true, capture:true}); } catch(e) {}
   });
   ['click','change','input','focusin','keydown'].forEach(ev=>{
-    try { document.addEventListener(ev, function(){ entriesInteraction(); }, true); } catch(e) {}
+    try { document.addEventListener(ev, function(){ protectedInteraction(); }, true); } catch(e) {}
   });
   document.addEventListener('input', ()=>{ interactionUntil = Math.max(interactionUntil, now() + INPUT_HOLD_MS); }, true);
 
@@ -173,7 +189,7 @@ REALTIME_SCRIPT = r'''
   function doRender(reason){
     renderQueued = false;
     renderTimer = null;
-    if(entriesPanelOpen()) return;
+    if(protectedPanelOpen()) return;
     try { if(typeof refreshMarketArrays === 'function') refreshMarketArrays(); } catch(e) {}
     try { if(typeof render === 'function') render(true); } catch(e) {}
     try { document.dispatchEvent(new CustomEvent('titan:realtime-applied', {detail:{reason, at:now(), version:VERSION}})); } catch(e) {}
@@ -194,7 +210,10 @@ REALTIME_SCRIPT = r'''
   function markWrite(reason, holdMs){
     writeLockUntil = Math.max(writeLockUntil, now() + (holdMs || 900));
     interactionUntil = Math.max(interactionUntil, now() + 500);
-    if(isEntriesNav()) entriesHoldUntil = Math.max(entriesHoldUntil, now() + Math.max(ENTRIES_HOLD_MS, holdMs || 0));
+    if(isProtectedNav()){
+      protectedHoldNav = currentNav();
+      protectedHoldUntil = Math.max(protectedHoldUntil, now() + Math.max(TAB_HOLD_MS, holdMs || 0));
+    }
     try { if(typeof titanMarkUiLocalWrite === 'function') titanMarkUiLocalWrite(reason || 'global_realtime_write', holdMs || 1600); } catch(e) {}
     showStatus('SYNC');
   }
@@ -251,7 +270,7 @@ REALTIME_SCRIPT = r'''
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) setTimeout(()=>fetchState('visible', true), 220); });
   window.addEventListener('focus', ()=>setTimeout(()=>fetchState('focus', true), 220));
   document.addEventListener('titan:force-sync', ()=>fetchState('event', true));
-  window.__TitanRealtime = {version:VERSION, refresh:(r)=>fetchState(r||'manual', true), markWrite, pause:(ms)=>{pausedUntil=now()+Number(ms||1000)}, pauseEntries:(ms)=>{entriesHoldUntil=now()+Number(ms||ENTRIES_HOLD_MS)}, status:()=>({lastAppliedAt, syncBusy, writeLockUntil, interactionUntil, entriesHoldUntil, pollMs:POLL_MS})};
+  window.__TitanRealtime = {version:VERSION, refresh:(r)=>fetchState(r||'manual', true), markWrite, pause:(ms)=>{pausedUntil=now()+Number(ms||1000)}, pauseEntries:(ms)=>{protectedHoldNav='entries'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseForward:(ms)=>{protectedHoldNav='forward'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, status:()=>({lastAppliedAt, syncBusy, writeLockUntil, interactionUntil, protectedHoldUntil, protectedHoldNav, pollMs:POLL_MS})};
 
   setInterval(()=>fetchState('poll', false), POLL_MS);
   setTimeout(()=>fetchState('boot', true), 850);
