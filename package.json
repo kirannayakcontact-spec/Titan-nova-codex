@@ -1,15 +1,14 @@
 {
-  "name": "andres-berlin-root",
+  "name": "titan-nova-codex",
   "version": "1.0.0",
   "private": true,
-  "description": "Root launcher for the Andres Berlin clean modular starter.",
-  "main": "andres-berlin/bot/index.js",
+  "description": "Titan Nova legacy two-file runtime launcher.",
+  "main": "Gateway.js",
   "scripts": {
-    "gateway": "node andres-berlin/bot/index.js",
-    "start": "node andres-berlin/bot/index.js",
-    "bot": "node andres-berlin/bot/index.js",
-    "check": "node --check andres-berlin/bot/index.js && node --check andres-berlin/bot/gateway.js && node --check andres-berlin/bot/config.js && node --check andres-berlin/bot/firebase.js && node --check andres-berlin/bot/whatsapp.js && node --check andres-berlin/bot/scheduler.js && node --check andres-berlin/bot/result_scraper.js && node --check andres-berlin/bot/safety.js && node --check andres-berlin/bot/routes.js",
-    "audit:prod": "npm audit --omit=dev"
+    "gateway": "node Gateway.js",
+    "start": "node Gateway.js",
+    "bot": "node Gateway.js",
+    "check": "node --check Gateway.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.18",
