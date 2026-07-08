@@ -2,12 +2,17 @@
 """Single-source duplicate audit for Titan Nova.
 
 Scans repository text files for duplicated Flask routes, JS/Python function names,
-HTML ids, API path literals, and after_request UI injectors. This is a reporting
-script only; it does not modify runtime files.
+HTML ids, API path literals, and after_request UI injectors.
+
+Default mode scans the repo.
+`--active-only` scans the active Termux/root runtime and intentionally excludes
+modular scaffolds, docs, backup files, and patch scripts so the report is useful
+for cleaning the running app.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -15,6 +20,43 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_PARTS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
 SUFFIXES = {".py", ".js", ".html", ".md", ".txt"}
+
+ACTIVE_ROOT_FILES = {
+    "flask_app.py",
+    "Gateway.js",
+    "deposit_finance_force.py",
+    "titan_realtime_global.py",
+    "settlement_toggle_sticky.py",
+    "settlement_toggle_ui_guard.py",
+    "ledger_auto_mark_safe.py",
+    "deposit_finance_native.py",
+    "deposit_screenshot_routes.py",
+    "deposit_screenshot_ui.py",
+    "deposit_finance_merge.py",
+    "deposit_professional_v2.py",
+    "titan_native_ui.py",
+}
+
+ACTIVE_SKIP_PARTS = {
+    "andres-berlin",
+    "backend",
+    "bot",
+    "docs",
+    "scripts",
+    "tests",
+    "legacy-backup",
+    "node_modules",
+    ".git",
+    "__pycache__",
+}
+
+PATCH_FILE_HINTS = (
+    "_patch.py",
+    "_patcher.py",
+    "patch.py",
+    "phase",
+    "cleanup",
+)
 
 PATTERNS = {
     "flask_route": re.compile(r"@app\.(?:route|get|post|put|delete)\(\s*['\"]([^'\"]+)['\"]"),
@@ -37,14 +79,33 @@ KNOWN_ALLOWED = {
 }
 
 
-def iter_files():
+def is_active_runtime_file(p: Path) -> bool:
+    rp = p.relative_to(ROOT)
+    if len(rp.parts) != 1:
+        return False
+    name = rp.name
+    if name not in ACTIVE_ROOT_FILES:
+        return False
+    low = name.lower()
+    if any(hint in low for hint in PATCH_FILE_HINTS):
+        return False
+    return True
+
+
+def iter_files(active_only: bool = False):
     for p in ROOT.rglob("*"):
         if not p.is_file():
             continue
+        parts = set(p.relative_to(ROOT).parts)
         if any(part in SKIP_PARTS for part in p.parts):
             continue
         if p.suffix.lower() not in SUFFIXES:
             continue
+        if active_only:
+            if parts & ACTIVE_SKIP_PARTS:
+                continue
+            if not is_active_runtime_file(p):
+                continue
         yield p
 
 
@@ -56,9 +117,11 @@ def rel(p: Path) -> str:
     return str(p.relative_to(ROOT))
 
 
-def collect():
+def collect(active_only: bool = False):
     hits = {kind: defaultdict(list) for kind in PATTERNS}
-    for p in iter_files():
+    scanned = []
+    for p in iter_files(active_only=active_only):
+        scanned.append(rel(p))
         try:
             text = p.read_text(encoding="utf-8", errors="ignore")
         except Exception:
@@ -69,7 +132,7 @@ def collect():
                 if name in KNOWN_ALLOWED.get(kind, set()):
                     continue
                 hits[kind][name].append(f"{rel(p)}:{line_of(text, m.start())}")
-    return hits
+    return hits, sorted(scanned)
 
 
 def print_section(kind: str, mapping):
@@ -84,7 +147,17 @@ def print_section(kind: str, mapping):
 
 
 def main() -> int:
-    hits = collect()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--active-only", action="store_true", help="scan only active root Termux runtime files")
+    parser.add_argument("--show-files", action="store_true", help="print scanned file list")
+    args = parser.parse_args()
+
+    hits, scanned = collect(active_only=args.active_only)
+    print("Mode:", "active root runtime only" if args.active_only else "full repository")
+    print("Scanned files:", len(scanned))
+    if args.show_files:
+        for name in scanned:
+            print("  -", name)
     for kind, mapping in hits.items():
         print_section(kind, mapping)
     print("\nSingle-source rule: one feature should have one owner UI, one owner API, and one Firebase source path.")
