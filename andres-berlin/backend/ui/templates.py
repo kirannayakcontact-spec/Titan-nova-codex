@@ -38,10 +38,11 @@ HOME_TEMPLATE = """
   <main class="wrap">
     <section class="hero">
       <div class="card">
-        <h2>Dashboard aa gaya ✅</h2>
-        <p class="muted">Starter page hata diya gaya hai. Yahan se Wallet, Ledger, Markets, Payments, Withdrawals aur WhatsApp gateway status directly check kar sakte ho.</p>
+        <h2>Dashboard ready ✅</h2>
+        <p class="muted">Yahan se Wallet, Ledger, Markets, Payments, Withdrawals, WhatsApp gateway aur naya Setup Control Center directly check kar sakte ho.</p>
         <div class="actions">
           <a class="btn" href="/health">Health</a>
+          <a class="btn secondary" href="/api/setup/status">Setup Control Center</a>
           <a class="btn secondary" href="/api/whatsapp/status">WhatsApp status</a>
           <a class="btn secondary" href="/api/markets/status">Markets</a>
         </div>
@@ -61,6 +62,7 @@ HOME_TEMPLATE = """
       ['Markets', '/api/markets/status', 'Market quotes/status module.'],
       ['Payments', '/api/payments/status', 'Recent payment credits.'],
       ['Withdrawals', '/api/withdrawals/status', 'Recent debit/withdrawal requests.'],
+      ['Setup', '/api/setup/status', 'Firebase, gateway, security aur module counts ka control center.'],
       ['Admin', '/api/admin/status', 'Admin API status; token ho to protected rahega.']
     ];
     const box = document.getElementById('modules');
