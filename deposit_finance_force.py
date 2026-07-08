@@ -2,6 +2,7 @@
 
 Loads safe app extensions without broad Deposit UI injection:
 - global realtime engine for all tabs/actions
+- settlement toggle sticky save guard
 - ledger auto mark list/dict crash guard
 - native Finance Deposit subtab
 - screenshot proof routes
@@ -14,6 +15,11 @@ def register_deposit_finance_force(app):
     try:
         from titan_realtime_global import register_titan_realtime_global
         register_titan_realtime_global(app)
+    except Exception:
+        pass
+    try:
+        from settlement_toggle_sticky import register_settlement_toggle_sticky
+        register_settlement_toggle_sticky(app)
     except Exception:
         pass
     try:
