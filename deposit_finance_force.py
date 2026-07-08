@@ -20,6 +20,12 @@ def register_deposit_finance_force(app):
     except Exception:
         pass
     try:
+        import importlib
+        flow_mod = importlib.import_module("finance_flow_split")
+        getattr(flow_mod, "register_finance_flow_split")(app)
+    except Exception:
+        pass
+    try:
         from titan_realtime_global import register_titan_realtime_global
         register_titan_realtime_global(app)
     except Exception:
