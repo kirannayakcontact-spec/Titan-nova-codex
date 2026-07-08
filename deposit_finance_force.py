@@ -28,18 +28,3 @@ def register_deposit_finance_force(app):
         register_ledger_auto_mark_safe(app)
     except Exception:
         pass
-    try:
-        from deposit_finance_native import register_deposit_finance_native
-        register_deposit_finance_native(app)
-    except Exception:
-        pass
-    try:
-        from deposit_screenshot_routes import register_deposit_screenshot_routes
-        register_deposit_screenshot_routes(app)
-    except Exception:
-        pass
-    try:
-        from deposit_screenshot_ui import register_deposit_screenshot_ui
-        register_deposit_screenshot_ui(app)
-    except Exception:
-        pass
