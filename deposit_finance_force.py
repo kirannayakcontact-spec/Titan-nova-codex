@@ -1,14 +1,4 @@
-"""Titan Nova safe extension bridge.
-
-Loads safe app extensions without broad Deposit UI injection:
-- global realtime engine for all tabs/actions
-- settlement toggle sticky save guard
-- settlement toggle UI guard
-- ledger auto mark list/dict crash guard
-- native Finance Deposit subtab
-- screenshot proof routes
-- screenshot review UI
-"""
+"""Titan Nova safe extension bridge."""
 
 
 def register_deposit_finance_force(app):
@@ -16,6 +6,11 @@ def register_deposit_finance_force(app):
     try:
         from titan_realtime_global import register_titan_realtime_global
         register_titan_realtime_global(app)
+    except Exception:
+        pass
+    try:
+        from ledger_market_settings import register_ledger_market_settings
+        register_ledger_market_settings(app)
     except Exception:
         pass
     try:
