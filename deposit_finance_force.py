@@ -24,16 +24,6 @@ def register_deposit_finance_force(app):
     except Exception:
         pass
     try:
-        import sys, types
-        native_stub = types.ModuleType("titan_native_ui")
-        def register_titan_native_ui(stub_app):
-            stub_app._titan_native_ui_disabled = True
-            return None
-        native_stub.register_titan_native_ui = register_titan_native_ui
-        sys.modules["titan_native_ui"] = native_stub
-    except Exception:
-        pass
-    try:
         from deposit_finance_native import register_deposit_finance_native
         register_deposit_finance_native(app)
     except Exception:
