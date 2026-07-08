@@ -16,7 +16,7 @@ const ACCEPT_EMPTY_GROUP_IMAGES = String(process.env.TITAN_DEPOSIT_SCREENSHOT_GR
 const STATE_DIR = process.env.TITAN_STATE_DIR || process.cwd();
 const PROOF_DIR = path.join(STATE_DIR, "payment_uploads", "deposit_screenshots");
 const PROCESSED_FILE = path.join(STATE_DIR, "titan_deposit_screenshot_processed.json");
-const DEFAULT_FIREBASE_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/titan_master_data.json";
+const DEFAULT_FIREBASE_URL = "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json";
 const FIREBASE_URL = (process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || DEFAULT_FIREBASE_URL).replace(/\/$/, "");
 
 try { fs.mkdirSync(PROOF_DIR, { recursive: true }); } catch (e) {}
