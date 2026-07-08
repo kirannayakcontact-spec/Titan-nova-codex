@@ -2,6 +2,7 @@
 
 Loads safe app extensions without broad Deposit UI injection:
 - global realtime engine for all tabs/actions
+- ledger auto mark list/dict crash guard
 - native Finance Deposit subtab
 - screenshot proof routes
 - screenshot review UI
@@ -13,6 +14,11 @@ def register_deposit_finance_force(app):
     try:
         from titan_realtime_global import register_titan_realtime_global
         register_titan_realtime_global(app)
+    except Exception:
+        pass
+    try:
+        from ledger_auto_mark_safe import register_ledger_auto_mark_safe
+        register_ledger_auto_mark_safe(app)
     except Exception:
         pass
     try:
