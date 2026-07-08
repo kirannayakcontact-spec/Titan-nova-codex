@@ -6,7 +6,7 @@ App-wide realtime without UI jank:
 - slower background sync
 - debounced render through requestAnimationFrame
 - no overwrite while typing/scrolling/touching
-- Entries/Forward tab render-lock so open panels do not collapse during realtime sync
+- Entries/Forward/Finance tab render-lock so open panels do not collapse during realtime sync
 """
 
 
@@ -23,13 +23,14 @@ def register_titan_realtime_global(app):
         return jsonify({
             "status": "success",
             "feature": "titan_global_realtime_smooth",
-            "version": "2026-07-08-global-realtime-smooth-v4-entries-forward-render-lock",
+            "version": "2026-07-08-global-realtime-smooth-v5-finance-render-lock",
             "pollMs": 1800,
             "writeRefresh": True,
             "smoothMode": True,
             "allTabs": True,
             "entriesRenderLock": True,
             "forwardRenderLock": True,
+            "financeRenderLock": True,
             "checkedAt": int(time.time() * 1000),
         })
 
@@ -55,7 +56,7 @@ def register_titan_realtime_global(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "titan-global-realtime-smooth-v4-entries-forward-render-lock" in html or "</body>" not in html.lower():
+            if not html or "titan-global-realtime-smooth-v5-finance-render-lock" in html or "</body>" not in html.lower():
                 return resp
             idx = html.lower().rfind("</body>")
             html = html[:idx] + REALTIME_SCRIPT + html[idx:]
@@ -67,18 +68,18 @@ def register_titan_realtime_global(app):
 
 
 REALTIME_SCRIPT = r'''
-<script id="titan-global-realtime-smooth-v4-entries-forward-render-lock">
+<script id="titan-global-realtime-smooth-v5-finance-render-lock">
 (function(){
-  if(window.__TITAN_GLOBAL_REALTIME_SMOOTH_V4__) return;
-  window.__TITAN_GLOBAL_REALTIME_SMOOTH_V4__ = true;
+  if(window.__TITAN_GLOBAL_REALTIME_SMOOTH_V5__) return;
+  window.__TITAN_GLOBAL_REALTIME_SMOOTH_V5__ = true;
 
-  const VERSION = '2026-07-08-global-realtime-smooth-v4-entries-forward-render-lock';
+  const VERSION = '2026-07-08-global-realtime-smooth-v5-finance-render-lock';
   const POLL_MS = Math.max(900, Number(localStorage.getItem('TITAN_REALTIME_POLL_MS') || 1800));
   const WRITE_REFRESH_DELAYS = [180, 720];
   const RENDER_DEBOUNCE_MS = 160;
   const INPUT_HOLD_MS = 1800;
   const SCROLL_HOLD_MS = 900;
-  const TAB_HOLD_MS = 8500;
+  const TAB_HOLD_MS = 9500;
   let syncBusy = false;
   let lastRaw = '';
   let lastAppliedAt = 0;
@@ -115,9 +116,8 @@ REALTIME_SCRIPT = r'''
   }
   function sep(url){ return String(url).includes('?') ? '&' : '?'; }
   function currentNav(){ return String(directEval('return typeof mainNav !== "undefined" ? mainNav : ""') || '').toLowerCase(); }
-  function isProtectedNav(nav){ nav = nav || currentNav(); return nav === 'entries' || nav === 'forward'; }
-  function isEntriesNav(){ return currentNav() === 'entries'; }
-  function isForwardNav(){ return currentNav() === 'forward'; }
+  function isProtectedNav(nav){ nav = nav || currentNav(); return nav === 'entries' || nav === 'forward' || nav === 'finance'; }
+  function isFinanceNav(){ return currentNav() === 'finance'; }
   function editing(){
     try{
       const el=document.activeElement;
@@ -127,6 +127,7 @@ REALTIME_SCRIPT = r'''
     }catch(e){ return false; }
   }
   function protectedKeywords(nav){
+    if(nav === 'finance') return ['finance','deposit','payment','wallet','withdraw','withdrawal','upi','amount','utr','screenshot','proof','balance','credit','debit','history','transaction'];
     if(nav === 'forward') return ['forward','target','schedule','message','template','group','contact','whatsapp','market','load','time'];
     return ['entry','entries','market','time','timing','setting','parser','risk','wallet'];
   }
@@ -270,7 +271,7 @@ REALTIME_SCRIPT = r'''
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) setTimeout(()=>fetchState('visible', true), 220); });
   window.addEventListener('focus', ()=>setTimeout(()=>fetchState('focus', true), 220));
   document.addEventListener('titan:force-sync', ()=>fetchState('event', true));
-  window.__TitanRealtime = {version:VERSION, refresh:(r)=>fetchState(r||'manual', true), markWrite, pause:(ms)=>{pausedUntil=now()+Number(ms||1000)}, pauseEntries:(ms)=>{protectedHoldNav='entries'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseForward:(ms)=>{protectedHoldNav='forward'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, status:()=>({lastAppliedAt, syncBusy, writeLockUntil, interactionUntil, protectedHoldUntil, protectedHoldNav, pollMs:POLL_MS})};
+  window.__TitanRealtime = {version:VERSION, refresh:(r)=>fetchState(r||'manual', true), markWrite, pause:(ms)=>{pausedUntil=now()+Number(ms||1000)}, pauseEntries:(ms)=>{protectedHoldNav='entries'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseForward:(ms)=>{protectedHoldNav='forward'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseFinance:(ms)=>{protectedHoldNav='finance'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, status:()=>({lastAppliedAt, syncBusy, writeLockUntil, interactionUntil, protectedHoldUntil, protectedHoldNav, pollMs:POLL_MS})};
 
   setInterval(()=>fetchState('poll', false), POLL_MS);
   setTimeout(()=>fetchState('boot', true), 850);
