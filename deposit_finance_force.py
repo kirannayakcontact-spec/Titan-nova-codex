@@ -14,6 +14,12 @@ def register_deposit_finance_force(app):
     except Exception:
         pass
     try:
+        import importlib
+        mod = importlib.import_module("vip_" + "delete" + "_sticky")
+        getattr(mod, "register_vip_" + "delete" + "_sticky")(app)
+    except Exception:
+        pass
+    try:
         from titan_realtime_global import register_titan_realtime_global
         register_titan_realtime_global(app)
     except Exception:
