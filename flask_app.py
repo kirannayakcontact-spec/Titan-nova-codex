@@ -43,6 +43,12 @@ try:
 except Exception as exc:
     print("⚠️ Titan runtime safety bridge failed to load:", exc)
 
+try:
+    from deposit_ocr_guard import register_deposit_ocr_guard
+    register_deposit_ocr_guard(app)
+except Exception as exc:
+    print("⚠️ Deposit OCR guard failed to load:", exc)
+
 application = app
 
 if _LAUNCHER_NAME == "__main__":
