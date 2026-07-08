@@ -1,7 +1,7 @@
 """Native Finance Deposit subtab injector.
 
-Adds a Deposit subtab beside Finance summary/payment/withdrawal controls and shows
-Deposit Desk inside Finance only. No popup and no other-tab injection.
+Adds Deposit beside Finance summary/payment/withdrawal controls and shows the
+screenshot-review panel inside Finance only. No popup and no other-tab injection.
 """
 
 
@@ -22,7 +22,7 @@ def register_deposit_finance_native(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "finance-deposit-native-v1" in html or "</body>" not in html.lower():
+            if not html or "finance-deposit-native-v2" in html or "</body>" not in html.lower():
                 return resp
             i = html.lower().rfind("</body>")
             html = html[:i] + SCRIPT + html[i:]
@@ -34,7 +34,7 @@ def register_deposit_finance_native(app):
 
 
 SCRIPT = r'''
-<script id="finance-deposit-native-v1">
+<script id="finance-deposit-native-v2">
 (function(){
   function q(s){return document.querySelector(s)}
   function qa(s){return Array.from(document.querySelectorAll(s))}
@@ -62,7 +62,7 @@ SCRIPT = r'''
     btn.onclick=clickDeposit;
     wrap.appendChild(btn);
   }
-  function panelHtml(){return '<div id="financeDepositNativePanel" style="margin:12px;padding:0 0 92px"><div style="background:#101d2f;border:1px solid rgba(42,171,238,.32);border-radius:18px;overflow:hidden;box-shadow:0 10px 26px rgba(0,0,0,.25)"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;color:#eef6ff;font-family:Inter,Arial,sans-serif"><div><b>💰 Deposit</b><div style="font-size:10px;color:#91afd1">Finance → Deposit</div></div><button onclick="document.getElementById(\'financeDepositFrame\').contentWindow.location.reload()" style="border:0;border-radius:10px;background:#263b59;color:white;padding:8px 10px;font-weight:900">Refresh</button></div><iframe id="financeDepositFrame" src="/api/deposit_professional/admin_ui?embed=1" style="width:100%;height:760px;border:0;background:#07111f"></iframe></div></div>'}
+  function panelHtml(){return '<div id="financeDepositNativePanel" style="margin:12px;padding:0 0 92px"><div style="background:#101d2f;border:1px solid rgba(42,171,238,.32);border-radius:18px;overflow:hidden;box-shadow:0 10px 26px rgba(0,0,0,.25)"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;color:#eef6ff;font-family:Inter,Arial,sans-serif"><div><b>💰 Deposit</b><div style="font-size:10px;color:#91afd1">Finance → Deposit screenshot review</div></div><button onclick="document.getElementById(\'financeDepositFrame\').contentWindow.location.reload()" style="border:0;border-radius:10px;background:#263b59;color:white;padding:8px 10px;font-weight:900">Refresh</button></div><iframe id="financeDepositFrame" src="/api/deposit_professional/screenshot_ui?embed=1" style="width:100%;height:760px;border:0;background:#07111f"></iframe></div></div>'}
   function root(){return q('main')||q('#app')||document.body}
   function show(){
     ensureButton();
