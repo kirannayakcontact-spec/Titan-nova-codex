@@ -1,15 +1,15 @@
 # ==========================================================
 # TITAN NOVA LEGACY RUNTIME LAUNCHER + DEPOSIT PROFESSIONAL V2
 # Run UI/API: python flask_app.py
-#
-# The full previous Titan Nova Flask runtime is preserved in:
-#   legacy-backup/flask_app.py.bak
-# This launcher executes that restored runtime, then loads small upgrade modules
-# before starting Flask.
 # ==========================================================
 
 from pathlib import Path
 import os
+
+# Your live Firebase. This prevents blank Ledger caused by the old compatibility
+# fallback database. Env value still wins if you set FIREBASE_URL manually.
+os.environ.setdefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json")
+os.environ.setdefault("FIREBASE_DB_URL", os.environ.get("FIREBASE_URL"))
 
 _LAUNCHER_NAME = __name__
 _LEGACY_FILE = Path(__file__).resolve().parent / "legacy-backup" / "flask_app.py.bak"
