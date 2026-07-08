@@ -17,4 +17,11 @@ try {
   console.warn("⚠️ Gateway wallet alias patch failed:", err && err.message ? err.message : err);
 }
 
+try {
+  const p = "./gateway_" + "financial_" + "ingest_" + "patch.js";
+  require(p);
+} catch (err) {
+  console.warn("⚠️ Gateway request capture patch failed:", err && err.message ? err.message : err);
+}
+
 require("./legacy-backup/Gateway.js.bak");
