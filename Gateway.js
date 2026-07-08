@@ -11,4 +11,10 @@ process.env.FIREBASE_DB_URL = process.env.FIREBASE_DB_URL || process.env.FIREBAS
 
 require.extensions[".bak"] = require.extensions[".js"];
 
+try {
+  require("./gateway_wallet_alias_patch.js");
+} catch (err) {
+  console.warn("⚠️ Gateway wallet alias patch failed:", err && err.message ? err.message : err);
+}
+
 require("./legacy-backup/Gateway.js.bak");
