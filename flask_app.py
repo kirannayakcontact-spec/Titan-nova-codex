@@ -43,6 +43,13 @@ try:
 except Exception as exc:
     print("⚠️ Titan Deposit Finance merge failed to load:", exc)
 
+try:
+    from deposit_finance_force import register_deposit_finance_force
+    register_deposit_finance_force(app)
+    print("✅ Titan Deposit force-visible in Finance tab")
+except Exception as exc:
+    print("⚠️ Titan Deposit Finance force failed to load:", exc)
+
 application = app
 
 if _LAUNCHER_NAME == "__main__":
