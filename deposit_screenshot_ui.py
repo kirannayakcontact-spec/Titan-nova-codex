@@ -1,31 +1,9 @@
-"""Finance Deposit screenshot-review UI."""
+"""Disabled Deposit screenshot review UI.
+
+Finance Deposit tab/panel has been removed. This module is intentionally no-op.
+"""
 
 
 def register_deposit_screenshot_ui(app):
-    if getattr(app, "_titan_deposit_screenshot_ui_registered", False):
-        return
-    app._titan_deposit_screenshot_ui_registered = True
-
-    from flask import Response
-
-    @app.route("/api/deposit_professional/screenshot_ui", methods=["GET"])
-    def deposit_professional_screenshot_ui():
-        return Response(UI_HTML, mimetype="text/html")
-
-
-UI_HTML = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Deposit Review</title><style>
-*{box-sizing:border-box}body{margin:0;background:#07111f;color:#eef6ff;font-family:Inter,Arial,sans-serif;padding:12px}.top{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:10px}.title{font-weight:900}.muted{color:#91afd1;font-size:11px}.grid{display:grid;grid-template-columns:1fr;gap:10px}.card{background:#101d2f;border:1px solid #243e5f;border-radius:16px;padding:12px}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pill{display:inline-block;border-radius:999px;background:#263b59;color:#bfdbfe;padding:5px 8px;font-size:10px;font-weight:900}input,textarea,select{width:100%;background:#07111f;border:1px solid #243e5f;border-radius:12px;color:#eef6ff;padding:10px;font-size:12px;margin-top:6px}button{border:0;border-radius:12px;padding:10px 11px;font-weight:900;color:#fff;background:#2aabee;margin-top:8px}.ok{background:#00C26F;color:#062013}.danger{background:#ff5d5d}.soft{background:#263b59}.proof{width:100%;max-height:360px;object-fit:contain;background:#020617;border:1px solid #243e5f;border-radius:12px;margin-top:8px}.risk{font-size:10px;color:#fbbf24;margin-top:5px}.btns{display:flex;gap:7px;flex-wrap:wrap}.empty{padding:20px;text-align:center;color:#91afd1}.stat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}.stat div{background:#0b1727;border:1px solid #243e5f;border-radius:12px;padding:9px}.stat b{display:block;font-size:16px}
-</style></head><body><div class="top"><div><div class="title">💰 Deposit Review</div><div class="muted">Screenshot-only payment proofs · admin approval required</div></div><button class="soft" onclick="dsLoad()">Refresh</button></div><div id="dsStat" class="stat"></div><div id="dsMsg" class="muted"></div><div id="dsList" class="grid"></div><script>
-const DS_API='/api/deposit_professional';
-function dsEsc(v){return String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]||c))}
-function dsHeaders(){const o={'Content-Type':'application/json'};try{const t=localStorage.getItem('TITAN_ADMIN_TOKEN')||'';if(t)o['X-Titan-Admin-Token']=t}catch(e){}return o}
-async function dsJson(url,opt={}){opt.headers=Object.assign(dsHeaders(),opt.headers||{});const r=await fetch(url,opt);const d=await r.json().catch(()=>({status:'error',message:'Invalid JSON'}));if(!r.ok||d.status==='error')throw new Error(d.message||('HTTP '+r.status));return d}
-function dsMsg(t){document.getElementById('dsMsg').textContent=t||''}
-function dsWanted(d){const s=String(d.status||'').toLowerCase();return ['needs_admin_review','duplicate_review','payment_submitted','under_verification','approved','rejected'].includes(s)||d.screenshotOnly||d.source==='whatsapp_screenshot_only'}
-function dsStats(all){let pending=0, approved=0, rejected=0;for(const d of all){const s=String(d.status||'').toLowerCase();if(['needs_admin_review','duplicate_review','payment_submitted','under_verification'].includes(s))pending++;else if(s==='approved')approved++;else if(s==='rejected')rejected++;}document.getElementById('dsStat').innerHTML=`<div><span class="muted">Pending</span><b>${pending}</b></div><div><span class="muted">Approved</span><b>${approved}</b></div><div><span class="muted">Rejected</span><b>${rejected}</b></div>`}
-function dsCard(d){const id=d.depositId||d.id||'';const risk=d.risk||{};const reasons=Array.isArray(risk.reasons)?risk.reasons.join(', '):'';const proof=d.proofUrl||d.screenshotUrl||'';const st=String(d.status||'');return `<div class="card" data-id="${dsEsc(id)}"><div style="display:flex;justify-content:space-between;gap:8px"><div><b>${dsEsc(d.customerName||d.phoneNumber||d.userId||'User')}</b><div class="muted">${dsEsc(d.phoneNumber||d.userId||'')} · ${dsEsc(id)}</div></div><span class="pill">${dsEsc(st)}</span></div>${proof?`<a href="${dsEsc(proof)}" target="_blank"><img class="proof" src="${dsEsc(proof)}"></a>`:'<div class="empty">No screenshot preview</div>'}<div class="risk">Risk: ${dsEsc(risk.level||'manual')} ${reasons?`· ${dsEsc(reasons)}`:''}</div><div class="row"><div><div class="muted">Amount</div><input class="amt" type="number" value="${Number(d.amount||0)||''}" placeholder="Amount from bank/app"></div><div><div class="muted">UTR / Transaction ID</div><input class="utr" value="${dsEsc(d.utr||'')}" placeholder="UTR required"></div></div><textarea class="note" placeholder="Admin note / reject reason">${dsEsc(d.adminNote||'')}</textarea><div class="btns"><button class="soft save">Save Details</button><button class="ok approve">Approve + Credit</button><button class="danger reject">Reject</button></div></div>`}
-async function dsSaveDetails(box){const id=box.dataset.id;const amount=Number(box.querySelector('.amt').value||0);const utr=box.querySelector('.utr').value.trim();const adminNote=box.querySelector('.note').value.trim();return await dsJson(DS_API+'/screenshot_review',{method:'POST',body:JSON.stringify({depositId:id,amount,utr,adminNote,updatedBy:'finance_deposit_review'})})}
-async function dsLoad(){try{dsMsg('Loading...');const r=await dsJson(DS_API+'/list?limit=120');const all=(r.deposits||[]).filter(dsWanted);dsStats(all);document.getElementById('dsList').innerHTML=all.length?all.map(dsCard).join(''):'<div class="empty">No deposit screenshots.</div>';dsMsg('Loaded ✅')}catch(e){dsMsg('Load failed: '+e.message)}}
-document.addEventListener('click',async ev=>{const box=ev.target.closest('.card');if(!box)return;try{if(ev.target.classList.contains('save')){await dsSaveDetails(box);dsMsg('Saved ✅');dsLoad()}if(ev.target.classList.contains('approve')){await dsSaveDetails(box);const id=box.dataset.id;await dsJson(DS_API+'/action',{method:'POST',body:JSON.stringify({depositId:id,action:'approve',force:true,updatedBy:'finance_deposit_review'})});dsMsg('Approved + wallet credit done ✅');dsLoad()}if(ev.target.classList.contains('reject')){const id=box.dataset.id;const reason=box.querySelector('.note').value.trim()||prompt('Reject reason?','Payment not found / screenshot mismatch')||'';await dsJson(DS_API+'/action',{method:'POST',body:JSON.stringify({depositId:id,action:'reject',force:true,rejectReason:reason,updatedBy:'finance_deposit_review'})});dsMsg('Rejected ✅');dsLoad()}}catch(e){dsMsg('Action failed: '+e.message)}});
-dsLoad();setInterval(dsLoad,10000);
-</script></body></html>'''
+    app._titan_deposit_screenshot_ui_disabled = True
+    return
