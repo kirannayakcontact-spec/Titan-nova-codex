@@ -30,6 +30,13 @@ if app is None:
     raise RuntimeError("Titan Nova legacy runtime did not expose Flask app")
 
 try:
+    from finance_deposit_removed import register_finance_deposit_removed
+    register_finance_deposit_removed(app)
+    print("✅ Finance Deposit removal guard loaded")
+except Exception as exc:
+    print("⚠️ Finance Deposit removal guard failed to load:", exc)
+
+try:
     from deposit_finance_force import register_deposit_finance_force
     register_deposit_finance_force(app)
     print("✅ Titan runtime safety bridge loaded")
