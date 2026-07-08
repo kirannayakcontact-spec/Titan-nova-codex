@@ -24,4 +24,10 @@ try {
   console.warn("⚠️ Gateway request capture patch failed:", err && err.message ? err.message : err);
 }
 
+try {
+  require("./gateway_deposit_ocr_patch.js");
+} catch (err) {
+  console.warn("⚠️ Gateway deposit OCR bridge failed:", err && err.message ? err.message : err);
+}
+
 require("./legacy-backup/Gateway.js.bak");
