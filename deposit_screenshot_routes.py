@@ -49,7 +49,7 @@ def register_deposit_screenshot_routes(app, ctx=None):
     proof_dir = base_dir / "payment_uploads" / "deposit_screenshots"
     proof_dir.mkdir(parents=True, exist_ok=True)
 
-    def now_iso():
+    def ds_now_iso():
         fn = ctx.get("_now_iso") or ctx.get("_now_iso_local")
         if callable(fn):
             try:
@@ -58,7 +58,7 @@ def register_deposit_screenshot_routes(app, ctx=None):
                 pass
         return datetime.datetime.now().isoformat(timespec="seconds")
 
-    def fb_get(parts, default=None):
+    def ds_fb_get(parts, default=None):
         fn = ctx.get("_fb_get")
         if callable(fn):
             try:
@@ -67,7 +67,7 @@ def register_deposit_screenshot_routes(app, ctx=None):
                 pass
         return _fb_get_rest(parts, default)
 
-    def fb_patch(parts, value):
+    def ds_fb_patch(parts, value):
         fn = ctx.get("_fb_patch")
         if callable(fn):
             try:
@@ -93,10 +93,10 @@ def register_deposit_screenshot_routes(app, ctx=None):
             deposit_id = str(payload.get("depositId") or payload.get("id") or "").strip()
             if not deposit_id:
                 return jsonify({"status": "error", "message": "depositId required"}), 400
-            rec = fb_get(["depositRequests", deposit_id], default=None)
+            rec = ds_fb_get(["depositRequests", deposit_id], default=None)
             if not isinstance(rec, dict):
                 return jsonify({"status": "error", "message": "Deposit not found"}), 404
-            updates = {"updatedAt": now_iso(), "lastUpdatedBy": str(payload.get("updatedBy") or "admin").strip()[:80]}
+            updates = {"updatedAt": ds_now_iso(), "lastUpdatedBy": str(payload.get("updatedBy") or "admin").strip()[:80]}
             if "amount" in payload:
                 try:
                     amount = round(float(str(payload.get("amount") or "0").replace(",", "")), 2)
@@ -121,7 +121,7 @@ def register_deposit_screenshot_routes(app, ctx=None):
             else:
                 updates["status"] = "needs_admin_review"
                 updates["stage"] = "needs_admin_review"
-            fb_patch(["depositRequests", deposit_id], updates)
+            ds_fb_patch(["depositRequests", deposit_id], updates)
             return jsonify({"status": "success", "depositId": deposit_id, "updates": updates})
         except Exception as exc:
             return jsonify({"status": "error", "message": str(exc)}), 500
