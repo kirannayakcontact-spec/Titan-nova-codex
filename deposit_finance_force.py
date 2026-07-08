@@ -9,11 +9,6 @@ def register_deposit_finance_force(app):
     except Exception:
         pass
     try:
-        from ledger_market_drawer import register_ledger_market_drawer
-        register_ledger_market_drawer(app)
-    except Exception:
-        pass
-    try:
         from settlement_toggle_sticky import register_settlement_toggle_sticky
         register_settlement_toggle_sticky(app)
     except Exception:
