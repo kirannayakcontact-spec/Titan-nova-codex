@@ -1,10 +1,8 @@
 """Safe patch for Results -> Ledger Auto PASS/FAIL.
 
-Fixes old Firebase ledger buckets that were saved as lists instead of dicts.
-The legacy auto-mark code expects bucket.get(...), so list buckets crash with:
-'list' object has no attribute 'get'.
-
-This patch normalizes only the auto-mark path and does not delete data.
+Fixes old Firebase data saved as lists where legacy auto-mark expects dicts.
+This prevents: 'list' object has no attribute 'get'.
+No data is deleted.
 """
 
 
@@ -28,9 +26,6 @@ def register_ledger_auto_mark_safe(app):
     original_for_result = g.get("_ledger_auto_mark_for_result")
     original_all = g.get("_ledger_auto_mark_all_available")
 
-    def _is_dict(v):
-        return isinstance(v, dict)
-
     def _as_dict_bucket(v):
         if isinstance(v, dict):
             return v
@@ -41,6 +36,19 @@ def register_ledger_auto_mark_safe(app):
                     out[str(i)] = item
             return out
         return {}
+
+    def _as_result_day(v):
+        if isinstance(v, dict):
+            return v
+        out = {}
+        if isinstance(v, list):
+            for i, item in enumerate(v):
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("market") or item.get("name") or item.get("marketName") or i).strip().upper()
+                if key:
+                    out[key] = item
+        return out
 
     def _sanitize_state(state_obj):
         if not isinstance(state_obj, dict):
@@ -54,14 +62,23 @@ def register_ledger_auto_mark_safe(app):
             state_obj["resultRecords"] = {}
         if not isinstance(state_obj.get("ledgerAutoMarkRecords"), dict):
             state_obj["ledgerAutoMarkRecords"] = {}
+
+        for date, day in list((state_obj.get("resultRecords") or {}).items()):
+            if not isinstance(day, dict):
+                state_obj["resultRecords"][date] = _as_result_day(day)
+        for date, day in list((state_obj.get("ledgerAutoMarkRecords") or {}).items()):
+            if not isinstance(day, dict):
+                state_obj["ledgerAutoMarkRecords"][date] = _as_dict_bucket(day)
+
         profiles = state_obj.get("profiles") or {}
         for profile in profiles.values():
             if not isinstance(profile, dict):
                 continue
             if not isinstance(profile.get("dayRecords"), dict):
                 profile["dayRecords"] = {}
-            for day in list((profile.get("dayRecords") or {}).values()):
+            for date, day in list((profile.get("dayRecords") or {}).items()):
                 if not isinstance(day, dict):
+                    profile["dayRecords"][date] = {}
                     continue
                 for bucket_name in ("data", "jodiData", "pannelData"):
                     if bucket_name in day and not isinstance(day.get(bucket_name), dict):
