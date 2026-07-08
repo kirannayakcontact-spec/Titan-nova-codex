@@ -1,366 +1,174 @@
 "use strict";
 
-// WhatsApp financial ingest patch
-// Purpose: create admin-side Deposit/Withdrawal records from incoming WhatsApp media/text
-// before the legacy message handler can swallow the message as a generic smart command
-// or spam/forward event. No new UI. Uses existing Firebase children: payments, withdrawals, wallets.
+// Titan Nova WhatsApp financial image verifier
+// Classifies incoming images before creating admin records:
+// - payment_screenshot -> payments[] / Deposit tab
+// - withdrawal_qr      -> withdrawals[] / Withdrawal tab
+// - invalid_image      -> rejected, no admin action record
 
 const axios = require("axios");
 const crypto = require("crypto");
 
-if (!global.__TITAN_FINANCIAL_INGEST_PATCH__) {
-  global.__TITAN_FINANCIAL_INGEST_PATCH__ = true;
+if (!global.__TITAN_FINANCIAL_IMAGE_VERIFY_V2__) {
+  global.__TITAN_FINANCIAL_IMAGE_VERIFY_V2__ = true;
 
-  const FB_BASE = String(process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json").replace(/\/+$/, "");
-  const APP_TZ = process.env.APP_TZ || "Asia/Kolkata";
+  const FB = String(process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json").replace(/\/+$/, "");
+  const TZ = process.env.APP_TZ || "Asia/Kolkata";
+  const OCR_KEY = String(process.env.OCR_SPACE_API_KEY || "").trim();
 
-  function childUrl(path) {
-    const clean = String(path || "").split("/").map(encodeURIComponent).join("/");
-    if (FB_BASE.endsWith(".json")) return FB_BASE.replace(/\.json$/, clean ? "/" + clean + ".json" : ".json");
-    return FB_BASE + (clean ? "/" + clean : "") + ".json";
+  function url(path) {
+    const p = String(path || "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
+    return FB.endsWith(".json") ? FB.replace(/\.json$/, p ? "/" + p + ".json" : ".json") : FB + (p ? "/" + p : "") + ".json";
   }
-  async function fbGet(path, fallback) {
+  async function get(path, fb) { try { const r = await axios.get(url(path), { timeout: 12000, headers: { "Cache-Control": "no-store" } }); return r.data == null ? fb : r.data; } catch { return fb; } }
+  async function put(path, value) { await axios.put(url(path), value == null ? null : value, { timeout: 15000, headers: { "Content-Type": "application/json" } }); }
+  function now() { return new Date().toISOString(); }
+  function day() {
+    try { const d = new Date(new Date().toLocaleString("en-US", { timeZone: TZ })); return String(d.getFullYear()).slice(2) + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0"); }
+    catch { return new Date().toISOString().slice(2, 10).replace(/-/g, ""); }
+  }
+  function money(v) { const n = Number(v || 0); return "₹" + (Number.isInteger(n) ? String(n) : n.toFixed(2)); }
+  function phone(v) { const raw = String(v || ""); if (raw.includes("@") && !raw.includes("@s.whatsapp.net")) return ""; const d = raw.replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) : ""; }
+  function jid(v) { return String(v || "").trim().replace(/:\d+(?=@)/, ""); }
+  function msgBody(m) { let x = m && m.message || {}; x = x.ephemeralMessage?.message || x.viewOnceMessage?.message || x.viewOnceMessageV2?.message || x; return x || {}; }
+  function text(m) { const x = msgBody(m); return String(x.conversation || x.extendedTextMessage?.text || x.imageMessage?.caption || x.videoMessage?.caption || x.documentMessage?.caption || "").trim(); }
+  function hasImage(m) { return !!msgBody(m).imageMessage; }
+  function msgKey(m) { const k = m && m.key || {}; return [k.remoteJid || "", k.participant || "", k.id || ""].join("|"); }
+  function candidates(m, chat) { const k = m?.key || {}; const a = [k.participant, k.participantPn, k.senderPn, k.participantAlt, k.participantAltJid, m?.participant, m?.participantPn, m?.senderPn]; if (chat && !String(chat).endsWith("@g.us")) a.push(chat); return [...new Set(a.map(jid).filter(Boolean))]; }
+  function hash(data) { const b = String(data || "").split(",").pop() || ""; return b ? crypto.createHash("sha256").update(b).digest("hex") : ""; }
+
+  async function downloadImage(baileys, m) {
     try {
-      const r = await axios.get(childUrl(path), { timeout: 12000, headers: { "Cache-Control": "no-store" } });
-      return r.data == null ? fallback : r.data;
-    } catch (e) { return fallback; }
-  }
-  async function fbPut(path, value) {
-    await axios.put(childUrl(path), value == null ? null : value, { timeout: 15000, headers: { "Content-Type": "application/json" } });
-  }
-  async function fbPatch(path, value) {
-    await axios.patch(childUrl(path), value || {}, { timeout: 15000, headers: { "Content-Type": "application/json" } });
-  }
-  function nowIso() { return new Date().toISOString(); }
-  function todayKey() {
-    try {
-      const d = new Date(new Date().toLocaleString("en-US", { timeZone: APP_TZ }));
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}${m}${day}`.slice(2);
-    } catch (e) { return new Date().toISOString().slice(2, 10).replace(/-/g, ""); }
-  }
-  function money(v) {
-    const n = Number(v || 0);
-    return "₹" + (Number.isInteger(n) ? String(n) : n.toFixed(2));
-  }
-  function phoneKey(value) {
-    const raw = String(value || "").trim();
-    if (raw.includes("@") && !raw.includes("@s.whatsapp.net")) return "";
-    let d = raw.replace(/\D/g, "");
-    if (!d || d.length < 10) return "";
-    d = d.slice(-10);
-    return d;
-  }
-  function jidKey(value) { return String(value || "").trim().replace(/:\d+(?=@)/, ""); }
-  function waTarget(phoneOrJid) {
-    const raw = String(phoneOrJid || "").trim();
-    if (raw.includes("@")) return jidKey(raw);
-    let d = raw.replace(/\D/g, "");
-    if (d.length === 10) d = "91" + d;
-    if (d.length > 12) d = d.slice(-12);
-    return d ? d + "@s.whatsapp.net" : "";
-  }
-  function messageKey(m) {
-    const k = m && m.key || {};
-    return [k.remoteJid || "", k.participant || "", k.id || ""].join("|");
-  }
-  function messageText(m) {
-    const msg = m && m.message || {};
-    return String(
-      msg.conversation ||
-      msg.extendedTextMessage?.text ||
-      msg.imageMessage?.caption ||
-      msg.videoMessage?.caption ||
-      msg.documentMessage?.caption ||
-      msg.buttonsResponseMessage?.selectedDisplayText ||
-      msg.listResponseMessage?.title ||
-      ""
-    ).trim();
-  }
-  function hasImage(m) { return !!(m && m.message && m.message.imageMessage); }
-  async function downloadImageData(baileys, m, limitBytes) {
-    try {
-      const image = m?.message?.imageMessage;
-      if (!image || !baileys.downloadContentFromMessage) return "";
+      const image = msgBody(m).imageMessage;
+      if (!image || !baileys.downloadContentFromMessage) return { data: "", buffer: null };
       const stream = await baileys.downloadContentFromMessage(image, "image");
-      const chunks = [];
-      let total = 0;
-      for await (const chunk of stream) {
-        const b = Buffer.from(chunk);
-        total += b.length;
-        if (total > (limitBytes || 900000)) break;
-        chunks.push(b);
-      }
-      const buf = Buffer.concat(chunks);
-      if (!buf.length) return "";
-      const mime = image.mimetype || "image/jpeg";
-      return `data:${mime};base64,${buf.toString("base64")}`;
-    } catch (e) { return ""; }
+      const chunks = []; let size = 0;
+      for await (const c of stream) { const b = Buffer.from(c); size += b.length; if (size > 1100000) break; chunks.push(b); }
+      const buf = Buffer.concat(chunks); if (!buf.length) return { data: "", buffer: null };
+      return { data: `data:${image.mimetype || "image/jpeg"};base64,${buf.toString("base64")}`, buffer: buf };
+    } catch { return { data: "", buffer: null }; }
   }
-  function parseAmount(text) {
-    const t = String(text || "").replace(/,/g, " ");
-    const m = t.match(/(?:₹|rs\.?|inr|amount|amt|deposit|payment|pay|withdraw|withdrawal|wd)?\s*[:#-]?\s*([0-9]+(?:\.[0-9]+)?)/i);
-    const n = m ? Math.round(Number(m[1]) * 100) / 100 : 0;
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  }
-  function parseUtr(text) {
-    const t = String(text || "");
-    const m = t.match(/(?:utr|rrn|txn|transaction(?:\s*id)?|ref(?:erence)?)[\s:#-]*([A-Z0-9]{6,32})/i);
-    return m ? String(m[1]).toUpperCase() : "";
-  }
-  function parseUpi(text) {
-    const m = String(text || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+/i);
-    return m ? m[0].toLowerCase() : "";
-  }
-  function looksDeposit(text, hasImg) {
-    const t = String(text || "").toLowerCase();
-    if (/\b(withdraw|withdrawal|wd)\b/.test(t)) return false;
-    if (/\b(deposit|payment|paid|pay|recharge|add\s*money|utr|rrn|txn|transaction|screenshot|proof|upi)\b/.test(t)) return true;
-    return !!hasImg && parseAmount(t) > 0;
-  }
-  function parseWithdrawal(text, img) {
-    const t = String(text || "").replace(/\s+/g, " ").trim();
-    if (!/^\s*(withdraw|withdrawal|wd)\b/i.test(t)) return null;
-    const amount = parseAmount(t);
-    if (!(amount > 0)) return { ok: false, message: "Withdrawal amount missing." };
-    let method = "";
-    if (/\bqr\b/i.test(t) || img) method = "qr";
-    else if (/\b(bank|ifsc|account|a\/c|ac\s*no)\b/i.test(t)) method = "bank";
-    else if (parseUpi(t) || /\bupi\b/i.test(t)) method = "upi";
-    if (!method) method = img ? "qr" : "upi";
-    let detail = "";
-    if (method === "upi") detail = parseUpi(t) || t.replace(/^\s*(withdraw|withdrawal|wd)\b/i, "").replace(String(amount), "").trim();
-    else if (method === "qr") detail = img ? "QR image attached" : "QR requested";
-    else detail = t.replace(/^\s*(withdraw|withdrawal|wd)\b/i, "").replace(String(amount), "").trim();
-    return { ok: true, amount, method, detail };
-  }
-  function senderCandidates(m, chatJid) {
-    const k = m?.key || {};
-    const out = [k.participant, k.participantPn, k.senderPn, k.participantAlt, k.participantAltJid, m?.participant, m?.participantPn, m?.senderPn];
-    if (chatJid && !String(chatJid).endsWith("@g.us")) out.push(chatJid);
-    return [...new Set(out.map(x => jidKey(x)).filter(Boolean))];
-  }
-  function findProfile(state, candidates, pushName) {
-    const profiles = state.profiles && typeof state.profiles === "object" ? state.profiles : (state.profiles = {});
-    const keys = [...new Set((candidates || []).map(phoneKey).filter(Boolean))];
-    for (const [pid, p] of Object.entries(profiles)) {
-      const pk = phoneKey(p && p.phone || "");
-      if (pk && keys.includes(pk)) return { userId: pid, profile: p, phone: pk, created: false };
-    }
-    const wallets = state.wallets && typeof state.wallets === "object" ? state.wallets : {};
-    for (const [uid, w] of Object.entries(wallets)) {
-      const wk = phoneKey(w && w.phone || "");
-      if (wk && keys.includes(wk) && profiles[uid]) return { userId: uid, profile: profiles[uid], phone: wk, created: false };
-    }
-    const phone = keys[0] || "";
-    const uid = phone ? "client_" + phone : "client_wa_" + crypto.createHash("sha1").update((candidates || []).join("|")).digest("hex").slice(0, 12);
-    if (!profiles[uid]) {
-      profiles[uid] = { name: pushName || (phone ? "VIP " + phone : "WhatsApp VIP"), phone, approvalStatus: "pending", vipAccessEnabled: false, autoCreated: true, approvalSource: "whatsapp_financial_ingest", createdAt: nowIso(), dayRecords: {}, config: { capital: 0, dayTarget: 0 } };
-    }
-    return { userId: uid, profile: profiles[uid], phone, created: true };
-  }
-  function ensureWallet(state, userId, profile) {
-    if (!state.wallets || typeof state.wallets !== "object") state.wallets = {};
-    let w = state.wallets[userId];
-    if (!w || typeof w !== "object") {
-      w = state.wallets[userId] = { userId, name: profile?.name || userId, phone: profile?.phone || "", balance: 0, hold: 0, walletHold: 0, creditLimit: Number(state.walletSettings?.defaultCreditLimit || 0), ledger: [], createdAt: nowIso() };
-    }
-    if (!Array.isArray(w.ledger)) w.ledger = [];
-    w.name = w.name || profile?.name || userId;
-    w.phone = w.phone || profile?.phone || "";
-    w.balance = Number(w.balance || 0);
-    w.hold = Number(w.hold || w.walletHold || 0);
-    w.walletHold = w.hold;
-    w.creditLimit = Number(w.creditLimit || 0);
-    return w;
-  }
-  function withdrawAvailable(w) { return Math.round((Number(w?.balance || 0) - Number(w?.hold || w?.walletHold || 0)) * 100) / 100; }
-  function nextId(prefix, list) { return prefix + todayKey() + "-" + String((Array.isArray(list) ? list.length : 0) + 1).padStart(4, "0"); }
-  function duplicateByMessage(list, msgKey) { return Array.isArray(list) && msgKey ? list.find(x => x && x.messageKey === msgKey) : null; }
-  async function appendAudit(state, action, detail) {
+
+  async function runOcr(imageData) {
+    if (!OCR_KEY || !imageData) return { text: "", provider: OCR_KEY ? "ocr_space_empty" : "ocr_disabled", confidence: 0 };
     try {
-      const audit = Array.isArray(state.auditLog) ? state.auditLog : [];
-      audit.push({ id: action + "_" + crypto.randomBytes(4).toString("hex"), time: nowIso(), action, detail: detail || {} });
-      state.auditLog = audit.slice(-500);
-      await fbPut("auditLog", state.auditLog);
-    } catch (e) {}
+      const body = new URLSearchParams({ apikey: OCR_KEY, base64Image: imageData, language: "eng", scale: "true", OCREngine: "2" }).toString();
+      const r = await axios.post("https://api.ocr.space/parse/image", body, { timeout: 20000, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+      const parsed = (r.data && r.data.ParsedResults && r.data.ParsedResults[0]) || {};
+      const out = String(parsed.ParsedText || "").trim();
+      return { text: out, provider: "ocr.space", confidence: out ? 0.75 : 0.15 };
+    } catch (e) { return { text: "", provider: "ocr_error", confidence: 0, error: e.message || String(e) }; }
   }
-  async function saveProfileWallet(state, userId) {
-    try { await fbPut("profiles/" + userId, state.profiles[userId]); } catch (e) {}
-    try { await fbPut("wallets/" + userId, state.wallets[userId]); } catch (e) {}
+
+  function amount(s) {
+    const t = String(s || "").replace(/,/g, " ");
+    const pats = [/(?:₹|rs\.?|inr)\s*([0-9]+(?:\.[0-9]+)?)/i, /(?:amount|amt|paid|deposit|payment|withdraw|withdrawal|pay)\D{0,16}([0-9]+(?:\.[0-9]+)?)/i, /^\s*([0-9]+(?:\.[0-9]+)?)(?:\s|$)/i];
+    for (const p of pats) { const m = t.match(p); const n = m ? Number(m[1]) : 0; if (Number.isFinite(n) && n > 0 && n <= 2000000) return Math.round(n * 100) / 100; }
+    return 0;
   }
-  async function createDepositRecord(sock, baileys, m, state, found, caption, imgData) {
-    state.payments = Array.isArray(state.payments) ? state.payments : [];
-    const msgKey = messageKey(m);
-    const old = duplicateByMessage(state.payments, msgKey);
-    if (old) return { handled: true, reply: `⚠️ Deposit proof already submitted. ID: #${old.id}` };
-    const amount = parseAmount(caption);
-    const utr = parseUtr(caption);
-    const txid = utr || parseUtr(caption.replace(/utr/i, "txn"));
-    const p = {
-      id: nextId("P", state.payments),
-      userId: found.userId,
-      userName: found.profile?.name || found.userId,
-      phone: found.profile?.phone || found.phone || "",
-      senderJid: senderCandidates(m, m.key?.remoteJid || "")[0] || "",
-      chatJid: m.key?.remoteJid || "",
-      messageKey: msgKey,
-      amount: amount || 0,
-      utr,
-      transactionId: txid,
-      status: "pending",
-      paymentStatus: amount > 0 ? "pending_admin_approval" : "needs_amount",
-      source: "whatsapp_deposit_screenshot_patch",
-      walletCredited: false,
-      screenshotImageData: imgData || "",
-      image: imgData || "",
-      screenshotHash: imgData ? crypto.createHash("sha256").update(String(imgData).split(",").pop() || "").digest("hex") : "",
-      rawOcrText: caption || "",
-      riskFlags: amount > 0 ? [] : ["missing_amount"],
-      riskLevel: amount > 0 ? "MEDIUM" : "HIGH",
-      requestNotified: true,
-      approvalNotified: false,
-      rejectionNotified: false,
-      createdAt: nowIso(),
-      time: new Date().toLocaleString("en-IN", { timeZone: APP_TZ, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
-    };
-    state.payments.push(p);
-    await fbPut("payments", state.payments.slice(-1000));
-    await saveProfileWallet(state, found.userId);
-    await appendAudit(state, "whatsapp_deposit_request_created", { paymentId: p.id, userId: p.userId, amount: p.amount, source: p.source });
-    return { handled: true, reply: amount > 0 ? `✅ Deposit request created.\nID: #${p.id}\nAmount: ${money(amount)}\nStatus: Pending admin approval.` : `📷 Deposit screenshot received.\nID: #${p.id}\nAmount clear nahi mila. Admin review karega.` };
-  }
-  async function createWithdrawalRecord(sock, baileys, m, state, found, parsed, imgData) {
-    state.withdrawals = Array.isArray(state.withdrawals) ? state.withdrawals : [];
-    const msgKey = messageKey(m);
-    const old = duplicateByMessage(state.withdrawals, msgKey);
-    if (old) return { handled: true, reply: `⚠️ Withdrawal request already submitted. ID: #${old.id}` };
-    const wallet = ensureWallet(state, found.userId, found.profile);
-    const avail = withdrawAvailable(wallet);
-    const canHold = avail + 0.0001 >= parsed.amount && String(found.profile?.approvalStatus || "approved").toLowerCase() === "approved";
-    let holdBefore = Number(wallet.hold || wallet.walletHold || 0);
-    if (canHold) {
-      wallet.hold = Math.round((holdBefore + parsed.amount) * 100) / 100;
-      wallet.walletHold = wallet.hold;
-      wallet.updatedAt = nowIso();
-      wallet.ledger.push({ id: "WHOLD-" + Date.now(), time: nowIso(), type: "withdrawal_hold", amount: 0, balanceBefore: wallet.balance, balanceAfter: wallet.balance, holdBefore, holdAfter: wallet.hold, note: "Withdrawal hold " + parsed.method.toUpperCase(), source: "whatsapp_withdrawal_patch" });
+  function utr(s) { const m = String(s || "").match(/(?:utr|rrn|txn|transaction(?:\s*id)?|ref(?:erence)?)\s*[:#-]?\s*([A-Z0-9]{6,32})/i); return m ? String(m[1]).toUpperCase() : ""; }
+  function upi(s) { const m = String(s || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+/i); return m ? m[0].toLowerCase() : ""; }
+
+  function classifyImage(caption, ocrText, img, isWithdraw) {
+    if (!img) return { kind: "text_only", ok: true, reason: "no_image" };
+    const combined = `${caption || ""}\n${ocrText || ""}`;
+    const c = String(caption || "").toLowerCase();
+    const t = combined.toLowerCase();
+    const hasAmt = amount(combined) > 0;
+    const hasUtr = !!utr(combined);
+    const paymentWords = /\b(payment|paid|deposit|deposited|success|successful|completed|credited|debited|utr|rrn|transaction|txn|ref|amount|upi)\b/i.test(combined);
+    const qrWords = /\b(qr|scan|scanner|pay using|upi qr|bhim|phonepe|gpay|google pay|paytm)\b/i.test(combined);
+    if (isWithdraw) {
+      if (/\bqr\b/i.test(c) || qrWords || (!ocrText && /\b(withdraw|withdrawal|wd)\b/i.test(c))) return { kind: "withdrawal_qr", ok: true, reason: "withdrawal_qr_detected" };
+      return { kind: "invalid_image", ok: false, reason: "withdrawal_image_not_qr" };
     }
-    const wd = {
-      id: nextId("W", state.withdrawals),
-      userId: found.userId,
-      userName: found.profile?.name || found.userId,
-      phone: found.profile?.phone || found.phone || "",
-      senderJid: senderCandidates(m, m.key?.remoteJid || "")[0] || "",
-      chatJid: m.key?.remoteJid || "",
-      messageKey: msgKey,
-      amount: parsed.amount,
-      method: parsed.method,
-      detail: parsed.detail || (parsed.method === "qr" ? "QR image attached" : ""),
-      qrImageData: parsed.method === "qr" ? (imgData || "") : "",
-      status: "pending",
-      paymentStatus: canHold ? "pending_approval" : "pending_admin_review",
-      requestNotified: true,
-      approvalNotified: false,
-      paidNotified: false,
-      rejectionNotified: false,
-      holdApplied: canHold,
-      holdAmount: canHold ? parsed.amount : 0,
-      walletBalanceAtRequest: wallet.balance,
-      walletHoldAfter: wallet.hold,
-      needsAdminReview: !canHold,
-      reviewReason: canHold ? "" : (String(found.profile?.approvalStatus || "").toLowerCase() !== "approved" ? "profile_not_approved" : "insufficient_withdrawable_balance"),
-      createdAt: nowIso(),
-      source: "whatsapp_withdrawal_patch"
-    };
-    if (canHold && wallet.ledger.length) wallet.ledger[wallet.ledger.length - 1].withdrawalId = wd.id;
-    state.withdrawals.push(wd);
-    await fbPut("withdrawals", state.withdrawals.slice(-1000));
-    await saveProfileWallet(state, found.userId);
-    await appendAudit(state, "whatsapp_withdrawal_request_created", { withdrawalId: wd.id, userId: wd.userId, amount: wd.amount, method: wd.method, holdApplied: wd.holdApplied, reviewReason: wd.reviewReason });
-    return { handled: true, reply: `✅ Withdrawal request created.\nID: #${wd.id}\nAmount: ${money(wd.amount)}\nMethod: ${String(wd.method).toUpperCase()}\nStatus: Pending admin approval.` };
+    if ((hasAmt || hasUtr) && paymentWords) return { kind: "payment_screenshot", ok: true, reason: "payment_markers_detected" };
+    if (!OCR_KEY && /\b(payment|paid|deposit|utr|rrn|txn|transaction)\b/i.test(c) && (amount(caption) > 0 || utr(caption))) return { kind: "payment_screenshot", ok: true, reason: "caption_payment_fallback_ocr_disabled" };
+    return { kind: "invalid_image", ok: false, reason: OCR_KEY ? "ocr_not_payment_or_qr" : "ocr_key_missing_and_caption_not_enough" };
   }
-  async function sendReply(sock, chatJid, text, quoted) {
-    try { if (sock && chatJid && text) await sock.sendMessage(chatJid, { text: String(text) }, quoted ? { quoted } : undefined); } catch (e) {}
+
+  function parseWithdraw(caption, imgClass) {
+    const s = String(caption || "").trim();
+    if (!/^\s*(withdraw|withdrawal|wd)\b/i.test(s)) return null;
+    const a = amount(s); if (!(a > 0)) return { ok: false, message: "Withdrawal amount missing." };
+    let method = /\bqr\b/i.test(s) || imgClass === "withdrawal_qr" ? "qr" : (upi(s) || /\bupi\b/i.test(s) ? "upi" : (/\b(bank|ifsc|account|a\/c)\b/i.test(s) ? "bank" : "upi"));
+    return { ok: true, amount: a, method, detail: method === "qr" ? "QR image attached" : (upi(s) || s.replace(/^\s*(withdraw|withdrawal|wd)\b/i, "").trim()) };
   }
+
+  function findProfile(state, ids, name) {
+    state.profiles = state.profiles && typeof state.profiles === "object" ? state.profiles : {};
+    const pks = [...new Set(ids.map(phone).filter(Boolean))];
+    for (const [id, p] of Object.entries(state.profiles)) if (pks.includes(phone(p?.phone || id))) return { userId: id, profile: p, phone: phone(p?.phone || id) };
+    const pk = pks[0] || ""; const uid = pk ? "client_" + pk : "client_wa_" + crypto.createHash("sha1").update(ids.join("|")).digest("hex").slice(0, 12);
+    state.profiles[uid] = state.profiles[uid] || { name: name || (pk ? "VIP " + pk : "WhatsApp VIP"), phone: pk, approvalStatus: "pending", vipAccessEnabled: false, autoCreated: true, approvalSource: "whatsapp_financial_image_verify", createdAt: now(), dayRecords: {}, config: { capital: 0, dayTarget: 0 } };
+    return { userId: uid, profile: state.profiles[uid], phone: pk };
+  }
+  function ensureWallet(state, id, prof) { state.wallets = state.wallets && typeof state.wallets === "object" ? state.wallets : {}; const w = state.wallets[id] = state.wallets[id] || { userId: id, name: prof?.name || id, phone: prof?.phone || "", balance: 0, hold: 0, walletHold: 0, creditLimit: 0, ledger: [], createdAt: now() }; w.ledger = Array.isArray(w.ledger) ? w.ledger : []; w.balance = Number(w.balance || 0); w.hold = Number(w.hold || w.walletHold || 0); w.walletHold = w.hold; return w; }
+  function nextId(prefix, arr) { return prefix + day() + "-" + String((Array.isArray(arr) ? arr.length : 0) + 1).padStart(4, "0"); }
+  function duplicate(arr, key) { return Array.isArray(arr) && key ? arr.find(x => x && x.messageKey === key) : null; }
+  async function saveUser(state, id) { await put("profiles/" + id, state.profiles[id]); await put("wallets/" + id, state.wallets[id]); }
+  async function audit(state, action, detail) { const a = Array.isArray(state.auditLog) ? state.auditLog : []; a.push({ id: action + "_" + crypto.randomBytes(3).toString("hex"), time: now(), action, detail }); state.auditLog = a.slice(-500); await put("auditLog", state.auditLog); }
+
+  async function createDeposit(m, state, found, caption, imageData, ocr, cls) {
+    state.payments = Array.isArray(state.payments) ? state.payments : []; const key = msgKey(m); const old = duplicate(state.payments, key); if (old) return `⚠️ Deposit proof already submitted. ID: #${old.id}`;
+    const src = `${caption || ""}\n${ocr.text || ""}`; const a = amount(src); const record = { id: nextId("P", state.payments), userId: found.userId, userName: found.profile?.name || found.userId, phone: found.profile?.phone || found.phone || "", senderJid: candidates(m, m.key?.remoteJid || "")[0] || "", chatJid: m.key?.remoteJid || "", messageKey: key, amount: a, utr: utr(src), transactionId: utr(src), paidToUpi: upi(src), status: "pending", paymentStatus: a > 0 ? "pending_admin_approval" : "needs_amount", source: "whatsapp_ocr_payment_screenshot", imageClass: cls.kind, imageVerifyReason: cls.reason, ocrText: ocr.text || "", ocrProvider: ocr.provider || "", screenshotImageData: imageData || "", image: imageData || "", screenshotHash: hash(imageData), walletCredited: false, riskFlags: a > 0 ? [] : ["missing_amount"], riskLevel: a > 0 ? "MEDIUM" : "HIGH", createdAt: now(), time: new Date().toLocaleString("en-IN", { timeZone: TZ }) };
+    state.payments.push(record); await put("payments", state.payments.slice(-1000)); await saveUser(state, found.userId); await audit(state, "deposit_image_verified", { paymentId: record.id, userId: found.userId, imageClass: cls.kind, amount: a });
+    return a > 0 ? `✅ Deposit screenshot verified.\nID: #${record.id}\nAmount: ${money(a)}\nStatus: Pending admin approval.` : `📷 Deposit screenshot verified but amount clear nahi mila.\nID: #${record.id}\nAdmin review karega.`;
+  }
+
+  async function createWithdrawal(m, state, found, parsed, imageData, ocr, cls) {
+    state.withdrawals = Array.isArray(state.withdrawals) ? state.withdrawals : []; const key = msgKey(m); const old = duplicate(state.withdrawals, key); if (old) return `⚠️ Withdrawal request already submitted. ID: #${old.id}`;
+    const w = ensureWallet(state, found.userId, found.profile); const available = Math.round((w.balance - w.hold) * 100) / 100; const approved = String(found.profile?.approvalStatus || "").toLowerCase() === "approved"; const holdOk = approved && available + 0.0001 >= parsed.amount;
+    if (holdOk) { const hb = w.hold; w.hold = Math.round((hb + parsed.amount) * 100) / 100; w.walletHold = w.hold; w.ledger.push({ id: "WHOLD-" + Date.now(), time: now(), type: "withdrawal_hold", amount: 0, balanceBefore: w.balance, balanceAfter: w.balance, holdBefore: hb, holdAfter: w.hold, source: "whatsapp_ocr_withdrawal_qr" }); }
+    const rec = { id: nextId("W", state.withdrawals), userId: found.userId, userName: found.profile?.name || found.userId, phone: found.profile?.phone || found.phone || "", senderJid: candidates(m, m.key?.remoteJid || "")[0] || "", chatJid: m.key?.remoteJid || "", messageKey: key, amount: parsed.amount, method: parsed.method, detail: parsed.detail, qrImageData: parsed.method === "qr" ? (imageData || "") : "", status: "pending", paymentStatus: holdOk ? "pending_approval" : "pending_admin_review", holdApplied: holdOk, holdAmount: holdOk ? parsed.amount : 0, walletBalanceAtRequest: w.balance, walletHoldAfter: w.hold, needsAdminReview: !holdOk, reviewReason: holdOk ? "" : (approved ? "insufficient_withdrawable_balance" : "profile_not_approved"), source: "whatsapp_ocr_withdrawal_qr", imageClass: cls.kind, imageVerifyReason: cls.reason, ocrText: ocr.text || "", ocrProvider: ocr.provider || "", createdAt: now() };
+    if (holdOk && w.ledger.length) w.ledger[w.ledger.length - 1].withdrawalId = rec.id;
+    state.withdrawals.push(rec); await put("withdrawals", state.withdrawals.slice(-1000)); await saveUser(state, found.userId); await audit(state, "withdrawal_image_verified", { withdrawalId: rec.id, userId: found.userId, imageClass: cls.kind, amount: parsed.amount, holdApplied: holdOk });
+    return `✅ Withdrawal request verified.\nID: #${rec.id}\nAmount: ${money(rec.amount)}\nMethod: ${String(rec.method).toUpperCase()}\nStatus: Pending admin approval.`;
+  }
+
+  async function reply(sock, chat, body, quoted) { try { if (sock && chat && body) await sock.sendMessage(chat, { text: String(body) }, quoted ? { quoted } : undefined); } catch {} }
   async function processOne(sock, baileys, m) {
     try {
-      if (!m || !m.message || m.key?.fromMe) return false;
-      const chatJid = m.key?.remoteJid || "";
-      if (!chatJid || chatJid === "status@broadcast") return false;
-      const caption = messageText(m);
-      const img = hasImage(m);
-      const wParsed = parseWithdrawal(caption, img);
-      const deposit = !wParsed && looksDeposit(caption, img);
-      if (!wParsed && !deposit) return false;
-      const state = await fbGet("", {}) || {};
-      state.profiles = state.profiles && typeof state.profiles === "object" ? state.profiles : {};
-      state.wallets = state.wallets && typeof state.wallets === "object" ? state.wallets : {};
-      const candidates = senderCandidates(m, chatJid);
-      const sender = chatJid.endsWith("@g.us") ? (candidates[0] || m.key?.participant || "") : chatJid;
-      const found = findProfile(state, [sender, ...candidates], m.pushName || m.verifiedBizName || "");
-      ensureWallet(state, found.userId, found.profile);
-      const imgData = img ? await downloadImageData(baileys, m, wParsed ? 800000 : 1100000) : "";
-      let out = null;
-      if (wParsed) {
-        if (!wParsed.ok) out = { handled: true, reply: "❌ " + (wParsed.message || "Withdrawal format invalid.") };
-        else out = await createWithdrawalRecord(sock, baileys, m, state, found, wParsed, imgData);
-      } else {
-        out = await createDepositRecord(sock, baileys, m, state, found, caption, imgData);
-      }
-      if (out && out.handled) {
-        await sendReply(sock, chatJid, out.reply, m);
-        console.log("✅ WhatsApp financial request captured:", wParsed ? "withdrawal" : "deposit", found.userId);
-        return true;
-      }
-    } catch (e) {
-      console.log("Financial ingest patch error:", e.response ? `HTTP ${e.response.status}` : e.message);
-    }
-    return false;
+      if (!m?.message || m.key?.fromMe) return false; const chat = m.key?.remoteJid || ""; if (!chat || chat === "status@broadcast") return false;
+      const cap = text(m); const img = hasImage(m); if (!img && !/\b(withdraw|withdrawal|wd|deposit|payment|paid|utr|txn|recharge)\b/i.test(cap)) return false;
+      const image = img ? await downloadImage(baileys, m) : { data: "", buffer: null }; const ocr = img ? await runOcr(image.data) : { text: "", provider: "none", confidence: 0 };
+      const isW = /^\s*(withdraw|withdrawal|wd)\b/i.test(cap); const cls = classifyImage(cap, ocr.text, img, isW);
+      if (img && !cls.ok) { await reply(sock, chat, `❌ Image reject.\nReason: ${cls.reason}\nPayment screenshot ya withdrawal QR image bhejo.`, m); return true; }
+      const state = await get("", {}) || {}; const ids = candidates(m, chat); const sender = chat.endsWith("@g.us") ? (ids[0] || m.key?.participant || "") : chat; const found = findProfile(state, [sender, ...ids], m.pushName || m.verifiedBizName || ""); ensureWallet(state, found.userId, found.profile);
+      let out = "";
+      if (isW) { const parsed = parseWithdraw(cap, cls.kind); if (!parsed?.ok) out = "❌ " + (parsed?.message || "Withdrawal format invalid."); else out = await createWithdrawal(m, state, found, parsed, image.data, ocr, cls); }
+      else if (cls.kind === "payment_screenshot" || /\b(deposit|payment|paid|utr|txn|recharge)\b/i.test(cap)) out = await createDeposit(m, state, found, cap, image.data, ocr, cls.kind === "text_only" ? { kind: "payment_text", reason: "text_deposit_request" } : cls);
+      else return false;
+      await reply(sock, chat, out, m); console.log("✅ Financial image verified:", isW ? "withdrawal" : "deposit", found.userId, cls.kind); return true;
+    } catch (e) { console.log("Financial image verify error:", e.response ? `HTTP ${e.response.status}` : e.message); return false; }
   }
 
-  const Module = require("module");
-  const oldLoad = Module._load;
-  Module._load = function patchedLoad(request, parent, isMain) {
+  const Module = require("module"); const oldLoad = Module._load;
+  Module._load = function patchedLoad(req, parent, isMain) {
     const mod = oldLoad.apply(this, arguments);
     try {
-      if (request === "@whiskeysockets/baileys" && mod && !mod.__titanFinancialWrapped) {
-        const originalMake = mod.default;
-        if (typeof originalMake === "function") {
-          mod.default = function wrappedMakeWASocket() {
-            const sock = originalMake.apply(this, arguments);
-            if (sock && sock.ev && typeof sock.ev.on === "function" && !sock.ev.__titanFinancialWrapped) {
+      if (req === "@whiskeysockets/baileys" && mod && !mod.__titanFinancialImageVerifyWrapped) {
+        const original = mod.default;
+        if (typeof original === "function") {
+          mod.default = function wrappedSocket() {
+            const sock = original.apply(this, arguments);
+            if (sock?.ev?.on && !sock.ev.__titanFinancialImageVerifyWrapped) {
               const oldOn = sock.ev.on.bind(sock.ev);
-              sock.ev.on = function wrappedOn(eventName, handler) {
-                if (eventName === "messages.upsert" && typeof handler === "function") {
-                  return oldOn(eventName, async function financialFirst(upsert) {
-                    const originalMessages = Array.isArray(upsert && upsert.messages) ? upsert.messages : [];
-                    const remaining = [];
-                    for (const msg of originalMessages) {
-                      const handled = await processOne(sock, mod, msg);
-                      if (!handled) remaining.push(msg);
-                    }
-                    if (remaining.length) return handler({ ...upsert, messages: remaining });
-                    return undefined;
-                  });
-                }
-                return oldOn(eventName, handler);
+              sock.ev.on = function on(event, handler) {
+                if (event === "messages.upsert" && typeof handler === "function") return oldOn(event, async (upsert) => { const list = Array.isArray(upsert?.messages) ? upsert.messages : []; const rest = []; for (const m of list) { if (!(await processOne(sock, mod, m))) rest.push(m); } if (rest.length) return handler({ ...upsert, messages: rest }); });
+                return oldOn(event, handler);
               };
-              sock.ev.__titanFinancialWrapped = true;
+              sock.ev.__titanFinancialImageVerifyWrapped = true;
             }
             return sock;
           };
-          Object.assign(mod.default, originalMake);
         }
-        mod.__titanFinancialWrapped = true;
-        console.log("✅ Gateway financial ingest patch active");
+        mod.__titanFinancialImageVerifyWrapped = true;
+        console.log("✅ Gateway financial OCR image verifier active", OCR_KEY ? "OCR ON" : "OCR KEY MISSING");
       }
-    } catch (e) {
-      console.log("Gateway financial ingest patch load error:", e.message);
-    }
+    } catch (e) { console.log("Financial verifier hook error:", e.message); }
     return mod;
   };
 }
 
-module.exports = { enabled: true, feature: "gateway_financial_ingest_patch" };
+module.exports = { enabled: true, feature: "gateway_financial_image_verify_v2" };
