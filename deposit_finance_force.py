@@ -9,6 +9,11 @@ def register_deposit_finance_force(app):
     except Exception:
         pass
     try:
+        from entries_quick_actions import register_entries_quick_actions
+        register_entries_quick_actions(app)
+    except Exception:
+        pass
+    try:
         from settlement_toggle_sticky import register_settlement_toggle_sticky
         register_settlement_toggle_sticky(app)
     except Exception:
