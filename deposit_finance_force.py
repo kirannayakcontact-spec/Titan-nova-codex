@@ -4,6 +4,11 @@
 def register_deposit_finance_force(app):
     app._titan_deposit_finance_force_disabled = True
     try:
+        from setup_removed import register_setup_removed
+        register_setup_removed(app)
+    except Exception:
+        pass
+    try:
         from titan_realtime_global import register_titan_realtime_global
         register_titan_realtime_global(app)
     except Exception:
