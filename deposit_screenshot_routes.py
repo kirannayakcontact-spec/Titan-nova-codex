@@ -10,7 +10,7 @@ import re
 import datetime
 import requests
 
-DEFAULT_FIREBASE_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/titan_master_data.json"
+DEFAULT_FIREBASE_URL = "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json"
 FIREBASE_URL = (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL") or DEFAULT_FIREBASE_URL).rstrip("/")
 
 
