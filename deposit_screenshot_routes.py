@@ -1,12 +1,40 @@
 """Screenshot-only deposit support routes.
 
-Serves WhatsApp payment screenshots saved by Gateway and adds small helper APIs for
-manual review. Screenshot alone never credits wallet.
+Serves WhatsApp payment screenshots saved by Gateway and adds helper API for
+manual amount/UTR review. Screenshot alone never credits wallet.
 """
 
 from pathlib import Path
 import os
 import re
+import datetime
+import requests
+
+DEFAULT_FIREBASE_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/titan_master_data.json"
+FIREBASE_URL = (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL") or DEFAULT_FIREBASE_URL).rstrip("/")
+
+
+def _fb_url(parts):
+    base = re.sub(r"\.json$", "", FIREBASE_URL, flags=re.I)
+    clean = "/".join(str(p).strip("/") for p in parts if str(p).strip("/"))
+    return f"{base}/{clean}.json"
+
+
+def _fb_get_rest(parts, default=None):
+    try:
+        r = requests.get(_fb_url(parts), timeout=12)
+        if r.status_code >= 400:
+            return default
+        data = r.json()
+        return default if data is None else data
+    except Exception:
+        return default
+
+
+def _fb_patch_rest(parts, value):
+    r = requests.patch(_fb_url(parts), json=value, timeout=15)
+    r.raise_for_status()
+    return r.json() if r.content else None
 
 
 def register_deposit_screenshot_routes(app, ctx=None):
@@ -28,20 +56,25 @@ def register_deposit_screenshot_routes(app, ctx=None):
                 return fn()
             except Exception:
                 pass
-        import datetime
         return datetime.datetime.now().isoformat(timespec="seconds")
 
     def fb_get(parts, default=None):
         fn = ctx.get("_fb_get")
         if callable(fn):
-            return fn(parts, default=default)
-        return default
+            try:
+                return fn(parts, default=default)
+            except Exception:
+                pass
+        return _fb_get_rest(parts, default)
 
     def fb_patch(parts, value):
         fn = ctx.get("_fb_patch")
         if callable(fn):
-            return fn(parts, value)
-        return None
+            try:
+                return fn(parts, value)
+            except Exception:
+                pass
+        return _fb_patch_rest(parts, value)
 
     def clean_utr(v):
         return re.sub(r"[^A-Za-z0-9]", "", str(v or "")).upper()[:80]
