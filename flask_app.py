@@ -1,5 +1,5 @@
 # ==========================================================
-# TITAN NOVA LEGACY RUNTIME LAUNCHER + DEPOSIT PROFESSIONAL V2
+# TITAN NOVA LEGACY RUNTIME LAUNCHER
 # Run UI/API: python flask_app.py
 # ==========================================================
 
@@ -30,25 +30,11 @@ if app is None:
     raise RuntimeError("Titan Nova legacy runtime did not expose Flask app")
 
 try:
-    from deposit_professional_v2 import register_deposit_professional_v2
-    register_deposit_professional_v2(app, _legacy_globals)
-    print("✅ Titan Deposit Professional V2 loaded")
-except Exception as exc:
-    print("⚠️ Titan Deposit Professional V2 failed to load:", exc)
-
-try:
-    from deposit_finance_merge import register_deposit_finance_merge
-    register_deposit_finance_merge(app)
-    print("✅ Titan Deposit merged into Finance tab")
-except Exception as exc:
-    print("⚠️ Titan Deposit Finance merge failed to load:", exc)
-
-try:
     from deposit_finance_force import register_deposit_finance_force
     register_deposit_finance_force(app)
-    print("✅ Titan Deposit force-visible in Finance tab")
+    print("✅ Titan runtime safety bridge loaded")
 except Exception as exc:
-    print("⚠️ Titan Deposit Finance force failed to load:", exc)
+    print("⚠️ Titan runtime safety bridge failed to load:", exc)
 
 application = app
 
