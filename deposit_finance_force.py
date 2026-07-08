@@ -26,6 +26,11 @@ def register_deposit_finance_force(app):
     except Exception:
         pass
     try:
+        from result_toggle_sticky import register_result_toggle_sticky
+        register_result_toggle_sticky(app)
+    except Exception:
+        pass
+    try:
         from titan_realtime_global import register_titan_realtime_global
         register_titan_realtime_global(app)
     except Exception:
