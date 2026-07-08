@@ -1,11 +1,13 @@
-"""Disabled broad Deposit UI injector.
+"""Finance-only Deposit bridge.
 
-This file intentionally registers no UI injection. The previous version could show
-Deposit on Ledger, VIPs, Entries, Results, and other tabs. Deposit must be merged
-inside the native Finance renderer only.
+No broad UI injection here. This bridge loads the native Finance Deposit subtab.
 """
 
 
 def register_deposit_finance_force(app):
     app._titan_deposit_finance_force_disabled = True
-    return
+    try:
+        from deposit_finance_native import register_deposit_finance_native
+        register_deposit_finance_native(app)
+    except Exception:
+        pass
