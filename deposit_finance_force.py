@@ -1,7 +1,7 @@
 """Finance-only Deposit bridge.
 
-No broad UI injection here. This bridge loads the native Finance Deposit subtab
-and screenshot-only deposit proof routes.
+No broad UI injection here. This bridge loads native Finance Deposit, screenshot
+proof routes, and screenshot review UI.
 """
 
 
@@ -15,5 +15,10 @@ def register_deposit_finance_force(app):
     try:
         from deposit_screenshot_routes import register_deposit_screenshot_routes
         register_deposit_screenshot_routes(app)
+    except Exception:
+        pass
+    try:
+        from deposit_screenshot_ui import register_deposit_screenshot_ui
+        register_deposit_screenshot_ui(app)
     except Exception:
         pass
