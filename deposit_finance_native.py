@@ -18,7 +18,7 @@ def register_deposit_finance_native(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "finance-deposit-native-v5" in html or "</body>" not in html.lower():
+            if not html or "finance-deposit-native-v6-stable" in html or "</body>" not in html.lower():
                 return resp
             i = html.lower().rfind("</body>")
             html = html[:i] + SCRIPT + html[i:]
@@ -30,7 +30,7 @@ def register_deposit_finance_native(app):
 
 
 SCRIPT = r'''
-<script id="finance-deposit-native-v5">
+<script id="finance-deposit-native-v6-stable">
 (function(){
   function fdQ(s){return document.querySelector(s)}
   function fdQa(s){return Array.from(document.querySelectorAll(s))}
@@ -40,15 +40,19 @@ SCRIPT = r'''
   function fdInFinance(){return String(fdGetv('mainNav')||'').toLowerCase()==='finance'}
   function fdIsDeposit(){return String(fdGetv('financeSubTab')||'').toLowerCase()==='deposit'}
   function fdRemovePanel(){fdQa('#financeDepositNativePanel,#titanFinanceDepositInline,#titanFinanceDepositPanel,#titanDepositProfessionalShortcut').forEach(x=>x.remove())}
-  function fdClickDeposit(){fdSetv('mainNav','finance');fdSetv('financeSubTab','deposit');try{if(typeof render==='function')render(false)}catch(e){}setTimeout(fdShow,80)}
+  function fdRemoveDuplicatePanels(){const arr=fdQa('#financeDepositNativePanel');arr.slice(1).forEach(x=>x.remove());fdQa('#titanFinanceDepositInline,#titanFinanceDepositPanel,#titanDepositProfessionalShortcut').forEach(x=>x.remove())}
+  function fdPauseFinance(){try{if(window.__TitanRealtime&&typeof window.__TitanRealtime.pauseFinance==='function')window.__TitanRealtime.pauseFinance(9000);else if(window.__TitanRealtime&&typeof window.__TitanRealtime.pause==='function')window.__TitanRealtime.pause(3000)}catch(e){}}
+  function fdClickDeposit(){fdSetv('mainNav','finance');fdSetv('financeSubTab','deposit');fdPauseFinance();try{if(typeof render==='function')render(false)}catch(e){}setTimeout(fdShow,120)}
   function fdFindFinanceTabs(){const buttons=fdQa('button,a,div');const hit=buttons.find(b=>{const t=fdText(b);return t.includes('SUMMARY')&&t.includes('PAYMENT')})||buttons.find(b=>fdText(b).includes('WITHDRAWAL')&&fdText(b).includes('PAYMENT'));if(hit)return hit;const pay=buttons.find(b=>fdText(b)==='PAYMENT'||fdText(b).includes('PAYMENT'));return pay?(pay.parentElement||pay):null}
   function fdEnsureButton(){if(!fdInFinance())return;if(fdQ('#financeDepositNativeBtn'))return;const wrap=fdFindFinanceTabs();if(!wrap)return;const btn=document.createElement('button');btn.id='financeDepositNativeBtn';btn.type='button';btn.textContent='DEPOSIT';btn.style.cssText='margin:4px;padding:10px 14px;border:0;border-radius:14px;background:#2aabee;color:white;font-weight:900;font-size:11px;letter-spacing:.04em';btn.onclick=fdClickDeposit;wrap.appendChild(btn)}
   function fdPanelHtml(){return '<div id="financeDepositNativePanel" style="margin:12px;padding:0 0 92px"><div style="background:#101d2f;border:1px solid rgba(42,171,238,.32);border-radius:18px;overflow:hidden;box-shadow:0 10px 26px rgba(0,0,0,.25)"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;color:#eef6ff;font-family:Inter,Arial,sans-serif"><div><b>💰 Deposit</b><div style="font-size:10px;color:#91afd1">Finance → Deposit screenshot review</div></div><button onclick="document.getElementById(\'financeDepositFrame\').contentWindow.location.reload()" style="border:0;border-radius:10px;background:#263b59;color:white;padding:8px 10px;font-weight:900">Refresh</button></div><iframe id="financeDepositFrame" src="/api/deposit_professional/screenshot_ui?embed=1" style="width:100%;height:760px;border:0;background:#07111f"></iframe></div></div>'}
   function fdRoot(){return fdQ('main')||fdQ('#app')||document.body}
-  function fdShow(){fdEnsureButton();if(!fdInFinance()||!fdIsDeposit()){if(!fdInFinance())fdRemovePanel();return}fdRemovePanel();const r=fdRoot();if(r)r.insertAdjacentHTML('afterbegin',fdPanelHtml())}
-  document.addEventListener('click',function(){setTimeout(fdShow,180)},true);
-  const obs=new MutationObserver(function(){fdEnsureButton();if(!fdInFinance())fdRemovePanel()});obs.observe(document.documentElement,{childList:true,subtree:true});
-  setInterval(fdShow,1500);setTimeout(fdShow,700);
+  function fdShow(){fdEnsureButton();if(!fdInFinance()){fdRemovePanel();return}if(!fdIsDeposit()){fdRemovePanel();return}fdRemoveDuplicatePanels();if(fdQ('#financeDepositNativePanel'))return;const r=fdRoot();if(r)r.insertAdjacentHTML('afterbegin',fdPanelHtml())}
+  document.addEventListener('click',function(){if(fdInFinance())fdPauseFinance();setTimeout(fdShow,180)},true);
+  document.addEventListener('input',function(){if(fdInFinance())fdPauseFinance()},true);
+  document.addEventListener('change',function(){if(fdInFinance())fdPauseFinance()},true);
+  const obs=new MutationObserver(function(){fdEnsureButton();if(!fdInFinance())fdRemovePanel();else if(fdIsDeposit())fdShow()});obs.observe(document.documentElement,{childList:true,subtree:true});
+  setInterval(fdShow,2500);setTimeout(fdShow,700);
 })();
 </script>
 '''
