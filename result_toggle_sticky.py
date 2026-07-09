@@ -1,9 +1,7 @@
 """Result tab checkbox sticky persistence.
 
-Fixes Result tab toggles reverting after realtime sync by:
-- registering a small API endpoint that persists known Result/Settlement/Auto Pass-Fail toggles
-- injecting a browser guard that reapplies the last selected checkbox state after UI refresh/re-render
-- writing broad legacy-compatible state keys so the monolith can read whichever settings shape it already uses
+v3 fix: each Result tab checkbox maps only to its own nearest control label.
+Old bad sticky data from v2 is ignored so one checkbox cannot turn every checkbox on.
 """
 
 
@@ -50,9 +48,8 @@ def register_result_toggle_sticky(app):
         return str(value).strip().lower() in ("1", "true", "yes", "on", "checked", "enable", "enabled")
 
     def toggle_bundle(ui_key, val):
-        """Return broad state updates for legacy/new result-tab toggle names."""
         val = boolish(val)
-        updates = {"resultToggleSticky": {ui_key: val}}
+        updates = {"resultToggleSticky": {"_version": "v3", ui_key: val}}
         if ui_key == "settlementOn":
             updates.update({
                 "resultSettlement": {"enabled": val, "settlementOn": val},
@@ -114,6 +111,8 @@ def register_result_toggle_sticky(app):
         state = state_now()
         if request.method == "GET":
             sticky = as_dict(state.get("resultToggleSticky"))
+            if sticky.get("_version") != "v3":
+                sticky = {"_version": "v3"}
             return jsonify({
                 "status": "success",
                 "resultToggleSticky": sticky,
@@ -124,14 +123,16 @@ def register_result_toggle_sticky(app):
             })
 
         data = request.get_json(silent=True) or {}
-        grouped = {}
+        if data.get("reset") is True:
+            state["resultToggleSticky"] = {"_version": "v3"}
+            put_child(["resultToggleSticky"], state["resultToggleSticky"]) or put_top(state, {"resultToggleSticky": state["resultToggleSticky"]})
+            return jsonify({"status": "success", "reset": True, "resultToggleSticky": state["resultToggleSticky"]})
 
-        # Preferred compact payload from injected JS: { key:'autoMark', value:true }
+        grouped = {}
         ui_key = str(data.get("key") or data.get("uiKey") or "").strip()
         if ui_key:
             grouped.update(toggle_bundle(ui_key, data.get("value")))
 
-        # Backward-compatible payloads from older script.
         for possible in ("settlementOn", "msgSummary", "autoHitMiss", "autoMark", "onlyWait", "allVips"):
             if possible in data:
                 bundle = toggle_bundle(possible, data.get(possible))
@@ -167,7 +168,7 @@ def register_result_toggle_sticky(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "result-toggle-sticky-v2" in html or "</body>" not in html.lower():
+            if not html or "result-toggle-sticky-v3" in html or "</body>" not in html.lower():
                 return resp
             idx = html.lower().rfind("</body>")
             html = html[:idx] + SCRIPT + html[idx:]
@@ -179,42 +180,68 @@ def register_result_toggle_sticky(app):
 
 
 SCRIPT = r'''
-<script id="result-toggle-sticky-v2">
+<script id="result-toggle-sticky-v3">
 (function(){
-  if(window.__RESULT_TOGGLE_STICKY_V2__) return;
-  window.__RESULT_TOGGLE_STICKY_V2__ = true;
+  if(window.__RESULT_TOGGLE_STICKY_V3__) return;
+  window.__RESULT_TOGGLE_STICKY_V3__ = true;
   const API='/api/result_toggle_sticky';
-  const LS='titan.result.toggle.sticky.v2';
-  const labels={
-    settlementOn:/\bSETTLEMENT\s+ON\b/i,
-    msgSummary:/\bMSG\s+SUMMARY\b|\bMESSAGE\s+SUMMARY\b/i,
-    autoHitMiss:/\bAUTO\s+HIT\/?MISS\b/i,
-    autoMark:/\bAUTO\s+MARK\b/i,
-    onlyWait:/\bONLY\s+WAIT\b/i,
-    allVips:/\bALL\s+VIPS\b/i
-  };
-  let sticky={};
+  const LS='titan.result.toggle.sticky.v3';
+  const keys=['settlementOn','msgSummary','autoHitMiss','autoMark','onlyWait','allVips'];
+  let sticky={_version:'v3'};
   let saving=false;
   let lastLoad=0;
-  function readLS(){try{return JSON.parse(localStorage.getItem(LS)||'{}')||{}}catch(e){return {}}}
-  function writeLS(){try{localStorage.setItem(LS,JSON.stringify(sticky||{}))}catch(e){}}
+  function readLS(){try{const v=JSON.parse(localStorage.getItem(LS)||'{}')||{};return v._version==='v3'?v:{_version:'v3'}}catch(e){return {_version:'v3'}}}
+  function writeLS(){try{sticky._version='v3';localStorage.setItem(LS,JSON.stringify(sticky||{}))}catch(e){}}
   function headers(){let h={'Content-Type':'application/json'};try{let t=localStorage.getItem('TITAN_ADMIN_TOKEN')||localStorage.getItem('titan_admin_token')||'';if(t)h['X-Titan-Admin-Token']=t}catch(e){}return h}
-  function pageText(){return String(document.body&&document.body.innerText||'')}
-  function resultVisible(){return /RESULT\s+SETTLEMENT|LEDGER\s+AUTO\s+PASS\/FAIL|MARKET\s+RESULTS/i.test(pageText())}
-  function clean(s){return String(s||'').replace(/\s+/g,' ').trim()}
-  function nearText(el){let s='';let n=el;for(let i=0;i<7&&n;i++,n=n.parentElement){s+=' '+clean(n.innerText||n.textContent||'')}return s.slice(0,900)}
-  function keyFor(el){const s=nearText(el);for(const [k,re] of Object.entries(labels)){if(re.test(s))return k}return ''}
-  function boxes(){return Array.from(document.querySelectorAll('input[type="checkbox"],input[type="radio"]')).filter(el=>keyFor(el))}
+  function textOf(n){return String((n&&((n.innerText||n.textContent||n.getAttribute&&n.getAttribute('aria-label'))))||'').replace(/\s+/g,' ').trim()}
+  function resultVisible(){return /RESULT\s+SETTLEMENT|LEDGER\s+AUTO\s+PASS\/FAIL|MARKET\s+RESULTS/i.test(textOf(document.body))}
+  function ownText(el){
+    const parts=[];
+    if(el.id){try{document.querySelectorAll('label[for="'+CSS.escape(el.id)+'"]').forEach(l=>parts.push(textOf(l)))}catch(e){}}
+    const aria=el.getAttribute&&el.getAttribute('aria-label'); if(aria) parts.push(aria);
+    let n=el.parentElement;
+    for(let depth=0;n&&depth<4;depth++,n=n.parentElement){
+      const t=textOf(n);
+      if(!t) continue;
+      const inputCount=n.querySelectorAll?n.querySelectorAll('input[type="checkbox"],input[type="radio"]').length:0;
+      // Use only the nearest small control container. Never use the whole Result section/card.
+      if(inputCount<=1 && t.length<=90){parts.push(t);break;}
+      const direct=[];
+      for(const c of Array.from(n.childNodes||[])){
+        if(c===el) continue;
+        if(c.nodeType===3) direct.push(c.textContent||'');
+        else if(c.nodeType===1 && !/INPUT/i.test(c.tagName||'')){
+          const ct=textOf(c);
+          if(ct && ct.length<=60) direct.push(ct);
+        }
+      }
+      const d=direct.join(' ').replace(/\s+/g,' ').trim();
+      if(d && d.length<=90){parts.push(d);break;}
+    }
+    return parts.join(' ').replace(/\s+/g,' ').trim();
+  }
+  function keyFor(el){
+    const s=ownText(el).toUpperCase();
+    if(!s) return '';
+    if(/\bSETTLEMENT\s+ON\b/.test(s)) return 'settlementOn';
+    if(/\bMSG\s+SUMMARY\b|\bMESSAGE\s+SUMMARY\b/.test(s)) return 'msgSummary';
+    if(/\bAUTO\s+HIT\/?MISS\b/.test(s)) return 'autoHitMiss';
+    if(/\bAUTO\s+MARK\b/.test(s)) return 'autoMark';
+    if(/\bONLY\s+WAIT\b/.test(s)) return 'onlyWait';
+    if(/\bALL\s+VIPS\b/.test(s)) return 'allVips';
+    return '';
+  }
+  function boxes(){
+    if(!resultVisible()) return [];
+    return Array.from(document.querySelectorAll('input[type="checkbox"],input[type="radio"]')).filter(el=>!!keyFor(el));
+  }
   function applySticky(){
     if(!resultVisible()) return;
     for(const el of boxes()){
       const k=keyFor(el);
       if(!k || typeof sticky[k] === 'undefined') continue;
       const want=!!sticky[k];
-      if(el.checked!==want){
-        el.checked=want;
-        try{el.setAttribute('aria-checked', String(want));}catch(e){}
-      }
+      if(el.checked!==want){el.checked=want;try{el.setAttribute('aria-checked',String(want))}catch(e){}}
     }
   }
   async function loadRemote(force){
@@ -224,15 +251,14 @@ SCRIPT = r'''
     try{
       const r=await fetch(API,{cache:'no-store',headers:headers()});
       const j=await r.json();
-      const remote=(j&&j.resultToggleSticky)||{};
-      sticky=Object.assign({}, readLS(), remote);
-      writeLS();
-      applySticky();
-    }catch(e){sticky=Object.assign({}, sticky, readLS()); applySticky();}
+      const remote=(j&&j.resultToggleSticky&&j.resultToggleSticky._version==='v3')?j.resultToggleSticky:{};
+      sticky=Object.assign({_version:'v3'}, readLS(), remote);
+      writeLS(); applySticky();
+    }catch(e){sticky=Object.assign({_version:'v3'}, sticky, readLS()); applySticky();}
   }
   async function save(k,v){
-    if(!k) return;
-    sticky[k]=!!v; writeLS(); applySticky(); saving=true;
+    if(!k || !keys.includes(k)) return;
+    sticky[k]=!!v; sticky._version='v3'; writeLS(); saving=true;
     try{if(window.__TitanRealtime&&window.__TitanRealtime.pause)window.__TitanRealtime.pause(5000)}catch(e){}
     try{await fetch(API,{method:'POST',headers:headers(),body:JSON.stringify({key:k,value:!!v})});}
     catch(e){console.warn('result toggle sticky save failed',e)}
@@ -246,13 +272,17 @@ SCRIPT = r'''
     save(k,!!el.checked);
   },true);
   document.addEventListener('click',function(ev){
-    setTimeout(function(){const el=ev.target&&ev.target.closest?ev.target.closest('input[type="checkbox"],input[type="radio"]'):null;if(el){const k=keyFor(el);if(k)save(k,!!el.checked)}},30);
+    setTimeout(function(){
+      const el=ev.target&&ev.target.closest?ev.target.closest('input[type="checkbox"],input[type="radio"]'):null;
+      if(el){const k=keyFor(el);if(k)save(k,!!el.checked)}
+    },40);
   },true);
   const mo=new MutationObserver(function(){ if(!saving) applySticky(); });
   try{mo.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['checked','class','style']});}catch(e){}
+  try{localStorage.removeItem('titan.result.toggle.sticky.v2')}catch(e){}
   sticky=readLS();
   loadRemote(true);
-  setInterval(function(){applySticky();loadRemote(false)},600);
+  setInterval(function(){applySticky();loadRemote(false)},900);
 })();
 </script>
 '''
