@@ -1,3 +1,0 @@
-VIP delete persistence fix branch marker.
-
-The runtime fix is in titan_profile_delete_guard_patch.py.
