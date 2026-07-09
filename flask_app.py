@@ -69,6 +69,12 @@ try:
 except Exception as exc:
     print("⚠️ Deposit OCR guard failed to load:", exc)
 
+try:
+    from titan_codex_stability_patch import register_titan_codex_stability
+    register_titan_codex_stability(app)
+except Exception as exc:
+    print("⚠️ Titan Codex stability patch failed to load:", exc)
+
 application = app
 
 if _LAUNCHER_NAME == "__main__":
