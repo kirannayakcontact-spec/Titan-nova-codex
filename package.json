@@ -6,7 +6,9 @@
   "main": "Gateway.js",
   "scripts": {
     "gateway": "node Gateway.js",
-    "start": "node Gateway.js"
+    "start": "node Gateway.js",
+    "check:gateway": "node --check Gateway.js",
+    "check:phase1": "node scripts/check_phase1_modules.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.18",
