@@ -51,7 +51,7 @@ except Exception as exc:
     print("⚠️ Result tab sticky toggle guard failed to load:", exc)
 
 try:
-    from vip_profile_delete_guard import register_vip_profile_delete_guard
+    from titan_profile_delete_guard_patch import register_vip_profile_delete_guard
     register_vip_profile_delete_guard(app)
 except Exception as exc:
     print("⚠️ VIP profile delete guard failed to load:", exc)
