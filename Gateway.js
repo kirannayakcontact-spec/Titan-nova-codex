@@ -9,6 +9,12 @@
 process.env.FIREBASE_URL = process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json";
 process.env.FIREBASE_DB_URL = process.env.FIREBASE_DB_URL || process.env.FIREBASE_URL;
 
+try {
+  require("./gateway_codex_preflight_patch.js");
+} catch (err) {
+  console.warn("⚠️ Gateway Codex preflight patch failed:", err && err.message ? err.message : err);
+}
+
 require.extensions[".bak"] = require.extensions[".js"];
 
 try {
