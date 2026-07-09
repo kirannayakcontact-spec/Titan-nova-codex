@@ -51,6 +51,12 @@ except Exception as exc:
     print("⚠️ Result tab sticky toggle guard failed to load:", exc)
 
 try:
+    from vip_profile_delete_guard import register_vip_profile_delete_guard
+    register_vip_profile_delete_guard(app)
+except Exception as exc:
+    print("⚠️ VIP profile delete guard failed to load:", exc)
+
+try:
     from deposit_ocr_guard import register_deposit_ocr_guard
     register_deposit_ocr_guard(app)
 except Exception as exc:
