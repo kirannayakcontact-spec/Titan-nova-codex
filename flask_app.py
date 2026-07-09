@@ -70,6 +70,12 @@ except Exception as exc:
     print("⚠️ Deposit OCR guard failed to load:", exc)
 
 try:
+    from titan_firebase_guard_patch import register_titan_firebase_guard
+    register_titan_firebase_guard(app)
+except Exception as exc:
+    print("⚠️ Titan Firebase guard failed to load:", exc)
+
+try:
     from titan_codex_stability_patch import register_titan_codex_stability
     register_titan_codex_stability(app)
 except Exception as exc:
