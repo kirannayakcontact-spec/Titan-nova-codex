@@ -33,6 +33,35 @@ node --check Gateway.js
 npm run check
 ```
 
+## Easiest Termux deploy
+
+First time or after new GitHub update, run only this small command:
+
+```bash
+cd ~/Titan-nova-codex && git pull origin main && bash deploy.sh
+```
+
+If your folder name is `titan-app`, use this:
+
+```bash
+cd ~/titan-app && git pull origin main && bash deploy.sh
+```
+
+After this, future deploy is even shorter:
+
+```bash
+bash deploy.sh
+```
+
+`deploy.sh` does all work automatically:
+
+1. Pulls latest GitHub code.
+2. Installs Python requirements.
+3. Installs Node packages.
+4. Stops old Flask/Gateway.
+5. Starts both Flask and Gateway in background.
+6. Shows logs.
+
 ## Run in Termux manually
 
 Terminal 1:
@@ -48,24 +77,6 @@ Terminal 2:
 cd ~/Titan-nova-codex
 node Gateway.js
 ```
-
-## Termux one-command update + deploy
-
-Use this command when you want GitHub latest update + dependency install + both Flask and Gateway restart in one copy-paste.
-
-```bash
-bash -lc 'APP_DIR="$HOME/Titan-nova-codex"; [ -d "$APP_DIR" ] || APP_DIR="$HOME/titan-app"; cd "$APP_DIR" || exit 1; git pull origin main; python -m pip install -r requirements.txt; npm install; pkill -f "python .*flask_app.py" 2>/dev/null || true; pkill -f "node .*Gateway.js" 2>/dev/null || true; nohup python flask_app.py > flask.log 2>&1 & nohup node Gateway.js > gateway.log 2>&1 & sleep 3; echo "✅ Titan Nova started"; echo "📌 Dashboard: http://127.0.0.1:5000"; echo "📌 Gateway: http://127.0.0.1:3000"; echo "--- Flask log ---"; tail -n 15 flask.log; echo "--- Gateway log ---"; tail -n 15 gateway.log'
-```
-
-What this command does:
-
-1. Opens `~/Titan-nova-codex`; if that folder is missing, opens `~/titan-app`.
-2. Pulls latest code from GitHub `main`.
-3. Installs Python packages from `requirements.txt`.
-4. Installs Node packages from `package.json`.
-5. Stops old Flask/Gateway processes.
-6. Starts both in background.
-7. Shows the last Flask and Gateway logs.
 
 ## Check if both are running
 
@@ -117,7 +128,11 @@ git clone https://github.com/kirannayakcontact-spec/Titan-nova-codex.git
 cd ~/Titan-nova-codex
 ```
 
-Then run the one-command deploy again.
+Then run:
+
+```bash
+bash deploy.sh
+```
 
 ## Extra guide
 
