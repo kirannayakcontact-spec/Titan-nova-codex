@@ -1,8 +1,10 @@
 from pathlib import Path
 import argparse
+from titan_runtime_files import ensure_runtime_file
 
 ROOT = Path(__file__).resolve().parent
 TARGET = ROOT / "Gateway.js"
+ensure_runtime_file("Gateway.js")
 MARKER = "WHATSAPP_QR_REFRESH_FIX_V1"
 
 INSERT_AFTER = 'const WHATSAPP_TARGET_SYNC_VERSION = "2026-07-05-whatsapp-target-realtime-sync-v45";'

@@ -11,6 +11,9 @@ pip install -r requirements.txt
 echo "📦 Installing Node packages..."
 npm install
 
+echo "🛠️ Restoring Titan Nova runtime files if missing..."
+python titan_runtime_files.py --ensure
+
 echo "✅ Update complete."
 echo "Run Flask:   bash termux-flask.sh"
 echo "Run Gateway: bash termux-gateway.sh"

@@ -2,11 +2,13 @@
   "name": "titan-nova-codex",
   "version": "1.0.0",
   "private": true,
-  "description": "Titan Nova Flask dashboard and WhatsApp Gateway runtime dependencies.",
+  "description": "Titan Nova legacy two-file runtime launcher.",
   "main": "Gateway.js",
   "scripts": {
     "gateway": "node Gateway.js",
-    "start": "node Gateway.js"
+    "start": "node Gateway.js",
+    "bot": "node Gateway.js",
+    "check": "node --check Gateway.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.18",

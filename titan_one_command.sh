@@ -20,6 +20,9 @@ fi
 cd "$APP_DIR"
 mkdir -p "$LOG_DIR"
 
+info "Ensuring Titan runtime files"
+python titan_runtime_files.py --ensure
+
 # Load saved Termux env if present.
 if [ -f "$HOME/.bashrc" ]; then
   # shellcheck disable=SC1090
@@ -59,6 +62,12 @@ python titan_wa_qr_fix_patch.py --apply
 
 info "Applying owner number code login"
 python titan_owner_login_code_patch.py --apply
+info "Applying Market Control Pro"
+python titan_mcp_patch.py --apply
+
+info "Applying VIP profile persistence fix"
+python titan_profile_delete_guard_patch.py --apply
+python titan_vip_profile_fix_patch.py --apply
 
 info "Running preflight checks"
 python -m py_compile flask_app.py
@@ -99,6 +108,7 @@ fi
 
 info "Deploy complete"
 printf '\nDashboard: http://127.0.0.1:5000\n'
+printf 'Market Control Pro: http://127.0.0.1:5000/market_control_pro\n'
 printf 'Flask log:   %s\n' "$FLASK_LOG"
 printf 'Gateway log: %s\n' "$GATEWAY_LOG"
 printf '\nUseful commands:\n'

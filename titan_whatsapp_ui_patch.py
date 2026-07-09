@@ -1,8 +1,10 @@
 from pathlib import Path
 import argparse
+from titan_runtime_files import ensure_runtime_file
 
 ROOT = Path(__file__).resolve().parent
 TARGET = ROOT / "flask_app.py"
+ensure_runtime_file("flask_app.py")
 MARKER = "TITAN_WHATSAPP_UI_PATCH_V1"
 
 PATCH = r'''
@@ -21,9 +23,17 @@ TITAN_WHATSAPP_UI_CSS = r"""
   --text:#e9edef!important; --text-muted:#8696a0!important;
 }
 html,body{background:var(--wa-bg)!important;color:var(--wa-text)!important;font-family:Inter,Roboto,Arial,sans-serif!important;}
-body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;background:
-  radial-gradient(circle at top left, rgba(0,168,132,.20), transparent 34%),
-  linear-gradient(180deg,#0b141a 0%,#111b21 100%)!important;}
+body{background:
+  radial-gradient(circle at 16% 0%, rgba(0,168,132,.22), transparent 30%),
+  radial-gradient(circle at 88% 12%, rgba(37,211,102,.10), transparent 26%),
+  linear-gradient(180deg,#0b141a 0%,#111b21 48%,#0b141a 100%)!important;
+  background-attachment:fixed!important;}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background-image:
+  linear-gradient(135deg, rgba(233,237,239,.025) 25%, transparent 25%),
+  linear-gradient(225deg, rgba(233,237,239,.025) 25%, transparent 25%),
+  linear-gradient(45deg, rgba(233,237,239,.018) 25%, transparent 25%),
+  linear-gradient(315deg, rgba(233,237,239,.018) 25%, rgba(11,20,26,.04) 25%)!important;
+  background-position:12px 0,12px 0,0 0,0 0!important;background-size:24px 24px!important;opacity:.68!important;}
 header,.header,.topbar,.top-bar,.app-header,[class*="header"],[class*="top"]{background:#075e54!important;border-color:rgba(255,255,255,.08)!important;color:#fff!important;box-shadow:0 8px 26px rgba(0,0,0,.22)!important;}
 .native-card,.card,.panel,.box,[class*="native-card"],[class*="glass"],[class*="surface"]{
   background:linear-gradient(160deg,rgba(32,44,51,.98),rgba(17,27,33,.98))!important;
