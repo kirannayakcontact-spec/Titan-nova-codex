@@ -88,6 +88,12 @@ except Exception as exc:
     print("⚠️ Titan Result control patch failed to load:", exc)
 
 try:
+    from titan_frontend_boot_fix_patch import register_titan_frontend_boot_fix
+    register_titan_frontend_boot_fix(app)
+except Exception as exc:
+    print("⚠️ Titan frontend boot/render guard failed to load:", exc)
+
+try:
     from titan_ledger_autopf_ui_patch import register_titan_ledger_autopf_ui
     register_titan_ledger_autopf_ui(app)
 except Exception as exc:
