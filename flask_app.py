@@ -44,6 +44,13 @@ except Exception as exc:
     print("⚠️ Titan runtime safety bridge failed to load:", exc)
 
 try:
+    from titan_realtime_global import register_titan_realtime_global
+    register_titan_realtime_global(app)
+    print("✅ Titan global realtime/local UI guard loaded")
+except Exception as exc:
+    print("⚠️ Titan global realtime/local UI guard failed to load:", exc)
+
+try:
     from result_toggle_sticky import register_result_toggle_sticky
     register_result_toggle_sticky(app)
     print("✅ Result tab sticky toggle guard loaded")
