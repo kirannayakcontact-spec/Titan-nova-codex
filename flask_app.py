@@ -44,6 +44,13 @@ except Exception as exc:
     print("⚠️ Titan runtime safety bridge failed to load:", exc)
 
 try:
+    from result_toggle_sticky import register_result_toggle_sticky
+    register_result_toggle_sticky(app)
+    print("✅ Result tab sticky toggle guard loaded")
+except Exception as exc:
+    print("⚠️ Result tab sticky toggle guard failed to load:", exc)
+
+try:
     from deposit_ocr_guard import register_deposit_ocr_guard
     register_deposit_ocr_guard(app)
 except Exception as exc:
