@@ -1,34 +1,35 @@
 # Titan Nova Termux Deploy
 
-Use this file when you want one copy-paste command from GitHub to Termux.
+Use this file when you want an easy Termux deploy command.
 
-## Folder name
+## Easiest deploy command
 
-Use the folder where your repo is cloned. Most common:
-
-```bash
-cd ~/Titan-nova-codex
-```
-
-If your folder is `~/titan-app`, use that instead.
-
-## One command: update + restart both Flask and Gateway
-
-Copy-paste this full command in Termux:
+Most users should run this:
 
 ```bash
-bash -lc 'APP_DIR="$HOME/Titan-nova-codex"; [ -d "$APP_DIR" ] || APP_DIR="$HOME/titan-app"; cd "$APP_DIR" || exit 1; git pull origin main; python -m pip install -r requirements.txt; npm install; pkill -f "python .*flask_app.py" 2>/dev/null || true; pkill -f "node .*Gateway.js" 2>/dev/null || true; nohup python flask_app.py > flask.log 2>&1 & nohup node Gateway.js > gateway.log 2>&1 & sleep 3; echo "✅ Titan Nova started"; echo "📌 Dashboard: http://127.0.0.1:5000"; echo "📌 Gateway: http://127.0.0.1:3000"; echo "--- Flask log ---"; tail -n 15 flask.log; echo "--- Gateway log ---"; tail -n 15 gateway.log'
+cd ~/Titan-nova-codex && git pull origin main && bash deploy.sh
 ```
 
-This command does all of this:
+If your folder is `~/titan-app`, run this:
 
-1. Opens `~/Titan-nova-codex`; if not found, opens `~/titan-app`.
-2. Pulls latest code from GitHub.
-3. Installs Python requirements.
-4. Installs Node packages.
-5. Stops old Flask/Gateway processes.
-6. Starts both in background.
-7. Shows last logs.
+```bash
+cd ~/titan-app && git pull origin main && bash deploy.sh
+```
+
+After the first run, you can deploy again with only:
+
+```bash
+bash deploy.sh
+```
+
+## What deploy.sh does
+
+1. Pulls latest code from GitHub.
+2. Installs Python requirements.
+3. Installs Node packages.
+4. Stops old Flask/Gateway processes.
+5. Starts Flask and Gateway in background.
+6. Shows latest logs.
 
 ## Check if both are running
 
@@ -38,9 +39,13 @@ ps -ef | grep -E "flask_app.py|Gateway.js" | grep -v grep
 
 ## View logs
 
+Flask:
+
 ```bash
 tail -f flask.log
 ```
+
+Gateway:
 
 ```bash
 tail -f gateway.log
@@ -76,6 +81,5 @@ Clone first:
 cd ~
 git clone https://github.com/kirannayakcontact-spec/Titan-nova-codex.git
 cd ~/Titan-nova-codex
+bash deploy.sh
 ```
-
-Then run the one-command deploy again.
