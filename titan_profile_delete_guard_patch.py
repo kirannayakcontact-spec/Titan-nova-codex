@@ -4,10 +4,11 @@ Single owner for VIP/profile delete fixes. This module keeps the old patcher CLI
 for compatibility and exposes register_vip_profile_delete_guard(app) for the
 current launcher runtime. Do not create a second VIP delete guard file.
 
-v5-runtime fixes:
+v6-runtime fixes:
 - Captures icon-only trash/delete buttons in the VIP Connections UI.
 - Bridges legacy VIP delete fetch calls into the persistent tombstone API.
 - Scrubs stale full-state saves so deleted VIP profiles cannot reappear after refresh.
+- All deletedProfiles tombstone keys are Firebase-safe; no empty, '/', '.', '#', '$', '[' or ']' keys.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import argparse
+import hashlib
 import json
 import re
 import time
@@ -78,6 +80,38 @@ IDENTIFIER_FIELDS = (
 )
 
 
+def _stable_hash(value: Any) -> str:
+    return hashlib.sha1(str(value or "").encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def _firebase_key(value: Any, prefix: str = "k") -> str:
+    """Return a key that is valid as a Firebase Realtime Database child key."""
+    raw = str(value or "").strip()
+    safe = re.sub(r"[\.\#\$\[\]\/]+", "_", raw)
+    safe = re.sub(r"\s+", "_", safe)
+    safe = re.sub(r"[^A-Za-z0-9_@+\-=,:|]+", "_", safe)
+    safe = safe.strip("_")
+    if not safe:
+        safe = _stable_hash(raw or prefix)
+    if len(safe) > 110:
+        safe = safe[:80] + "_" + _stable_hash(raw)
+    return f"{prefix}_{safe}"
+
+
+def _normalize_tombstone_keys(tomb: Any) -> Dict[str, Any]:
+    if not isinstance(tomb, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for k, v in list(tomb.items()):
+        if isinstance(v, dict):
+            record = dict(v)
+            record.setdefault("rawKey", str(k))
+        else:
+            record = {"deleted": bool(v), "rawKey": str(k)}
+        out[_firebase_key(k, "t")] = record
+    return out
+
+
 def register_vip_profile_delete_guard(app):
     """Register persistent VIP profile delete endpoints and anti-restore guards."""
     if getattr(app, "_vip_profile_delete_guard_registered", False):
@@ -100,6 +134,8 @@ def register_vip_profile_delete_guard(app):
     def state_now():
         state = raw_state_now()
         if isinstance(state, dict):
+            if isinstance(state.get("deletedProfiles"), dict):
+                state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
             prune_state_with_tombstones(state)
         return state
 
@@ -222,23 +258,20 @@ def register_vip_profile_delete_guard(app):
         if not isinstance(tomb, dict):
             return ids, phones
         for k, v in tomb.items():
-            s = clean(k)
-            if s:
-                ids.add(s.lower())
-                if s.startswith(("id_", "key_")):
-                    ids.add(s.split("_", 1)[1].lower())
-                if s.startswith("phone_"):
-                    p = digits(s.split("_", 1)[1])
-                    if p:
-                        phones.add(p)
+            add_identifier(ids, k)
             if isinstance(v, dict):
-                for f in ("phone", "key", "path", "id"):
+                for f in ("phone", "key", "path", "id", "rawKey", "rawPath"):
                     val = v.get(f)
                     if val:
                         add_identifier(ids, val)
                         d = digits(val)
                         if d:
                             phones.add(d)
+                for val in v.get("match") or []:
+                    add_identifier(ids, val)
+                    d = digits(val)
+                    if d:
+                        phones.add(d)
         return {str(x).lower() for x in ids if x}, {p for p in phones if p}
 
     def record_matches(key: Any, profile: Any, identifiers: set, phone: str, name: str) -> bool:
@@ -293,21 +326,41 @@ def register_vip_profile_delete_guard(app):
                 keys.append(k)
         return keys
 
+    def tomb_put(tomb: Dict[str, Any], raw_key: Any, stamp: Dict[str, Any]):
+        tomb[_firebase_key(raw_key, "t")] = dict(stamp)
+
     def add_tombstone(tomb: Dict[str, Any], top: str, path: List[Any], profile: Any, identifiers: set, phone: str):
         rec_phone = profile_phone(profile) or phone
         path_text = "/".join(str(p) for p in path)
-        stamp = {"deleted": True, "top": top, "path": path_text, "phone": rec_phone, "deletedAt": now_iso()}
-        tomb["path_" + top + "/" + path_text] = stamp
+        match_values = [str(top), path_text]
         if path:
-            tomb[str(path[-1])] = stamp
-            tomb["key_" + str(path[-1])] = stamp
+            match_values.extend([str(path[-1]), "key_" + str(path[-1])])
         if rec_phone:
-            tomb["phone_" + rec_phone] = stamp
+            match_values.extend([rec_phone, "phone_" + rec_phone])
+        for ident in identifiers:
+            if clean(ident):
+                match_values.append(clean(ident))
+                match_values.append("id_" + clean(ident).lower())
+                match_values.append("key_" + clean(ident))
+        stamp = {
+            "deleted": True,
+            "top": str(top),
+            "rawPath": path_text,
+            "phone": rec_phone,
+            "match": sorted({m for m in match_values if m}),
+            "deletedAt": now_iso(),
+        }
+        tomb_put(tomb, "path_" + str(top) + "_" + path_text, stamp)
+        if path:
+            tomb_put(tomb, str(path[-1]), stamp)
+            tomb_put(tomb, "key_" + str(path[-1]), stamp)
+        if rec_phone:
+            tomb_put(tomb, "phone_" + rec_phone, stamp)
         for ident in identifiers:
             s = clean(ident)
             if s and len(s) >= 3:
-                tomb["id_" + s.lower()] = stamp
-                tomb["key_" + s] = stamp
+                tomb_put(tomb, "id_" + s.lower(), stamp)
+                tomb_put(tomb, "key_" + s, stamp)
 
     def delete_from_container(top: str, container: Any, identifiers: set, phone: str, name: str, path: List[Any], tomb: Dict[str, Any], depth: int = 0) -> List[Dict[str, Any]]:
         deleted: List[Dict[str, Any]] = []
@@ -338,7 +391,7 @@ def register_vip_profile_delete_guard(app):
     def delete_matching_profiles(state: Dict[str, Any], identifiers: set, phone: str, name: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any], List[str]]:
         deleted: List[Dict[str, Any]] = []
         touched: List[str] = []
-        tomb = state.get("deletedProfiles") if isinstance(state.get("deletedProfiles"), dict) else {}
+        tomb = _normalize_tombstone_keys(state.get("deletedProfiles"))
         for top in top_keys_for_state(state):
             coll = state.get(top)
             before_count = len(deleted)
@@ -346,15 +399,16 @@ def register_vip_profile_delete_guard(app):
             if len(deleted) != before_count:
                 state[top] = coll
                 touched.append(top)
-        state["deletedProfiles"] = tomb
-        return deleted, tomb, touched
+        state["deletedProfiles"] = _normalize_tombstone_keys(tomb)
+        return deleted, state["deletedProfiles"], touched
 
     def prune_state_with_tombstones(state: Dict[str, Any]) -> Tuple[bool, List[str]]:
         if not isinstance(state, dict):
             return False, []
-        tomb = state.get("deletedProfiles") if isinstance(state.get("deletedProfiles"), dict) else {}
+        tomb = _normalize_tombstone_keys(state.get("deletedProfiles"))
         if not tomb:
             return False, []
+        state["deletedProfiles"] = tomb
         touched = []
         changed = False
         for top in top_keys_for_state(state):
@@ -364,7 +418,7 @@ def register_vip_profile_delete_guard(app):
                 state[top] = coll
                 touched.append(top)
                 changed = True
-        state["deletedProfiles"] = tomb
+        state["deletedProfiles"] = _normalize_tombstone_keys(tomb)
         return changed, touched
 
     def request_payload():
@@ -380,8 +434,13 @@ def register_vip_profile_delete_guard(app):
         return data
 
     def persist_updates(state: Dict[str, Any], updates: Dict[str, Any]) -> bool:
+        if isinstance(updates.get("deletedProfiles"), dict):
+            updates["deletedProfiles"] = _normalize_tombstone_keys(updates.get("deletedProfiles"))
+            state["deletedProfiles"] = updates["deletedProfiles"]
         ok = True
         for k, v in updates.items():
+            if not k:
+                continue
             ok = put_child([k], v) and ok
         if not ok:
             put_top(state, updates)
@@ -397,6 +456,8 @@ def register_vip_profile_delete_guard(app):
             state = orig(*args, **kwargs)
             try:
                 if isinstance(state, dict):
+                    if isinstance(state.get("deletedProfiles"), dict):
+                        state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
                     changed, touched = prune_state_with_tombstones(state)
                     if changed:
                         updates = {k: state.get(k) for k in touched if k in state}
@@ -419,12 +480,13 @@ def register_vip_profile_delete_guard(app):
             if request.path.startswith("/api/vips/profile/delete"):
                 return None
             state = raw_state_now()
-            tomb = state.get("deletedProfiles") if isinstance(state, dict) and isinstance(state.get("deletedProfiles"), dict) else {}
+            tomb = _normalize_tombstone_keys(state.get("deletedProfiles")) if isinstance(state, dict) else {}
             if not tomb:
                 return None
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
                 return None
+            data["deletedProfiles"] = _normalize_tombstone_keys(data.get("deletedProfiles") or tomb)
             changed, _ = prune_state_with_tombstones(data)
             if changed:
                 encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -438,6 +500,8 @@ def register_vip_profile_delete_guard(app):
     @app.route("/api/vip/profile/delete", methods=["POST"])
     @app.route("/api/profile/delete", methods=["POST"])
     @app.route("/api/vip_profile_delete_guard", methods=["POST"])
+    @app.route("/api/vip_profile_remove", methods=["POST"])
+    @app.route("/api/vip_profile_delete", methods=["POST"])
     @app.route("/api/vips/delete", methods=["POST"])
     @app.route("/api/vip/delete", methods=["POST"])
     def vip_profile_delete_api():
@@ -447,42 +511,53 @@ def register_vip_profile_delete_guard(app):
             if not (identifiers or phone or name or text):
                 return jsonify({"status": "error", "ok": False, "reason": "Missing profile identifier/phone/name"}), 400
             state = state_now()
-            tomb = state.get("deletedProfiles") if isinstance(state.get("deletedProfiles"), dict) else {}
+            tomb = _normalize_tombstone_keys(state.get("deletedProfiles"))
+            request_stamp = {"deleted": True, "top": "request", "rawPath": "request", "phone": phone, "match": [], "deletedAt": now_iso()}
+            match_values = []
             if phone:
-                tomb["phone_" + phone] = {"deleted": True, "top": "request", "path": phone, "phone": phone, "deletedAt": now_iso()}
+                match_values.extend([phone, "phone_" + phone])
             for ident in identifiers:
                 s = clean(ident)
                 if s:
-                    tomb["id_" + s.lower()] = {"deleted": True, "top": "request", "path": s, "phone": phone, "deletedAt": now_iso()}
-                    tomb["key_" + s] = {"deleted": True, "top": "request", "path": s, "phone": phone, "deletedAt": now_iso()}
-            state["deletedProfiles"] = tomb
+                    match_values.extend([s, s.lower(), "id_" + s.lower(), "key_" + s])
+            request_stamp["match"] = sorted({m for m in match_values if m})
+            if phone:
+                tomb_put(tomb, "phone_" + phone, request_stamp)
+            for ident in identifiers:
+                s = clean(ident)
+                if s:
+                    tomb_put(tomb, "id_" + s.lower(), request_stamp)
+                    tomb_put(tomb, "key_" + s, request_stamp)
+            state["deletedProfiles"] = _normalize_tombstone_keys(tomb)
             deleted, tomb, touched = delete_matching_profiles(state, identifiers, phone, name)
             changed, prune_touched = prune_state_with_tombstones(state)
             for k in prune_touched:
                 if k not in touched:
                     touched.append(k)
             updates = {k: state.get(k) for k in touched if k in state}
-            updates["deletedProfiles"] = tomb
+            updates["deletedProfiles"] = _normalize_tombstone_keys(tomb)
             persist_updates(state, updates)
             status = "success" if deleted or changed else "tombstoned"
-            return jsonify({"status": status, "ok": True, "deleted": deleted, "phone": phone, "touched": touched, "tombstoneCount": len(tomb)})
+            return jsonify({"status": status, "ok": True, "deleted": deleted, "phone": phone, "touched": touched, "tombstoneCount": len(updates["deletedProfiles"])})
         except Exception as exc:
             return jsonify({"status": "error", "ok": False, "reason": str(exc)}), 500
 
     @app.route("/api/vips/profile/delete/status", methods=["GET"])
     def vip_profile_delete_status():
-        return jsonify({"status": "ok", "feature": "titan_profile_delete_guard_patch", "version": "v5-runtime"})
+        return jsonify({"status": "ok", "feature": "titan_profile_delete_guard_patch", "version": "v6-runtime", "firebaseSafeTombstones": True})
 
     @app.route("/api/vips/profile/delete/prune", methods=["POST"])
     def vip_profile_delete_prune_api():
         try:
             state = state_now()
+            if isinstance(state.get("deletedProfiles"), dict):
+                state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
             changed, touched = prune_state_with_tombstones(state)
             updates = {k: state.get(k) for k in touched if k in state}
             updates["deletedProfiles"] = state.get("deletedProfiles") or {}
             if updates:
                 persist_updates(state, updates)
-            return jsonify({"status": "ok", "changed": changed, "touched": touched})
+            return jsonify({"status": "ok", "changed": changed, "touched": touched, "tombstoneCount": len(updates.get("deletedProfiles") or {})})
         except Exception as exc:
             return jsonify({"status": "error", "ok": False, "reason": str(exc)}), 500
 
@@ -497,7 +572,7 @@ def register_vip_profile_delete_guard(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "vip-profile-delete-guard-v5" in html or "</body>" not in html.lower():
+            if not html or "vip-profile-delete-guard-v6" in html or "</body>" not in html.lower():
                 return resp
             idx = html.lower().rfind("</body>")
             html = html[:idx] + SCRIPT + html[idx:]
@@ -507,7 +582,7 @@ def register_vip_profile_delete_guard(app):
             pass
         return resp
 
-    print("✅ Titan profile delete guard loaded: v5-runtime")
+    print("✅ Titan profile delete guard loaded: v6-runtime firebase-safe")
 
 
 def apply_patch(text):
@@ -543,13 +618,13 @@ def main():
 
 
 SCRIPT = r'''
-<script id="vip-profile-delete-guard-v5">
+<script id="vip-profile-delete-guard-v6">
 (function(){
-  if(window.__VIP_PROFILE_DELETE_GUARD_V5__) return;
-  window.__VIP_PROFILE_DELETE_GUARD_V5__ = true;
+  if(window.__VIP_PROFILE_DELETE_GUARD_V6__) return;
+  window.__VIP_PROFILE_DELETE_GUARD_V6__ = true;
   const API='/api/vips/profile/delete';
   const PRUNE_API='/api/vips/profile/delete/prune';
-  const STORE='titan.vip.deleted.v5';
+  const STORE='titan.vip.deleted.v6';
   let lastVipDeletePayload=null;
   let lastVipDeleteAt=0;
   const nativeFetch=window.fetch ? window.fetch.bind(window) : null;
