@@ -88,6 +88,12 @@ except Exception as exc:
     print("⚠️ Titan Result control patch failed to load:", exc)
 
 try:
+    from titan_ledger_autopf_ui_patch import register_titan_ledger_autopf_ui
+    register_titan_ledger_autopf_ui(app)
+except Exception as exc:
+    print("⚠️ Titan Ledger Auto P/F UI patch failed to load:", exc)
+
+try:
     from titan_vip_control_patch import register_titan_vip_control
     register_titan_vip_control(app)
 except Exception as exc:
