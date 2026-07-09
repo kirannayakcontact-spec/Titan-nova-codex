@@ -66,6 +66,7 @@ python titan_mcp_patch.py --apply
 info "Applying VIP profile persistence fix"
 python titan_profile_delete_guard_patch.py --apply
 python titan_vip_profile_fix_patch.py --apply
+python titan_vip_delete_ui_patch.py --apply
 
 info "Running preflight checks"
 python -m py_compile flask_app.py
