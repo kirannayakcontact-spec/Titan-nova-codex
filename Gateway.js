@@ -15,6 +15,12 @@ try {
   console.warn("⚠️ Gateway Codex preflight patch failed:", err && err.message ? err.message : err);
 }
 
+try {
+  require("./gateway_firebase_guard_patch.js");
+} catch (err) {
+  console.warn("⚠️ Gateway Firebase guard failed:", err && err.message ? err.message : err);
+}
+
 require.extensions[".bak"] = require.extensions[".js"];
 
 try {
