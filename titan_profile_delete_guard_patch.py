@@ -1,14 +1,12 @@
 """Titan profile delete guard.
 
-Single owner for VIP/profile delete fixes. This module keeps the old patcher CLI
-for compatibility and exposes register_vip_profile_delete_guard(app) for the
-current launcher runtime. Do not create a second VIP delete guard file.
+Single owner for VIP/profile delete fixes.
 
-v6-runtime fixes:
-- Captures icon-only trash/delete buttons in the VIP Connections UI.
-- Bridges legacy VIP delete fetch calls into the persistent tombstone API.
-- Scrubs stale full-state saves so deleted VIP profiles cannot reappear after refresh.
-- All deletedProfiles tombstone keys are Firebase-safe; no empty, '/', '.', '#', '$', '[' or ']' keys.
+v7-runtime fixes:
+- Delete confirmation appears only on the actual trash/delete button.
+- Normal VIP tab touches, expiry dropdown, link button, app access switch, and empty card area do not trigger delete.
+- Legacy delete fetches are still mirrored to the persistent tombstone API silently.
+- Tombstone keys remain Firebase-safe.
 """
 
 from __future__ import annotations
@@ -24,37 +22,6 @@ import time
 ROOT = Path(__file__).resolve().parent
 TARGET = ROOT / "flask_app.py"
 MARKER = "TITAN_PROFILE_DELETE_GUARD_V2"
-
-OLD = """        for k, v in live.items():
-            if k not in cand:
-                cand[k] = _runtime_deepcopy(v)
-        candidate[key] = cand"""
-
-NEW = """        deleted_profiles = {}
-        profile_delete_keys = ('profiles', 'userProfiles', 'vipProfiles', 'users', 'customers', 'vipUsers', 'clients', 'vipClients', 'vips', 'vipList', 'vipMembers', 'members', 'clientProfiles', 'customerProfiles', 'vipConnections', 'vipLinks', 'clientLinks', 'connections')
-        try:
-            if isinstance(candidate.get('deletedProfiles'), dict):
-                deleted_profiles.update(candidate.get('deletedProfiles') or {})
-            if isinstance(latest.get('deletedProfiles'), dict):
-                deleted_profiles.update(latest.get('deletedProfiles') or {})
-        except Exception:
-            deleted_profiles = {}
-        for k, v in live.items():
-            if k not in cand:
-                if key in profile_delete_keys:
-                    phone = ''
-                    try:
-                        phone = re.sub(r'[^0-9]', '', str((v or {}).get('phone') or (v or {}).get('mobile') or (v or {}).get('whatsapp') or ''))
-                        if len(phone) == 10:
-                            phone = '91' + phone
-                    except Exception:
-                        phone = ''
-                    if str(k) in deleted_profiles or ('key_' + str(k)) in deleted_profiles or (phone and ('phone_' + phone) in deleted_profiles):
-                        continue
-                cand[k] = _runtime_deepcopy(v)
-        candidate[key] = cand
-        if key in profile_delete_keys and deleted_profiles:
-            candidate['deletedProfiles'] = deleted_profiles"""
 
 BASE_PROFILE_TOP_KEYS = (
     "profiles", "userProfiles", "vipProfiles", "users", "customers", "vipUsers",
@@ -85,7 +52,6 @@ def _stable_hash(value: Any) -> str:
 
 
 def _firebase_key(value: Any, prefix: str = "k") -> str:
-    """Return a key that is valid as a Firebase Realtime Database child key."""
     raw = str(value or "").strip()
     safe = re.sub(r"[\.\#\$\[\]\/]+", "_", raw)
     safe = re.sub(r"\s+", "_", safe)
@@ -134,8 +100,7 @@ def register_vip_profile_delete_guard(app):
     def state_now():
         state = raw_state_now()
         if isinstance(state, dict):
-            if isinstance(state.get("deletedProfiles"), dict):
-                state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
+            state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
             prune_state_with_tombstones(state)
         return state
 
@@ -174,21 +139,6 @@ def register_vip_profile_delete_guard(app):
     def normalize_name(value: Any) -> str:
         return re.sub(r"\s+", " ", clean(value)).lower()
 
-    def record_text(value: Any) -> str:
-        try:
-            return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).lower()
-        except Exception:
-            return str(value or "").lower()
-
-    def profile_phone(profile: Any) -> str:
-        if not isinstance(profile, dict):
-            return ""
-        for k in ("phone", "mobile", "number", "whatsapp", "phoneNumber", "wa", "id"):
-            d = digits(profile.get(k))
-            if d:
-                return d
-        return ""
-
     def add_identifier(out: set, value: Any):
         v = clean(value)
         if not v:
@@ -201,6 +151,15 @@ def register_vip_profile_delete_guard(app):
             out.add("phone_" + d)
             out.add("key_" + d)
 
+    def profile_phone(profile: Any) -> str:
+        if not isinstance(profile, dict):
+            return ""
+        for k in ("phone", "mobile", "number", "whatsapp", "phoneNumber", "wa", "id"):
+            d = digits(profile.get(k))
+            if d:
+                return d
+        return ""
+
     def profile_id_values(key: Any, profile: Any) -> set:
         vals = set()
         add_identifier(vals, key)
@@ -210,9 +169,15 @@ def register_vip_profile_delete_guard(app):
                     add_identifier(vals, profile.get(k))
         return vals
 
+    def record_text(value: Any) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).lower()
+        except Exception:
+            return str(value or "").lower()
+
     def request_identifiers(data: Dict[str, Any]) -> Tuple[set, str, str, str]:
         ids = set()
-        text_parts = []
+        text_parts: List[str] = []
         for k in (
             "id", "key", "recordKey", "user_id", "userId", "profile_id", "profileId",
             "clientId", "vipId", "identifier", "href", "url", "path", "action",
@@ -230,7 +195,6 @@ def register_vip_profile_delete_guard(app):
         phone = digits(data.get("phone") or data.get("phone_number") or data.get("mobile") or "")
         name = clean(data.get("name") or "")
         joined_text = " ".join([p for p in text_parts if p])
-
         for pattern in (
             r"(?:USER\s*ID|PROFILE\s*ID|CLIENT\s*ID|VIP\s*ID|ID)\s*[:#\-]?\s*([A-Za-z0-9_@+\-.]{3,100})",
             r"(?:KEY|UID)\s*[:#\-]?\s*([A-Za-z0-9_@+\-.]{3,100})",
@@ -279,11 +243,8 @@ def register_vip_profile_delete_guard(app):
         req = {str(v).lower() for v in identifiers if v}
         if req and vals.intersection(req):
             return True
-        if phone:
-            if digits(key) == phone or profile_phone(profile) == phone:
-                return True
-            if ("phone_" + phone).lower() in vals:
-                return True
+        if phone and (digits(key) == phone or profile_phone(profile) == phone or ("phone_" + phone).lower() in vals):
+            return True
         if name and isinstance(profile, dict):
             target = normalize_name(name)
             for f in ("name", "customerName", "displayName", "clientName", "vipName"):
@@ -339,9 +300,7 @@ def register_vip_profile_delete_guard(app):
             match_values.extend([rec_phone, "phone_" + rec_phone])
         for ident in identifiers:
             if clean(ident):
-                match_values.append(clean(ident))
-                match_values.append("id_" + clean(ident).lower())
-                match_values.append("key_" + clean(ident))
+                match_values.extend([clean(ident), "id_" + clean(ident).lower(), "key_" + clean(ident)])
         stamp = {
             "deleted": True,
             "top": str(top),
@@ -456,8 +415,7 @@ def register_vip_profile_delete_guard(app):
             state = orig(*args, **kwargs)
             try:
                 if isinstance(state, dict):
-                    if isinstance(state.get("deletedProfiles"), dict):
-                        state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
+                    state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
                     changed, touched = prune_state_with_tombstones(state)
                     if changed:
                         updates = {k: state.get(k) for k in touched if k in state}
@@ -544,14 +502,13 @@ def register_vip_profile_delete_guard(app):
 
     @app.route("/api/vips/profile/delete/status", methods=["GET"])
     def vip_profile_delete_status():
-        return jsonify({"status": "ok", "feature": "titan_profile_delete_guard_patch", "version": "v6-runtime", "firebaseSafeTombstones": True})
+        return jsonify({"status": "ok", "feature": "titan_profile_delete_guard_patch", "version": "v7-runtime", "buttonOnlyDelete": True, "firebaseSafeTombstones": True})
 
     @app.route("/api/vips/profile/delete/prune", methods=["POST"])
     def vip_profile_delete_prune_api():
         try:
             state = state_now()
-            if isinstance(state.get("deletedProfiles"), dict):
-                state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
+            state["deletedProfiles"] = _normalize_tombstone_keys(state.get("deletedProfiles"))
             changed, touched = prune_state_with_tombstones(state)
             updates = {k: state.get(k) for k in touched if k in state}
             updates["deletedProfiles"] = state.get("deletedProfiles") or {}
@@ -572,7 +529,7 @@ def register_vip_profile_delete_guard(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "vip-profile-delete-guard-v6" in html or "</body>" not in html.lower():
+            if not html or "vip-profile-delete-guard-v7" in html or "</body>" not in html.lower():
                 return resp
             idx = html.lower().rfind("</body>")
             html = html[:idx] + SCRIPT + html[idx:]
@@ -582,133 +539,71 @@ def register_vip_profile_delete_guard(app):
             pass
         return resp
 
-    print("✅ Titan profile delete guard loaded: v6-runtime firebase-safe")
+    print("✅ Titan profile delete guard loaded: v7-runtime button-only")
 
 
 def apply_patch(text):
-    """Keep old CLI patcher behavior for local legacy repair."""
-    if MARKER in text:
-        return text, False
-    if OLD not in text:
-        raise RuntimeError("merge guard anchor not found")
-    text = text.replace(OLD, NEW + "\n    # " + MARKER, 1)
-    return text, True
+    print("Profile delete guard is runtime-registered; legacy patch CLI is kept for compatibility.")
+    return text, False
 
 
 def main():
-    try:
-        from titan_runtime_files import ensure_runtime_file
-        ensure_runtime_file("flask_app.py")
-    except Exception:
-        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
-    args = ap.parse_args()
-    old = TARGET.read_text(encoding="utf-8", errors="replace")
-    new, changed = apply_patch(old)
-    if not changed:
-        print("Profile delete guard already present")
-        return 0
-    print("Profile delete guard can be applied")
-    if args.apply:
-        TARGET.with_suffix(TARGET.suffix + ".profile-delete-guard.bak").write_text(old, encoding="utf-8")
-        TARGET.write_text(new, encoding="utf-8")
-        print("Applied profile delete guard")
+    ap.parse_args()
+    print("Profile delete guard runtime module present")
     return 0
 
 
 SCRIPT = r'''
-<script id="vip-profile-delete-guard-v6">
+<script id="vip-profile-delete-guard-v7">
 (function(){
-  if(window.__VIP_PROFILE_DELETE_GUARD_V6__) return;
-  window.__VIP_PROFILE_DELETE_GUARD_V6__ = true;
+  if(window.__VIP_PROFILE_DELETE_GUARD_V7__) return;
+  window.__VIP_PROFILE_DELETE_GUARD_V7__ = true;
   const API='/api/vips/profile/delete';
   const PRUNE_API='/api/vips/profile/delete/prune';
-  const STORE='titan.vip.deleted.v6';
-  let lastVipDeletePayload=null;
-  let lastVipDeleteAt=0;
+  const STORE='titan.vip.deleted.v7';
+  let lastVipPayload=null;
+  let lastVipAt=0;
   const nativeFetch=window.fetch ? window.fetch.bind(window) : null;
   function txt(n){return String((n&&((n.innerText||n.textContent||n.value||(n.getAttribute&&n.getAttribute('aria-label'))||(n.getAttribute&&n.getAttribute('title')))))||'').replace(/\s+/g,' ').trim()}
   function attr(n,k){try{return (n&&n.getAttribute&&n.getAttribute(k))||''}catch(e){return ''}}
-  function html(n){try{return String((n&&n.outerHTML)||'').slice(0,1200)}catch(e){return ''}}
+  function cls(n){try{return String((n&&n.className)||'')}catch(e){return ''}}
   function pageLooksVip(){return /\bVIPS\b|VIP\s+CONNECTIONS|VIP\s+PROFILE|ACTIVE\s+PROFILES|CLIENT\s+DISPLAY\s+NAME|USER\s+PROFILE|CLIENT\s+PROFILE/i.test(txt(document.body))}
-  function blob(el,target){let s='';[target,el,el&&el.parentElement].forEach(n=>{if(n)s+=' '+txt(n)+' '+attr(n,'aria-label')+' '+attr(n,'title')+' '+attr(n,'class')+' '+attr(n,'id')+' '+html(n)});return s}
-  function buttonText(el,target){return blob(el,target).toUpperCase()}
-  function isDeleteControl(el,target){const s=buttonText(el,target);return /\b(DELETE|REMOVE|TRASH|DEL|PROFILE DELETE|USER DELETE)\b|FA-TRASH|BI-TRASH|LUCIDE-TRASH|MATERIAL-ICONS[^>]*DELETE|🗑|DANGER|BTN-DELETE|REMOVE/i.test(s)}
-  function isRightTrashClick(el,ev){try{const r=(el&&el.getBoundingClientRect&&el.getBoundingClientRect())||null;const x=(ev&&ev.clientX)||((r&&r.left+r.width/2)||0);const w=window.innerWidth||document.documentElement.clientWidth||1;const b=buttonText(el,ev&&ev.target);return x>w*0.89&&/(SVG|PATH|BUTTON|ICON|BTN|TRASH|DELETE|REMOVE|DANGER|FA-|BI-|LUCIDE)/i.test(b)}catch(e){return false}}
   function profileContext(el){let n=el;for(let i=0;n&&i<10;i++,n=n.parentElement){const s=txt(n);if(s.length>20&&s.length<3500&&/(USER|PROFILE|PHONE|MOBILE|VIP|APPROVAL|WALLET|NAME|CLIENT|MEMBER|ACTIVE PROFILES|APP ACCESS)/i.test(s))return n}return el.closest&&el.closest('tr,li,.card,.row,.profile,.user,.vip,[class*="profile"],[class*="vip"],[class*="client"]')||el.parentElement}
-  function hintsFrom(el,target){
-    const out=[]; let n=target||el;
-    for(let i=0;n&&i<8;i++,n=n.parentElement){
-      ['data-id','data-key','data-user-id','data-userid','data-profile-id','data-client-id','data-vip-id','data-phone','id','name','value','href','action','onclick','class','aria-label','title'].forEach(k=>{const v=attr(n,k);if(v)out.push(k+':'+v)});
-      if(n.dataset){Object.keys(n.dataset).forEach(k=>{if(n.dataset[k])out.push(k+':'+n.dataset[k])})}
-      const h=html(n); if(h) out.push('html:'+h.slice(0,500));
-    }
-    return Array.from(new Set(out)).slice(0,140);
-  }
-  function extract(el,target){
-    const card=profileContext(el); const s=txt(card); const hints=hintsFrom(el,target); let id='', phone='', name='';
-    let m=s.match(/(?:USER\s*ID|PROFILE\s*ID|CLIENT\s*ID|VIP\s*ID|ID)\s*[:#\-]?\s*([A-Za-z0-9_@+\-.]{3,100})/i); if(m) id=m[1];
-    m=s.match(/(?:\+?91[\s\-]?)?[6-9][0-9\s\-]{8,14}/); if(m) phone=m[0];
-    m=s.match(/(?:NAME|USER|CLIENT|VIP)\s*[:#\-]?\s*([A-Za-z][A-Za-z ._\-]{1,60})/i); if(m) name=m[1];
-    return {id:id, phone:phone, name:name, text:s.slice(0,3000), rowText:s.slice(0,3000), buttonText:txt(el), hints:hints, href:attr(el,'href'), action:attr(el,'action')};
-  }
+  function hintsFrom(el){const out=[];let n=el;for(let i=0;n&&i<6;i++,n=n.parentElement){['data-id','data-key','data-user-id','data-userid','data-profile-id','data-client-id','data-vip-id','data-phone','id','name','value','href','action','onclick','class','aria-label','title'].forEach(k=>{const v=attr(n,k);if(v)out.push(k+':'+v)});if(n.dataset){Object.keys(n.dataset).forEach(k=>{if(n.dataset[k])out.push(k+':'+n.dataset[k])})}}return Array.from(new Set(out)).slice(0,100)}
+  function extract(el){const card=profileContext(el);const s=txt(card);const hints=hintsFrom(el);let id='',phone='',name='';let m=s.match(/(?:USER\s*ID|PROFILE\s*ID|CLIENT\s*ID|VIP\s*ID|ID)\s*[:#\-]?\s*([A-Za-z0-9_@+\-.]{3,100})/i);if(m)id=m[1];m=s.match(/(?:\+?91[\s\-]?)?[6-9][0-9\s\-]{8,14}/);if(m)phone=m[0];m=s.match(/(?:NAME|USER|CLIENT|VIP)\s*[:#\-]?\s*([A-Za-z][A-Za-z ._\-]{1,60})/i);if(m)name=m[1];return{id:id,phone:phone,name:name,text:s.slice(0,3000),rowText:s.slice(0,3000),buttonText:txt(el),hints:hints,href:attr(el,'href'),action:attr(el,'action')}}
   function loadDeleted(){try{return JSON.parse(localStorage.getItem(STORE)||'[]')}catch(e){return []}}
   function saveDeleted(item){try{const a=loadDeleted();a.push(item);localStorage.setItem(STORE,JSON.stringify(a.slice(-200)))}catch(e){}}
   function compactPhone(x){return String(x||'').replace(/\D+/g,'')}
   function containsDeleted(s){s=String(s||'').replace(/\s+/g,' ');const sp=compactPhone(s);const sl=s.toLowerCase();return loadDeleted().some(x=>{return (x.phone&&sp.indexOf(compactPhone(x.phone))>=0)||(x.id&&sl.indexOf(String(x.id).toLowerCase())>=0)||(x.name&&sl.indexOf(String(x.name).toLowerCase())>=0)})}
   function hideDeletedCards(){if(!pageLooksVip())return;document.querySelectorAll('tr,li,.card,.row,.profile,.user,.vip,[class*="profile"],[class*="vip"],[class*="client"]').forEach(n=>{const s=txt(n);if(s.length>20&&s.length<3500&&/(USER|PROFILE|PHONE|MOBILE|VIP|CLIENT|MEMBER|NAME|APP ACCESS)/i.test(s)&&containsDeleted(s)){try{n.style.display='none'}catch(e){}}})}
   function headers(){let h={'Content-Type':'application/json'};try{let t=localStorage.getItem('TITAN_ADMIN_TOKEN')||localStorage.getItem('titan_admin_token')||'';if(t)h['X-Titan-Admin-Token']=t}catch(e){}return h}
-  function stop(ev){try{ev.preventDefault()}catch(e){} try{ev.stopPropagation()}catch(e){} try{ev.stopImmediatePropagation()}catch(e){}}
-  async function guardDelete(data,quiet){
+  function stop(ev){try{ev.preventDefault()}catch(e){}try{ev.stopPropagation()}catch(e){}try{ev.stopImmediatePropagation()}catch(e){}}
+  function directControl(target){return target&&target.closest?target.closest('button,a,input[type="button"],input[type="submit"],[role="button"]'):null}
+  function ownDeleteSignal(control,target,ev){
+    if(!control) return false;
+    const direct=(txt(control)+' '+attr(control,'aria-label')+' '+attr(control,'title')+' '+attr(control,'data-action')+' '+attr(control,'id')+' '+cls(control)+' '+cls(target)+' '+String((target&&target.tagName)||'')).toUpperCase();
+    if(/\b(DELETE|REMOVE|TRASH|DEL)\b|FA-TRASH|BI-TRASH|LUCIDE-TRASH|MATERIAL-ICONS[^ ]*DELETE|🗑|BTN-DELETE/.test(direct)) return true;
     try{
-      const r=await nativeFetch(API,{method:'POST',headers:headers(),body:JSON.stringify(data),cache:'no-store'});
-      const j=await r.json().catch(()=>({}));
-      if(r.ok&&j&&j.ok!==false){
-        saveDeleted({id:data.id,phone:compactPhone(data.phone),name:data.name,at:Date.now()});
-        try{nativeFetch(PRUNE_API,{method:'POST',headers:headers(),body:'{}',cache:'no-store'})}catch(e){}
-        hideDeletedCards();
-        if(!quiet) alert('Profile delete saved. Refresh ke baad wapas nahi aana chahiye.');
-        return true;
-      }
-      if(!quiet) alert('Delete failed: '+(j.reason||j.status||r.status));
-    }catch(e){if(!quiet) alert('Delete failed: '+e.message)}
-    return false;
+      const r=control.getBoundingClientRect();
+      const x=(ev&&ev.clientX)||0;
+      const w=window.innerWidth||document.documentElement.clientWidth||1;
+      const small=r.width<=86&&r.height<=86&&r.width>=24&&r.height>=24;
+      const rightMost=x>w*0.90;
+      const svgLike=/^(SVG|PATH|I|SPAN)$/i.test(String((target&&target.tagName)||'')) || /icon|trash|delete/i.test(cls(target));
+      const linkLike=/link|chain|copy|share/i.test(direct);
+      return small && rightMost && svgLike && !linkLike;
+    }catch(e){return false}
   }
-  async function deleteProfile(el,target){
-    const card=profileContext(el); const data=extract(el,target);
-    if(!confirm('VIP/user profile delete karna hai?')) return;
-    lastVipDeletePayload=data; lastVipDeleteAt=Date.now();
-    const ok=await guardDelete(data,false);
-    if(ok){try{card.style.opacity='0.25'; card.style.pointerEvents='none'; setTimeout(()=>{try{card.remove()}catch(e){} hideDeletedCards()},350)}catch(e){} try{document.dispatchEvent(new CustomEvent('titan:force-sync'))}catch(e){}}
-  }
-  function candidateControl(target){return target&&target.closest?target.closest('button,a,input[type="button"],input[type="submit"],[role="button"],.btn,.delete,.remove,[data-action],[onclick],[class*="icon"],[class*="trash"],[class*="delete"]'):null}
-  function maybeHandle(ev){
-    if(!pageLooksVip()) return;
-    const target=ev.target; const el=candidateControl(target);
-    if(!el) return;
-    const ctx=profileContext(el); if(!ctx||!/(USER|PROFILE|PHONE|MOBILE|VIP|CLIENT|MEMBER|NAME|APP ACCESS)/i.test(txt(ctx))) return;
-    const shouldDelete=isDeleteControl(el,target)||isRightTrashClick(el,ev);
-    if(!shouldDelete) return;
-    stop(ev); deleteProfile(el,target);
-  }
-  if(nativeFetch){
-    window.fetch=async function(input,init){
-      const url=String((input&&input.url)||input||'');
-      const method=String((init&&init.method)||'GET').toUpperCase();
-      const body=String((init&&init.body)||'');
-      const resp=await nativeFetch(input,init);
-      try{
-        const looksVipDelete=/vip|profile|client/i.test(url+body)&&(/delete|remove|trash/i.test(url+body)||method==='DELETE');
-        if(looksVipDelete&&Date.now()-lastVipDeleteAt<8000&&lastVipDeletePayload){
-          const payload=Object.assign({},lastVipDeletePayload,{requestUrl:url,requestBody:body.slice(0,1000),hints:(lastVipDeletePayload.hints||[]).concat(['requestUrl:'+url,'requestBody:'+body.slice(0,500)])});
-          setTimeout(()=>guardDelete(payload,true),120);
-        }
-      }catch(e){}
-      return resp;
-    };
-  }
-  ['pointerdown','click','submit'].forEach(type=>document.addEventListener(type,maybeHandle,true));
+  function rememberVipPayload(target){try{if(!pageLooksVip())return;const ctx=profileContext(target);if(ctx){lastVipPayload=extract(target);lastVipAt=Date.now();}}catch(e){}}
+  async function guardDelete(data,quiet){try{const r=await nativeFetch(API,{method:'POST',headers:headers(),body:JSON.stringify(data),cache:'no-store'});const j=await r.json().catch(()=>({}));if(r.ok&&j&&j.ok!==false){saveDeleted({id:data.id,phone:compactPhone(data.phone),name:data.name,at:Date.now()});try{nativeFetch(PRUNE_API,{method:'POST',headers:headers(),body:'{}',cache:'no-store'})}catch(e){}hideDeletedCards();if(!quiet)alert('Profile delete saved. Refresh ke baad wapas nahi aana chahiye.');return true}if(!quiet)alert('Delete failed: '+(j.reason||j.status||r.status))}catch(e){if(!quiet)alert('Delete failed: '+e.message)}return false}
+  async function deleteProfile(control,target){const data=extract(control||target);if(!confirm('VIP/user profile delete karna hai?'))return;lastVipPayload=data;lastVipAt=Date.now();const ok=await guardDelete(data,false);if(ok){const card=profileContext(control||target);try{card.style.opacity='0.25';card.style.pointerEvents='none';setTimeout(()=>{try{card.remove()}catch(e){}hideDeletedCards()},350)}catch(e){}try{document.dispatchEvent(new CustomEvent('titan:force-sync'))}catch(e){}}}
+  function handleClick(ev){if(!pageLooksVip())return;rememberVipPayload(ev.target);const control=directControl(ev.target);if(!control)return;const ctx=profileContext(control);if(!ctx||!/(USER|PROFILE|PHONE|MOBILE|VIP|CLIENT|MEMBER|NAME|APP ACCESS)/i.test(txt(ctx)))return;if(!ownDeleteSignal(control,ev.target,ev))return;stop(ev);deleteProfile(control,ev.target)}
+  if(nativeFetch){window.fetch=async function(input,init){const url=String((input&&input.url)||input||'');const method=String((init&&init.method)||'GET').toUpperCase();const body=String((init&&init.body)||'');const resp=await nativeFetch(input,init);try{const looksVipDelete=/vip|profile|client/i.test(url+body)&&(/delete|remove|trash/i.test(url+body)||method==='DELETE');if(looksVipDelete&&lastVipPayload&&Date.now()-lastVipAt<10000){const payload=Object.assign({},lastVipPayload,{requestUrl:url,requestBody:body.slice(0,1000),hints:(lastVipPayload.hints||[]).concat(['requestUrl:'+url,'requestBody:'+body.slice(0,500)])});setTimeout(()=>guardDelete(payload,true),120)}}catch(e){}return resp}}
+  document.addEventListener('pointerdown',function(ev){rememberVipPayload(ev.target)},true);
+  document.addEventListener('click',handleClick,true);
+  document.addEventListener('submit',handleClick,true);
   setInterval(hideDeletedCards,1200);
   setTimeout(hideDeletedCards,500);
 })();
