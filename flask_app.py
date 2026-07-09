@@ -82,6 +82,12 @@ except Exception as exc:
     print("⚠️ Titan Setup control patch failed to load:", exc)
 
 try:
+    from titan_result_control_patch import register_titan_result_control
+    register_titan_result_control(app)
+except Exception as exc:
+    print("⚠️ Titan Result control patch failed to load:", exc)
+
+try:
     from titan_codex_stability_patch import register_titan_codex_stability
     register_titan_codex_stability(app)
 except Exception as exc:
