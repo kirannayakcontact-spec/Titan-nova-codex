@@ -7,6 +7,7 @@ App-wide realtime without UI jank:
 - debounced render through requestAnimationFrame
 - no overwrite while typing/scrolling/touching
 - Entries/Forward/Finance tab render-lock so open panels do not collapse during realtime sync
+- local-only UI toggle policy: checkbox/toggle/on-off state stays in browser storage; business data remains in Firebase
 """
 
 
@@ -23,7 +24,7 @@ def register_titan_realtime_global(app):
         return jsonify({
             "status": "success",
             "feature": "titan_global_realtime_smooth",
-            "version": "2026-07-08-global-realtime-smooth-v5-finance-render-lock",
+            "version": "2026-07-09-global-realtime-local-only-ui-toggles-v6",
             "pollMs": 1800,
             "writeRefresh": True,
             "smoothMode": True,
@@ -31,6 +32,8 @@ def register_titan_realtime_global(app):
             "entriesRenderLock": True,
             "forwardRenderLock": True,
             "financeRenderLock": True,
+            "localOnlyUiToggles": True,
+            "firebaseBusinessDataOnly": True,
             "checkedAt": int(time.time() * 1000),
         })
 
@@ -56,7 +59,7 @@ def register_titan_realtime_global(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "titan-global-realtime-smooth-v5-finance-render-lock" in html or "</body>" not in html.lower():
+            if not html or "titan-global-realtime-local-only-ui-toggles-v6" in html or "</body>" not in html.lower():
                 return resp
             idx = html.lower().rfind("</body>")
             html = html[:idx] + REALTIME_SCRIPT + html[idx:]
@@ -68,18 +71,19 @@ def register_titan_realtime_global(app):
 
 
 REALTIME_SCRIPT = r'''
-<script id="titan-global-realtime-smooth-v5-finance-render-lock">
+<script id="titan-global-realtime-local-only-ui-toggles-v6">
 (function(){
-  if(window.__TITAN_GLOBAL_REALTIME_SMOOTH_V5__) return;
-  window.__TITAN_GLOBAL_REALTIME_SMOOTH_V5__ = true;
+  if(window.__TITAN_GLOBAL_REALTIME_SMOOTH_V6__) return;
+  window.__TITAN_GLOBAL_REALTIME_SMOOTH_V6__ = true;
 
-  const VERSION = '2026-07-08-global-realtime-smooth-v5-finance-render-lock';
+  const VERSION = '2026-07-09-global-realtime-local-only-ui-toggles-v6';
   const POLL_MS = Math.max(900, Number(localStorage.getItem('TITAN_REALTIME_POLL_MS') || 1800));
   const WRITE_REFRESH_DELAYS = [180, 720];
   const RENDER_DEBOUNCE_MS = 160;
   const INPUT_HOLD_MS = 1800;
   const SCROLL_HOLD_MS = 900;
   const TAB_HOLD_MS = 9500;
+  const LOCAL_UI_STORE = 'titan.local.ui.toggles.v1';
   let syncBusy = false;
   let lastRaw = '';
   let lastAppliedAt = 0;
@@ -94,8 +98,89 @@ REALTIME_SCRIPT = r'''
 
   function now(){ return Date.now(); }
   function directEval(code){ try { return Function(code)(); } catch(e) { return undefined; } }
+  function clone(obj){ try { return JSON.parse(JSON.stringify(obj)); } catch(e) { return obj; } }
+
+  const LOCAL_ONLY_KEY_RE = /(toggle|checkbox|uiOnly|ui_only|viewState|view_state|expanded|collapsed|selectedTab|activeTab|tabState|drawer|modal|panelOpen|panel_open|toast|filterText|searchText|sortBy|sort_by|themeTemp|tempUi|localUi|local_ui|stickyToggle|toggleSticky|resultToggleSticky|autoMark|onlyWait|allVips|msgSummary|settlementOn|autoHitMiss)/i;
+  const BUSINESS_KEY_RE = /(ledger|payment|payments|deposit|deposits|withdraw|withdrawal|wallet|wallets|transaction|transactions|entry|entries|result|results|market|markets|profile|profiles|vipProfile|vipProfiles|userProfiles|vipUsers|customers|client|clients|schedule|schedules|target|targets|group|groups|audit|backup|settingsVersion|deletedProfiles|utr|upi|amount|balance|pass|fail|approval|expiry|access)/i;
+  function isPlainObject(x){ return !!x && typeof x === 'object' && !Array.isArray(x); }
+  function isLocalOnlyKey(k){ return LOCAL_ONLY_KEY_RE.test(String(k||'')) && !BUSINESS_KEY_RE.test(String(k||'')); }
+  function scrubLocalOnly(obj, depth){
+    if(!obj || typeof obj !== 'object' || depth > 7) return obj;
+    if(Array.isArray(obj)){ obj.forEach(v => scrubLocalOnly(v, depth+1)); return obj; }
+    Object.keys(obj).forEach(k => {
+      if(isLocalOnlyKey(k)){
+        try{ delete obj[k]; }catch(e){}
+        return;
+      }
+      scrubLocalOnly(obj[k], depth+1);
+    });
+    return obj;
+  }
+  function loadLocalUi(){ try { return JSON.parse(localStorage.getItem(LOCAL_UI_STORE) || '{}') || {}; } catch(e) { return {}; } }
+  function saveLocalUi(map){ try { localStorage.setItem(LOCAL_UI_STORE, JSON.stringify(map || {})); } catch(e) {} }
+  function navName(){ return String(directEval('return typeof mainNav !== "undefined" ? mainNav : ""') || '').toLowerCase() || 'global'; }
+  function stableControlKey(el){
+    try{
+      const bits=[];
+      const nav = navName();
+      bits.push(nav);
+      let label='';
+      try{
+        const id = el.id || el.getAttribute('id') || '';
+        if(id) bits.push('id:'+id);
+        const nm = el.name || el.getAttribute('name') || '';
+        if(nm) bits.push('name:'+nm);
+        const aria = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+        if(aria) bits.push('aria:'+aria);
+        const wrap = el.closest && el.closest('label,.switch,.toggle,.form-check,.control,.setting,.card,.row,li,div');
+        if(wrap) label = String(wrap.innerText || wrap.textContent || '').replace(/\s+/g,' ').trim().slice(0,80);
+        if(label) bits.push('text:'+label);
+      }catch(e){}
+      if(bits.length <= 1) bits.push('idx:'+Array.prototype.indexOf.call(document.querySelectorAll('input[type="checkbox"],input[type="radio"],[role="switch"]'), el));
+      return bits.join('|').toLowerCase();
+    }catch(e){ return 'global|unknown'; }
+  }
+  function shouldKeepLocal(el){
+    try{
+      if(!el) return false;
+      const type = String(el.type || '').toLowerCase();
+      const role = String(el.getAttribute && el.getAttribute('role') || '').toLowerCase();
+      if(!(type === 'checkbox' || type === 'radio' || role === 'switch')) return false;
+      const ctx = String((el.closest && el.closest('.card,.row,.setting,.control,section,div') || document.body).innerText || '').toLowerCase();
+      // Business access switch must remain persistent when it represents VIP access/expiry/payment/ledger data.
+      if(/app access|vip can use app|expiry|wallet|payment|ledger|entry|deposit|withdraw|balance|profile/.test(ctx)) return false;
+      return true;
+    }catch(e){ return false; }
+  }
+  function rememberLocalControl(el){
+    try{
+      if(!shouldKeepLocal(el)) return;
+      const map = loadLocalUi();
+      const key = stableControlKey(el);
+      map[key] = {checked: !!el.checked, value: el.value, nav: navName(), at: now()};
+      saveLocalUi(map);
+      try { if(typeof titanMarkUiLocalWrite === 'function') titanMarkUiLocalWrite('local_ui_toggle', 1200); } catch(e) {}
+    }catch(e){}
+  }
+  function applyLocalControls(){
+    try{
+      const map = loadLocalUi();
+      document.querySelectorAll('input[type="checkbox"],input[type="radio"],[role="switch"]').forEach(el => {
+        if(!shouldKeepLocal(el)) return;
+        const rec = map[stableControlKey(el)];
+        if(!rec) return;
+        if(!!el.checked !== !!rec.checked){
+          el.checked = !!rec.checked;
+          try { el.dispatchEvent(new Event('change', {bubbles:true})); } catch(e) {}
+        }
+      });
+    }catch(e){}
+  }
+
   function directSet(nextState){
     try {
+      const localMap = loadLocalUi();
+      scrubLocalOnly(nextState, 0);
       Function('nextState', `
         appState = nextState;
         try { if(typeof IS_MASTER !== 'undefined' && IS_MASTER) appState.activeId = appState.activeId || 'admin1'; } catch(e) {}
@@ -104,6 +189,8 @@ REALTIME_SCRIPT = r'''
         try { state = appState.profiles[appState.activeId] || appState.profiles['admin1']; } catch(e) {}
         try { if(typeof LOCAL_KEY !== 'undefined') localStorage.setItem(LOCAL_KEY, JSON.stringify(appState)); } catch(e) {}
       `)(nextState);
+      saveLocalUi(localMap);
+      setTimeout(applyLocalControls, 30);
       return true;
     } catch(e) { return false; }
   }
@@ -172,7 +259,7 @@ REALTIME_SCRIPT = r'''
     try { window.addEventListener(ev, function(){ touchInteraction(); protectedInteraction(); }, {passive:true, capture:true}); } catch(e) {}
   });
   ['click','change','input','focusin','keydown'].forEach(ev=>{
-    try { document.addEventListener(ev, function(){ protectedInteraction(); }, true); } catch(e) {}
+    try { document.addEventListener(ev, function(e){ protectedInteraction(); if(e && e.target) rememberLocalControl(e.target); }, true); } catch(e) {}
   });
   document.addEventListener('input', ()=>{ interactionUntil = Math.max(interactionUntil, now() + INPUT_HOLD_MS); }, true);
 
@@ -193,6 +280,7 @@ REALTIME_SCRIPT = r'''
     if(protectedPanelOpen()) return;
     try { if(typeof refreshMarketArrays === 'function') refreshMarketArrays(); } catch(e) {}
     try { if(typeof render === 'function') render(true); } catch(e) {}
+    setTimeout(applyLocalControls, 30);
     try { document.dispatchEvent(new CustomEvent('titan:realtime-applied', {detail:{reason, at:now(), version:VERSION}})); } catch(e) {}
     showStatus('LIVE');
   }
@@ -233,7 +321,8 @@ REALTIME_SCRIPT = r'''
       if(!raw || raw === lastRaw) return false;
       const next = JSON.parse(raw);
       if(!next || !next.profiles) return false;
-      lastRaw = raw;
+      scrubLocalOnly(next, 0);
+      lastRaw = JSON.stringify(next);
       if(!directSet(next)) return false;
       lastAppliedAt = now();
       queueRender(reason || 'poll', !!force);
@@ -250,9 +339,19 @@ REALTIME_SCRIPT = r'''
   window.fetch = function titanRealtimeFetch(input, init){
     const method = String((init && init.method) || 'GET').toUpperCase();
     const url = String((typeof input === 'string' ? input : (input && input.url)) || '');
+    try{
+      if(init && init.body && method !== 'GET'){
+        const ct = String((init.headers && (init.headers['Content-Type'] || init.headers['content-type'])) || '');
+        if(ct.includes('json') || String(init.body).trim().startsWith('{')){
+          const data = JSON.parse(String(init.body));
+          const cleaned = scrubLocalOnly(data, 0);
+          init = Object.assign({}, init, {body: JSON.stringify(cleaned)});
+        }
+      }
+    }catch(e){}
     const write = method !== 'GET' && (/\/api\//.test(url) || /\/save(\?|$)/.test(url) || /\/bot_schedule(\?|$)/.test(url));
     if(write) markWrite('fetch_'+method, 1200);
-    const p = oldFetch.apply(this, arguments);
+    const p = oldFetch.apply(this, [input, init]);
     if(write){ p.then(()=>scheduleAfterWrite('fetch_done_'+method)).catch(()=>setTimeout(()=>fetchState('fetch_error_'+method, true), 650)); }
     return p;
   };
@@ -261,21 +360,29 @@ REALTIME_SCRIPT = r'''
     const oldOpen = XHR.prototype.open;
     const oldSend = XHR.prototype.send;
     XHR.prototype.open = function(method, url){ this.__titanRtMethod=String(method||'GET').toUpperCase(); this.__titanRtUrl=String(url||''); return oldOpen.apply(this, arguments); };
-    XHR.prototype.send = function(){
+    XHR.prototype.send = function(body){
+      try{
+        if(body && this.__titanRtMethod !== 'GET' && String(body).trim().startsWith('{')){
+          body = JSON.stringify(scrubLocalOnly(JSON.parse(String(body)), 0));
+        }
+      }catch(e){}
       const write = this.__titanRtMethod !== 'GET' && (/\/api\//.test(this.__titanRtUrl) || /\/save(\?|$)/.test(this.__titanRtUrl) || /\/bot_schedule(\?|$)/.test(this.__titanRtUrl));
       if(write){ markWrite('xhr_'+this.__titanRtMethod, 1200); this.addEventListener('loadend', ()=>scheduleAfterWrite('xhr_done_'+this.__titanRtMethod)); }
-      return oldSend.apply(this, arguments);
+      return oldSend.call(this, body);
     };
   }catch(e){}
 
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) setTimeout(()=>fetchState('visible', true), 220); });
   window.addEventListener('focus', ()=>setTimeout(()=>fetchState('focus', true), 220));
   document.addEventListener('titan:force-sync', ()=>fetchState('event', true));
-  window.__TitanRealtime = {version:VERSION, refresh:(r)=>fetchState(r||'manual', true), markWrite, pause:(ms)=>{pausedUntil=now()+Number(ms||1000)}, pauseEntries:(ms)=>{protectedHoldNav='entries'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseForward:(ms)=>{protectedHoldNav='forward'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseFinance:(ms)=>{protectedHoldNav='finance'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, status:()=>({lastAppliedAt, syncBusy, writeLockUntil, interactionUntil, protectedHoldUntil, protectedHoldNav, pollMs:POLL_MS})};
+  document.addEventListener('titan:apply-local-ui', applyLocalControls);
+  window.__TitanRealtime = {version:VERSION, refresh:(r)=>fetchState(r||'manual', true), markWrite, applyLocalControls, scrubLocalOnly, pause:(ms)=>{pausedUntil=now()+Number(ms||1000)}, pauseEntries:(ms)=>{protectedHoldNav='entries'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseForward:(ms)=>{protectedHoldNav='forward'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, pauseFinance:(ms)=>{protectedHoldNav='finance'; protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)}, status:()=>({lastAppliedAt, syncBusy, writeLockUntil, interactionUntil, protectedHoldUntil, protectedHoldNav, pollMs:POLL_MS, localOnlyUiToggles:true})};
 
   setInterval(()=>fetchState('poll', false), POLL_MS);
+  setInterval(applyLocalControls, 1500);
   setTimeout(()=>fetchState('boot', true), 850);
-  console.log('✅ Titan Global Realtime Smooth active', VERSION, 'poll', POLL_MS);
+  setTimeout(applyLocalControls, 900);
+  console.log('✅ Titan Global Realtime Smooth active', VERSION, 'poll', POLL_MS, 'local-only-ui-toggles');
 })();
 </script>
 '''
