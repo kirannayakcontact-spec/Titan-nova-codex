@@ -1,7 +1,9 @@
-"""Result tab toggle sticky save.
+"""Result tab checkbox sticky persistence.
 
-Fixes Result tab toggles reverting after realtime sync by persisting the owning
-state children immediately. No new UI surface is created.
+Fixes Result tab toggles reverting after realtime sync by:
+- registering a small API endpoint that persists known Result/Settlement/Auto Pass-Fail toggles
+- injecting a browser guard that reapplies the last selected checkbox state after UI refresh/re-render
+- writing broad legacy-compatible state keys so the monolith can read whichever settings shape it already uses
 """
 
 
@@ -37,56 +39,122 @@ def register_result_toggle_sticky(app):
             return True
         return False
 
-    @app.route("/api/result_toggle_sticky", methods=["POST"])
-    def result_toggle_sticky_api():
-        data = request.get_json(silent=True) or {}
-        state = state_now()
-        result_settings = state.get("resultSettings") if isinstance(state.get("resultSettings"), dict) else {}
-        auto_settings = state.get("autoResultSettings") if isinstance(state.get("autoResultSettings"), dict) else {}
+    def as_dict(value):
+        return value if isinstance(value, dict) else {}
 
-        allowed_result = {
-            "enabled", "autoSend", "sendToGroups", "useForwardTargetsForResults",
-            "declareOpen", "declareClose", "notifyAdmin", "resultEnabled",
-            "autoResultEnabled", "autoDeclare", "manualDeclareEnabled",
-        }
-        allowed_auto = {
-            "enabled", "autoSend", "autoDeclare", "scrapeEnabled", "openEnabled",
-            "closeEnabled", "sendOpen", "sendClose", "resultEnabled",
-        }
+    def boolish(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return str(value).strip().lower() in ("1", "true", "yes", "on", "checked", "enable", "enabled")
 
+    def toggle_bundle(ui_key, val):
+        """Return broad state updates for legacy/new result-tab toggle names."""
+        val = boolish(val)
+        updates = {"resultToggleSticky": {ui_key: val}}
+        if ui_key == "settlementOn":
+            updates.update({
+                "resultSettlement": {"enabled": val, "settlementOn": val},
+                "settlementSettings": {"enabled": val, "settlementOn": val},
+                "resultSettings": {"settlementEnabled": val, "settlementOn": val},
+            })
+        elif ui_key == "msgSummary":
+            updates.update({
+                "resultSettlement": {"msgSummary": val, "messageSummary": val},
+                "settlementSettings": {"msgSummary": val, "messageSummary": val},
+                "resultSettings": {"msgSummary": val, "messageSummary": val},
+            })
+        elif ui_key == "autoHitMiss":
+            updates.update({
+                "ledgerAutoPassFail": {"enabled": val, "autoHitMiss": val},
+                "autoPassFailSettings": {"enabled": val, "autoHitMiss": val},
+                "resultSettings": {"autoHitMiss": val, "autoPassFail": val},
+                "autoResultSettings": {"autoHitMiss": val, "autoPassFail": val},
+            })
+        elif ui_key == "autoMark":
+            updates.update({
+                "ledgerAutoPassFail": {"autoMark": val},
+                "autoPassFailSettings": {"autoMark": val},
+                "resultSettings": {"autoMark": val},
+                "autoResultSettings": {"autoMark": val},
+            })
+        elif ui_key == "onlyWait":
+            updates.update({
+                "ledgerAutoPassFail": {"onlyWait": val, "waitOnly": val},
+                "autoPassFailSettings": {"onlyWait": val, "waitOnly": val},
+                "resultSettings": {"onlyWait": val, "waitOnly": val},
+            })
+        elif ui_key == "allVips":
+            updates.update({
+                "ledgerAutoPassFail": {"allVips": val, "includeAllVips": val},
+                "autoPassFailSettings": {"allVips": val, "includeAllVips": val},
+                "resultSettings": {"allVips": val, "includeAllVips": val},
+            })
+        elif ui_key:
+            updates.update({"resultSettings": {ui_key: val}, "autoResultSettings": {ui_key: val}})
+        return updates
+
+    def merge_into_state(state, grouped_updates):
         changed = {}
-        for k, v in data.items():
-            if k in allowed_result:
-                result_settings[k] = bool(v)
-                changed["resultSettings." + k] = bool(v)
-            if k in allowed_auto:
-                auto_settings[k] = bool(v)
-                changed["autoResultSettings." + k] = bool(v)
+        for top_key, patch in grouped_updates.items():
+            if not isinstance(patch, dict):
+                state[top_key] = patch
+                changed[top_key] = patch
+                continue
+            cur = as_dict(state.get(top_key)).copy()
+            cur.update(patch)
+            state[top_key] = cur
+            for k, v in patch.items():
+                changed[f"{top_key}.{k}"] = v
+        return changed
 
-        # Generic nested support from UI guard.
-        rs = data.get("resultSettings") if isinstance(data.get("resultSettings"), dict) else None
-        ar = data.get("autoResultSettings") if isinstance(data.get("autoResultSettings"), dict) else None
-        if rs:
-            for k, v in rs.items():
-                result_settings[k] = bool(v) if isinstance(v, bool) else v
-                changed["resultSettings." + k] = result_settings[k]
-        if ar:
-            for k, v in ar.items():
-                auto_settings[k] = bool(v) if isinstance(v, bool) else v
-                changed["autoResultSettings." + k] = auto_settings[k]
+    @app.route("/api/result_toggle_sticky", methods=["GET", "POST"])
+    def result_toggle_sticky_api():
+        state = state_now()
+        if request.method == "GET":
+            sticky = as_dict(state.get("resultToggleSticky"))
+            return jsonify({
+                "status": "success",
+                "resultToggleSticky": sticky,
+                "resultSettings": as_dict(state.get("resultSettings")),
+                "autoResultSettings": as_dict(state.get("autoResultSettings")),
+                "resultSettlement": as_dict(state.get("resultSettlement")),
+                "ledgerAutoPassFail": as_dict(state.get("ledgerAutoPassFail")),
+            })
 
-        state["resultSettings"] = result_settings
-        state["autoResultSettings"] = auto_settings
-        ok1 = put_child(["resultSettings"], result_settings)
-        ok2 = put_child(["autoResultSettings"], auto_settings)
-        if not (ok1 and ok2):
-            put_top(state, {"resultSettings": result_settings, "autoResultSettings": auto_settings})
+        data = request.get_json(silent=True) or {}
+        grouped = {}
+
+        # Preferred compact payload from injected JS: { key:'autoMark', value:true }
+        ui_key = str(data.get("key") or data.get("uiKey") or "").strip()
+        if ui_key:
+            grouped.update(toggle_bundle(ui_key, data.get("value")))
+
+        # Backward-compatible payloads from older script.
+        for possible in ("settlementOn", "msgSummary", "autoHitMiss", "autoMark", "onlyWait", "allVips"):
+            if possible in data:
+                bundle = toggle_bundle(possible, data.get(possible))
+                for top, patch in bundle.items():
+                    grouped.setdefault(top, {}).update(patch)
+
+        for top in ("resultSettings", "autoResultSettings", "resultSettlement", "settlementSettings", "ledgerAutoPassFail", "autoPassFailSettings"):
+            if isinstance(data.get(top), dict):
+                grouped.setdefault(top, {}).update(data[top])
+
+        if not grouped:
+            return jsonify({"status": "noop", "resultToggleSticky": True, "changed": {}})
+
+        changed = merge_into_state(state, grouped)
+        ok_all = True
+        for top_key in grouped.keys():
+            ok_all = put_child([top_key], state.get(top_key)) and ok_all
+        if not ok_all:
+            put_top(state, {k: state.get(k) for k in grouped.keys()})
         return jsonify({
             "status": "success",
-            "resultToggleSticky": True,
+            "resultToggleSticky": as_dict(state.get("resultToggleSticky")),
             "changed": changed,
-            "resultSettings": result_settings,
-            "autoResultSettings": auto_settings,
         })
 
     @app.after_request
@@ -99,7 +167,7 @@ def register_result_toggle_sticky(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "result-toggle-sticky-v1" in html or "</body>" not in html.lower():
+            if not html or "result-toggle-sticky-v2" in html or "</body>" not in html.lower():
                 return resp
             idx = html.lower().rfind("</body>")
             html = html[:idx] + SCRIPT + html[idx:]
@@ -111,48 +179,80 @@ def register_result_toggle_sticky(app):
 
 
 SCRIPT = r'''
-<script id="result-toggle-sticky-v1">
+<script id="result-toggle-sticky-v2">
 (function(){
-  if(window.__RESULT_TOGGLE_STICKY_V1__) return;
-  window.__RESULT_TOGGLE_STICKY_V1__ = true;
+  if(window.__RESULT_TOGGLE_STICKY_V2__) return;
+  window.__RESULT_TOGGLE_STICKY_V2__ = true;
   const API='/api/result_toggle_sticky';
-  function gv(n){try{return Function('return typeof '+n+'!=="undefined"?'+n+':""')()}catch(e){return ''}}
-  function nav(){return String(gv('mainNav')||'').toLowerCase()}
-  function inResult(){return nav()==='results'||nav()==='result'}
-  function txt(e){return String((e&&e.textContent)||'').replace(/\s+/g,' ').trim().toUpperCase()}
-  function headers(){let h={'Content-Type':'application/json'};try{let t=localStorage.getItem('TITAN_ADMIN_TOKEN')||'';if(t)h['X-Titan-Admin-Token']=t}catch(e){}return h}
-  function keyFor(el){
-    let s=''; let n=el;
-    for(let i=0;i<5&&n;i++,n=n.parentElement) s+=' '+txt(n);
-    if(/AUTO\s*RESULT|AUTO\s*DECLARE|AUTO\s*SEND/.test(s)) return 'autoSend';
-    if(/SCRAPE|AUTO\s*SCRAP/.test(s)) return 'scrapeEnabled';
-    if(/OPEN/.test(s)&&/RESULT|SEND|DECLARE/.test(s)) return 'sendOpen';
-    if(/CLOSE/.test(s)&&/RESULT|SEND|DECLARE/.test(s)) return 'sendClose';
-    if(/FORWARD/.test(s)) return 'useForwardTargetsForResults';
-    if(/GROUP/.test(s)) return 'sendToGroups';
-    if(/ADMIN/.test(s)&&/NOTIFY|MSG/.test(s)) return 'notifyAdmin';
-    if(/RESULT/.test(s)&&/ON|ENABLE|ACTIVE/.test(s)) return 'enabled';
-    return '';
+  const LS='titan.result.toggle.sticky.v2';
+  const labels={
+    settlementOn:/\bSETTLEMENT\s+ON\b/i,
+    msgSummary:/\bMSG\s+SUMMARY\b|\bMESSAGE\s+SUMMARY\b/i,
+    autoHitMiss:/\bAUTO\s+HIT\/?MISS\b/i,
+    autoMark:/\bAUTO\s+MARK\b/i,
+    onlyWait:/\bONLY\s+WAIT\b/i,
+    allVips:/\bALL\s+VIPS\b/i
+  };
+  let sticky={};
+  let saving=false;
+  let lastLoad=0;
+  function readLS(){try{return JSON.parse(localStorage.getItem(LS)||'{}')||{}}catch(e){return {}}}
+  function writeLS(){try{localStorage.setItem(LS,JSON.stringify(sticky||{}))}catch(e){}}
+  function headers(){let h={'Content-Type':'application/json'};try{let t=localStorage.getItem('TITAN_ADMIN_TOKEN')||localStorage.getItem('titan_admin_token')||'';if(t)h['X-Titan-Admin-Token']=t}catch(e){}return h}
+  function pageText(){return String(document.body&&document.body.innerText||'')}
+  function resultVisible(){return /RESULT\s+SETTLEMENT|LEDGER\s+AUTO\s+PASS\/FAIL|MARKET\s+RESULTS/i.test(pageText())}
+  function clean(s){return String(s||'').replace(/\s+/g,' ').trim()}
+  function nearText(el){let s='';let n=el;for(let i=0;i<7&&n;i++,n=n.parentElement){s+=' '+clean(n.innerText||n.textContent||'')}return s.slice(0,900)}
+  function keyFor(el){const s=nearText(el);for(const [k,re] of Object.entries(labels)){if(re.test(s))return k}return ''}
+  function boxes(){return Array.from(document.querySelectorAll('input[type="checkbox"],input[type="radio"]')).filter(el=>keyFor(el))}
+  function applySticky(){
+    if(!resultVisible()) return;
+    for(const el of boxes()){
+      const k=keyFor(el);
+      if(!k || typeof sticky[k] === 'undefined') continue;
+      const want=!!sticky[k];
+      if(el.checked!==want){
+        el.checked=want;
+        try{el.setAttribute('aria-checked', String(want));}catch(e){}
+      }
+    }
   }
-  async function save(key,val){
-    if(!key) return;
-    try{if(window.__TitanRealtime&&window.__TitanRealtime.pauseResult)window.__TitanRealtime.pauseResult(10000);else if(window.__TitanRealtime&&window.__TitanRealtime.pause)window.__TitanRealtime.pause(3500)}catch(e){}
+  async function loadRemote(force){
+    const now=Date.now();
+    if(!force && now-lastLoad<8000) return;
+    lastLoad=now;
     try{
-      const body={}; body[key]=!!val;
-      if(['scrapeEnabled','sendOpen','sendClose'].includes(key)) body.autoResultSettings={[key]:!!val};
-      else body.resultSettings={[key]:!!val};
-      await fetch(API,{method:'POST',headers:headers(),body:JSON.stringify(body)});
-      try{document.dispatchEvent(new CustomEvent('titan:force-sync'))}catch(e){}
-    }catch(e){console.warn('result toggle sticky save failed',e)}
+      const r=await fetch(API,{cache:'no-store',headers:headers()});
+      const j=await r.json();
+      const remote=(j&&j.resultToggleSticky)||{};
+      sticky=Object.assign({}, readLS(), remote);
+      writeLS();
+      applySticky();
+    }catch(e){sticky=Object.assign({}, sticky, readLS()); applySticky();}
+  }
+  async function save(k,v){
+    if(!k) return;
+    sticky[k]=!!v; writeLS(); applySticky(); saving=true;
+    try{if(window.__TitanRealtime&&window.__TitanRealtime.pause)window.__TitanRealtime.pause(5000)}catch(e){}
+    try{await fetch(API,{method:'POST',headers:headers(),body:JSON.stringify({key:k,value:!!v})});}
+    catch(e){console.warn('result toggle sticky save failed',e)}
+    finally{saving=false; setTimeout(()=>loadRemote(true),700)}
   }
   document.addEventListener('change',function(ev){
-    if(!inResult()) return;
     const el=ev.target;
-    if(!el||String(el.tagName||'').toUpperCase()!=='INPUT') return;
-    const type=String(el.type||'').toLowerCase();
-    if(type!=='checkbox'&&type!=='radio') return;
-    save(keyFor(el),!!el.checked);
+    if(!el||!/^(INPUT)$/i.test(el.tagName||''))return;
+    if(!/^(checkbox|radio)$/i.test(el.type||''))return;
+    const k=keyFor(el); if(!k)return;
+    save(k,!!el.checked);
   },true);
+  document.addEventListener('click',function(ev){
+    setTimeout(function(){const el=ev.target&&ev.target.closest?ev.target.closest('input[type="checkbox"],input[type="radio"]'):null;if(el){const k=keyFor(el);if(k)save(k,!!el.checked)}},30);
+  },true);
+  const mo=new MutationObserver(function(){ if(!saving) applySticky(); });
+  try{mo.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['checked','class','style']});}catch(e){}
+  sticky=readLS();
+  loadRemote(true);
+  setInterval(function(){applySticky();loadRemote(false)},600);
 })();
 </script>
 '''
