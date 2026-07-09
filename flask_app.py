@@ -88,6 +88,12 @@ except Exception as exc:
     print("⚠️ Titan Result control patch failed to load:", exc)
 
 try:
+    from titan_vip_control_patch import register_titan_vip_control
+    register_titan_vip_control(app)
+except Exception as exc:
+    print("⚠️ Titan VIP control patch failed to load:", exc)
+
+try:
     from titan_codex_stability_patch import register_titan_codex_stability
     register_titan_codex_stability(app)
 except Exception as exc:
