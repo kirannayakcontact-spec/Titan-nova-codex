@@ -105,12 +105,6 @@ try:
 except Exception as exc:
     print("⚠️ Titan Codex stability patch failed to load:", exc)
 
-try:
-    from titan_dashboard_blank_guard_patch import register_titan_dashboard_blank_guard
-    register_titan_dashboard_blank_guard(app)
-except Exception as exc:
-    print("⚠️ Titan dashboard blank guard failed to load:", exc)
-
 application = app
 
 if _LAUNCHER_NAME == "__main__":
