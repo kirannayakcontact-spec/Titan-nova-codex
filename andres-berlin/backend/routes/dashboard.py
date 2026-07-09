@@ -35,6 +35,7 @@ def register(app):
                     "markets": {"status": "ok", "markets": len(markets)},
                     "payments": {"status": "ok", "transactions": len(transactions)},
                     "withdrawals": {"status": "ok", "withdrawals": withdrawal_count},
+                    "setup": {"status": "ok", "controlCenter": "/api/setup/status"},
                     "admin": {"status": "ok"},
                     "whatsapp": {"status": "not_checked"},
                 },
