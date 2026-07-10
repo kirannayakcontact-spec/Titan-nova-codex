@@ -27,17 +27,34 @@ need_cmd() {
 http_ok() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-time 3 "$url" >/dev/null 2>&1
+    curl -fsS --max-time 4 "$url" >/dev/null 2>&1
     return $?
   fi
   python - "$url" <<'PY' >/dev/null 2>&1
 import sys, urllib.request
 try:
-    urllib.request.urlopen(sys.argv[1], timeout=3).read(1)
+    urllib.request.urlopen(sys.argv[1], timeout=4).read(1)
     raise SystemExit(0)
 except Exception:
     raise SystemExit(1)
 PY
+}
+
+show_runtime_status() {
+  echo ""
+  echo "--- Runtime boot status ---"
+  if command -v curl >/dev/null 2>&1; then
+    curl -sS --max-time 8 "http://127.0.0.1:${PORT}/api/runtime_boot/status" 2>&1 || true
+    echo ""
+  else
+    python - <<PY 2>&1 || true
+import urllib.request
+try:
+    print(urllib.request.urlopen('http://127.0.0.1:${PORT}/api/runtime_boot/status', timeout=8).read().decode())
+except Exception as e:
+    print('runtime status error:', e)
+PY
+  fi
 }
 
 wait_http() {
@@ -132,7 +149,9 @@ say "🚀 Gateway start: http://127.0.0.1:${GATEWAY_PORT}"
 GATEWAY_PORT="$GATEWAY_PORT" nohup node Gateway.js > gateway.log 2>&1 &
 GATEWAY_PID=$!
 
-if wait_http "Dashboard" "http://127.0.0.1:${PORT}" 25; then
+if wait_http "Runtime boot status" "http://127.0.0.1:${PORT}/api/runtime_boot/status" 25; then
+  DASHBOARD_OK=1
+elif wait_http "Dashboard" "http://127.0.0.1:${PORT}" 5; then
   DASHBOARD_OK=1
 else
   DASHBOARD_OK=0
@@ -146,10 +165,11 @@ echo "Flask PID:   $FLASK_PID"
 echo "Gateway PID: $GATEWAY_PID"
 show_phone_ip
 show_ports
+show_runtime_status
 
 echo ""
 echo "--- Flask log ---"
-tail -n 40 flask.log 2>/dev/null || true
+tail -n 60 flask.log 2>/dev/null || true
 
 echo ""
 echo "--- Gateway log ---"
@@ -162,5 +182,5 @@ echo "  tail -f gateway.log"
 
 if [ "$DASHBOARD_OK" != "1" ]; then
   echo ""
-  fail "Dashboard port ${PORT} response nahi de raha. Upar Flask log ka last error bhejo."
+  fail "Flask runtime port ${PORT} response nahi de raha. Upar Flask log ka last error bhejo."
 fi
