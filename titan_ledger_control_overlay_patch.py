@@ -1,8 +1,7 @@
 """Canonical Ledger control UI.
 
-This is the only Ledger Auto Pass/Fail UI injector. It replaces the older
-wallet-HUD and tab-row patches to prevent duplicate DOM observers, duplicate
-buttons, and conflicting global functions.
+This is the only Ledger Auto Pass/Fail UI injector. It keeps the controls only
+inside Ledger and removes the obsolete Result-tab Auto Pass/Fail presentation.
 """
 
 
@@ -13,7 +12,7 @@ def register_titan_ledger_control_overlay(app):
 
     from flask import request
 
-    version = "2026-07-10-ledger-control-canonical-v2"
+    version = "2026-07-10-ledger-control-canonical-v3"
 
     @app.after_request
     def inject_ledger_control(resp):
@@ -23,7 +22,7 @@ def register_titan_ledger_control_overlay(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "titan-ledger-control-canonical-v2" in html or "</body>" not in html.lower():
+            if not html or "titan-ledger-control-canonical-v3" in html or "</body>" not in html.lower():
                 return resp
             index = html.lower().rfind("</body>")
             html = html[:index] + SCRIPT + html[index:]
@@ -37,10 +36,10 @@ def register_titan_ledger_control_overlay(app):
 
 
 SCRIPT = r'''
-<script id="titan-ledger-control-canonical-v2">
+<script id="titan-ledger-control-canonical-v3">
 (function(){
- if(window.__TITAN_LEDGER_CONTROL_CANONICAL_V2__) return;
- window.__TITAN_LEDGER_CONTROL_CANONICAL_V2__=true;
+ if(window.__TITAN_LEDGER_CONTROL_CANONICAL_V3__) return;
+ window.__TITAN_LEDGER_CONTROL_CANONICAL_V3__=true;
  const BUTTON_ID='titanLedgerControlButton';
  const MODAL_ID='titanLedgerControlModal';
  function apiHeaders(){const h={'Content-Type':'application/json','Cache-Control':'no-store'};try{const t=localStorage.getItem('TITAN_ADMIN_TOKEN')||'';if(t)h['X-Titan-Admin-Token']=t}catch(_){}return h}
@@ -50,6 +49,25 @@ SCRIPT = r'''
    const rows=[...document.querySelectorAll('button,div,span')].map(el=>({text:(el.innerText||el.textContent||'').trim(),rect:el.getBoundingClientRect()}));
    const has=rx=>rows.some(x=>rx.test(x.text)&&x.rect.width>38&&x.rect.height>18&&x.rect.top<360&&x.rect.bottom>0);
    return has(/^ANK\b/i)&&has(/^JODI\b/i)&&(has(/^PANEL\b/i)||has(/^PANNEL\b/i));
+ }
+ function removeResultAutoPf(){
+   try{
+     const nodes=[...document.querySelectorAll('h1,h2,h3,h4,p,div,span')];
+     for(const node of nodes){
+       const text=(node.textContent||'').replace(/\s+/g,' ').trim();
+       if(!/^Ledger Auto Pass\/?Fail$/i.test(text))continue;
+       if(node.closest('#'+MODAL_ID))continue;
+       let card=node;
+       for(let i=0;i<7&&card;i++,card=card.parentElement){
+         const cls=String(card.className||'');
+         const t=(card.textContent||'').replace(/\s+/g,' ');
+         if((/native-card|rounded-2xl|settlement/i.test(cls)||card.tagName==='SECTION')&&/Auto Mark|Only WAIT|All VIPs|Mark Now|Auto Hit\/Miss/i.test(t)){
+           card.remove();
+           break;
+         }
+       }
+     }
+   }catch(e){console.warn('Result Auto P/F cleanup failed',e)}
  }
  function state(){
    if(!window.appState)window.appState={};
@@ -113,6 +131,7 @@ SCRIPT = r'''
    document.body.appendChild(modal);
  }
  function mount(){
+   removeResultAutoPf();
    let button=document.getElementById(BUTTON_ID);
    if(!ledgerVisible()){if(button)button.remove();document.getElementById(MODAL_ID)?.remove();return}
    if(button)return;
@@ -120,7 +139,7 @@ SCRIPT = r'''
  }
  new MutationObserver(mount).observe(document.documentElement,{childList:true,subtree:true});
  setInterval(mount,700);setTimeout(mount,100);setTimeout(mount,1200);
- console.log('✅ Titan canonical Ledger control active');
+ console.log('✅ Titan Ledger-only Auto Pass/Fail UI active');
 })();
 </script>
 '''
