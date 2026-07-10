@@ -31,8 +31,19 @@ if ! pkg install -y nodejs-lts; then
 fi
 
 say "4/8 Python/Pillow/OCR native libraries install"
+# Required build/runtime packages. These must succeed.
 pkg install -y clang make cmake pkg-config rust binutils libffi openssl \
-  libjpeg-turbo libpng freetype littlecms libwebp tiff openjpeg tesseract
+  libjpeg-turbo libpng freetype littlecms libwebp tesseract
+
+# Optional image codecs have different names/availability across Termux mirrors.
+# Missing optional codecs must not stop Titan Nova setup.
+for optional_pkg in libtiff openjpeg; do
+  if pkg install -y "$optional_pkg"; then
+    echo "✅ Optional package installed: $optional_pkg"
+  else
+    warn "Optional package unavailable, skip: $optional_pkg"
+  fi
+done
 
 say "5/8 Required project files verify"
 for f in flask_app.py Gateway.js requirements.txt package.json deploy.sh; do
@@ -54,7 +65,6 @@ npm run check
 say "8/8 Permissions, shortcuts and first deploy"
 chmod +x deploy.sh termux_diagnose.sh fresh_termux_setup.sh 2>/dev/null || true
 
-# Convenient commands available from any Termux folder.
 BIN_DIR="$HOME/bin"
 mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/titan" <<EOF
@@ -85,7 +95,6 @@ case ":$PATH:" in
     ;;
 esac
 
-# Git credential helper means the private-repo token is requested only once.
 git config --global credential.helper store
 
 echo
