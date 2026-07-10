@@ -1,7 +1,7 @@
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
-const API={state:'/api/state',save:'/save',market:'/api/market_action',wallet:'/api/wallet_transaction',pay:'/api/approve_payment',withdraw:'/api/withdrawal_action',result:'/api/save_result',targets:'/api/schedule_targets',registry:'/api/market_registry',gateway:'/api/gateway_status',backup:'/api/backup_audit'};
+const API={state:'/api/state',save:'/save',market:'/api/market_action',scrape:'/api/scrape_market',ledgerUpdate:'/api/ledger_card_update',wallet:'/api/wallet_transaction',pay:'/api/approve_payment',withdraw:'/api/withdrawal_action',result:'/api/save_result',targets:'/api/schedule_targets',registry:'/api/market_registry',gateway:'/api/gateway_status',backup:'/api/backup_audit'};
 const tabs=[['ledger','Ledger','fa-table'],['clients','Clients','fa-users'],['finance','Finance','fa-wallet'],['entries','Entries','fa-pen-to-square'],['results','Results','fa-trophy'],['markets','Markets','fa-store'],['forward','Forward','fa-share-nodes'],['guard','Guard','fa-shield-halved'],['backup','Backup','fa-database'],['health','Health','fa-heart-pulse'],['ai','Smart AI','fa-wand-magic-sparkles']];
-let state=window.__BOOT_STATE__||{}, active='ledger', financeSub='summary', picker={cb:null,selected:[]}, deferredInstall=null;
+let state=window.__BOOT_STATE__||{}, active='ledger', financeSub='summary', ledgerSub='ANK', picker={cb:null,selected:[]}, deferredInstall=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const arr=x=>Array.isArray(x)?x:[], obj=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{}, money=n=>'₹'+Number(n||0).toLocaleString('en-IN');
 function toast(t,m='',kind='success'){const el=document.createElement('div');el.className=`card p-3 border-${kind==='danger'?'red':'green'}-400/30`;el.innerHTML=`<b>${esc(t)}</b><p class="text-xs text-slate-400">${esc(m)}</p>`;$('#toastWrap').append(el);setTimeout(()=>el.remove(),3500)}
@@ -15,7 +15,60 @@ function setTab(t){active=t; render(); $('#sidebar').classList.add('-translate-x
 function nav(){const b=tabs.map(([id,l,i])=>`<button data-tab="${id}" class="${active===id?'tab-active':''} touch shrink-0 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-black text-slate-300"><i class="fa-solid ${i} mr-1"></i>${l}</button>`).join(''); $('#navTabs').innerHTML=b; $('#sideTabs').innerHTML=b; $$('[data-tab]').forEach(x=>x.onclick=()=>setTab(x.dataset.tab));}
 function stats(){const w=Object.values(obj(state.wallets)).reduce((a,v)=>a+Number(v.balance||0),0); $('#stats').innerHTML=[['Markets',markets().length,'fa-store','#2AABEE'],['VIPs',profiles().length,'fa-users','#00C26F'],['Wallet',money(w),'fa-wallet','#FAC748'],['Entries',arr(state.entries).length,'fa-pen','#FF5D5D']].map(s=>`<div class="card p-3"><i class="fa-solid ${s[2]}" style="color:${s[3]}"></i><p class="mt-2 text-xs text-slate-400">${s[0]}</p><b>${s[1]}</b></div>`).join('')}
 const panel=(title,body,icon='fa-circle')=>`<div class="mb-3 flex items-center gap-2"><i class="fa-solid ${icon} text-[#2AABEE]"></i><h2 class="text-xl font-black">${title}</h2></div>${body}`;
-function ledger(){return panel('Ledger',`<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">${markets().map(m=>`<div class="card p-3"><div class="flex justify-between gap-2"><b>${esc(m.displayName||m.name||m.id)}</b><span class="pill">${m.enabled===false?'OFF':'ACTIVE'}</span></div><p class="text-xs text-slate-400">Open ${esc(obj(m.times).open||'-')} · Close ${esc(obj(m.times).close||'-')}</p>${['ANK','JODI','PANEL'].map(k=>`<div class="mt-3 rounded-2xl bg-black/20 p-3"><div class="flex items-center justify-between"><b>${k}</b><span class="text-xs text-slate-400">Rate ${esc(obj(state.rates)[k]||'-')}</span></div><input class="input mt-2" placeholder="Digits / ${k} load"><div class="mt-2 grid grid-cols-4 gap-2"><button class="btn btn-green" onclick="marketAction('${m.id}','pass')">PASS</button><button class="btn btn-red" onclick="marketAction('${m.id}','fail')">FAIL</button><button class="btn btn-yellow" onclick="marketAction('${m.id}','skip')">SKIP</button><button class="btn btn-ghost" onclick="marketAction('${m.id}','reset')">Reset</button></div></div>`).join('')}<button class="btn btn-blue mt-3 w-full" onclick="openTargets(['${arr(m.scheduleTargets).join("','")}'],v=>saveRoleTargets('${m.id}','schedule',v))">Targets</button></div>`).join('')}</div>`,'fa-table')}
+function ledgerTypeKey(type){const k=String(type||ledgerSub||'ANK').toUpperCase(); return k==='PANEL'||k==='PENEL'||k==='PANNEL'?'PANEL':k==='JODI'?'JODI':'ANK'}
+function ledgerApiType(type){const k=ledgerTypeKey(type); return k==='PANEL'?'pannel':k.toLowerCase()}
+function ledgerDictName(type){const k=ledgerTypeKey(type); return k==='PANEL'?'pannelData':k==='JODI'?'jodiData':'data'}
+function currentDateKey(){return ($('#datePicker')?.value)||new Date().toISOString().slice(0,10)}
+function marketBaseName(m){return String(m.websiteName||m.displayName||m.name||m.id||'').replace(/\s+(OPEN|CLOSE)$/i,'').trim()}
+function ledgerRecord(m,type,idx){const date=currentDateKey(), dn=ledgerDictName(type); const prof=obj(obj(state.profiles)[state.activeId||'admin1']); return obj(obj(obj(prof.dayRecords)[date])[dn])[idx]||obj(obj(obj(state.dayRecords)[date])[dn])[idx]||{} }
+function rateFor(type, amount=0){
+  const rates=obj(state.rates), key=ledgerTypeKey(type);
+  const direct=Number(rates[key]||rates[key.toLowerCase()]||rates[ledgerApiType(key)]||0);
+  if(direct) return direct;
+  const pm=obj(obj(state.settlementSettings).payoutMultipliers);
+  const configured=Number(pm[key.toLowerCase()]||pm[ledgerApiType(key)]||0);
+  if(configured) return configured;
+  const defaults={ANK:9.5,JODI:95,PANEL:1400};
+  const base=defaults[key]||1;
+  return amount>=5000?Math.round(base*1.03*100)/100:amount>=1000?Math.round(base*1.015*100)/100:base;
+}
+function recoveryPlan(marketId,type){
+  const idx=markets().findIndex(x=>String(x.id)===String(marketId));
+  const rec=ledgerRecord({id:marketId},type,Math.max(idx,0));
+  const loss=Number(rec.loss||rec.r||rec.amount||0);
+  const rate=rateFor(type,loss);
+  const stake=Math.max(10,Math.ceil((loss+100)/Math.max(rate-1,1)));
+  return {loss,rate,stake,next:`${ledgerTypeKey(type)} next stake ${stake} @ ${rate}`};
+}
+function ledgerTypePanel(m,type,idx){
+  type=ledgerTypeKey(type);
+  const rec=ledgerRecord(m,type,idx), plan=recoveryPlan(m.id,type);
+  const digit=esc(rec.d||rec.digit||rec.card||''), amt=esc(rec.r||rec.amount||''), rate=esc(rec.rate||plan.rate), status=esc(rec.status||rec._markStatus||'READY');
+  return `<section class="rounded-2xl border border-white/10 bg-black/20 p-3">
+    <div class="flex items-start justify-between gap-2"><div><b>${esc(m.displayName||m.name||m.id)}</b><p class="text-[11px] text-slate-400">${type} · Open ${esc(obj(m.times).open||'-')} · Close ${esc(obj(m.times).close||'-')}</p><p class="text-[11px] text-[#FAC748]">Auto rate ${rate} · Recovery ${money(plan.stake)} · ${esc(plan.next)}</p></div><span class="pill">${status}</span></div>
+    <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <input id="dig-${m.id}-${type}" class="input" value="${digit}" placeholder="${type} digit/card">
+      <input id="amt-${m.id}-${type}" class="input" type="number" value="${amt}" placeholder="Amount" oninput="suggestRate('${m.id}','${type}')">
+      <input id="rate-${m.id}-${type}" class="input" value="${rate}" placeholder="Rate">
+    </div>
+    <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-6">
+      <button id="scrape-${m.id}-${type}" class="btn btn-blue" onclick="scrapeLedger('${m.id}','${type}',${idx})"><i class="fa-solid fa-satellite-dish mr-1"></i>Scrape</button>
+      <button id="combine-${m.id}-${type}" class="btn btn-yellow" onclick="combineLedger('${m.id}','${type}',${idx})">Combine</button>
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T1',${idx})">T1</button>
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T2',${idx})">T2</button>
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T3',${idx})">T3</button>
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T4',${idx})">T4</button>
+    </div>
+    <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <button class="btn btn-yellow" onclick="applyRecovery('${m.id}','${type}')"><i class="fa-solid fa-calculator mr-1"></i>Recovery</button>
+      <button class="btn btn-green" onclick="markLedger('${m.id}','${type}','pass',${idx})">PASS</button>
+      <button class="btn btn-red" onclick="markLedger('${m.id}','${type}','fail',${idx})">FAIL</button>
+      <button class="btn btn-ghost" onclick="markLedger('${m.id}','${type}','skip',${idx})">SKIP</button>
+      <button class="btn btn-ghost" onclick="saveLedgerCard('${m.id}','${type}',${idx},'manual_input')">Save</button>
+    </div>
+  </section>`;
+}
+function ledger(){const type=ledgerTypeKey(ledgerSub);return panel('Ledger',`<div class="sticky top-[69px] z-20 -mx-3 mb-3 border-b border-white/10 bg-[#0B1118]/95 px-3 py-2 backdrop-blur"><div class="grid grid-cols-3 gap-2">${['ANK','JODI','PANEL'].map(t=>`<button onclick="ledgerSub='${t}';render()" class="btn ${type===t?'btn-blue':'btn-ghost'}">${t}</button>`).join('')}</div><p class="mt-2 text-xs text-slate-400">Ek screen par sirf selected ${type} cards dikh rahe hain. Scroll me ANK/JODI/PANEL mix nahi hoga.</p></div><div class="grid gap-3 lg:grid-cols-2">${markets().map((m,i)=>ledgerTypePanel(m,type,i)).join('')}</div>`,'fa-table')}
 function clients(){return panel('Clients (VIPs)',`<div class="grid gap-3 lg:grid-cols-2">${profiles().map(([id,p])=>`<div class="card p-3"><div class="flex gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-[#2AABEE]/20 font-black">${esc((p.name||id)[0])}</div><div class="min-w-0 flex-1"><b>${esc(p.name||id)}</b><p class="break-all text-xs text-slate-400">${esc(p.phone||'-')} · ${esc(id)}</p><p class="text-xs">${esc(p.approvalStatus||'pending')} · Exp ${esc(p.expiryDate||'not set')} · ${money(obj(state.wallets)[id]?.balance)}</p></div></div><div class="mt-3 grid grid-cols-2 gap-2"><button class="btn btn-green" onclick="vip('${id}','approved')">Approve</button><button class="btn btn-red" onclick="vip('${id}','rejected')">Reject</button><input id="exp-${id}" type="date" class="input"><button class="btn btn-blue" onclick="saveExpiry('${id}')">Set Expiry</button><button class="btn btn-ghost" onclick="toggleAccess('${id}',${p.vipAccessEnabled===false})">${p.vipAccessEnabled===false?'Enable':'Disable'}</button><button class="btn btn-red" onclick="delVip('${id}')">Delete</button><button class="btn btn-yellow col-span-2" onclick="share('/?vip=${id}')">Share App Link</button></div></div>`).join('')}</div>`,'fa-users')}
 function finance(){const subs=['summary','wallets','payments','withdrawals'];return panel('Finance',`<div class="no-scrollbar mb-3 flex gap-2 overflow-x-auto">${subs.map(s=>`<button onclick="financeSub='${s}';render()" class="btn ${financeSub===s?'btn-blue':'btn-ghost'} shrink-0">${s}</button>`).join('')}</div>${financeSub==='wallets'?wallets():financeSub==='payments'?payments():financeSub==='withdrawals'?withdrawals():summary()}`,'fa-wallet')}
 function summary(){return `<div class="grid gap-3 md:grid-cols-3"><div class="card p-4"><p>Wallet balance</p><b class="text-2xl text-[#00C26F]">${money(Object.values(obj(state.wallets)).reduce((a,w)=>a+Number(w.balance||0),0))}</b></div><div class="card p-4"><p>Pending payments</p><b>${arr(state.payments).filter(p=>String(p.status).toLowerCase().includes('pending')).length}</b></div><div class="card p-4"><p>Pending withdrawals</p><b>${arr(state.withdrawals).filter(p=>String(p.status).toLowerCase().includes('pending')).length}</b></div></div>`}
@@ -33,6 +86,22 @@ async function loadHealth(){try{const g=await fetchJson(API.gateway); $('#health
 function ai(){return panel('Smart AI',`<div class="card p-3"><textarea id="aiText" class="input min-h-52" placeholder="Bulk entries paste karo..."></textarea><button class="btn btn-blue mt-2" onclick="parseAI()">Parse ANK / JODI / PANEL</button><div id="aiOut" class="mt-3"></div></div>`,'fa-wand-magic-sparkles')}
 function render(){nav();stats(); const map={ledger,clients,finance,entries,results,markets:marketsTab,forward,guard,backup,health,ai}; $('#content').innerHTML=map[active](); if(active==='health')loadHealth();}
 function sw(id,checked,cb){setTimeout(()=>{const e=$(`#sw-${id}`); if(e)e.onchange=()=>cb(e.checked)},0);return `<label class="switch"><input id="sw-${id}" type="checkbox" ${checked?'checked':''}><span></span></label>`}
+async function commitLedger(marketId,type,idx,action,extra={}){
+  type=ledgerTypeKey(type);
+  const m=markets().find(x=>String(x.id)===String(marketId))||{id:marketId};
+  const rec={...ledgerRecord(m,type,idx),_ledgerKey:String(m.id||marketId),marketId:String(m.id||marketId),market:marketBaseName(m),n:marketBaseName(m),d:$(`#dig-${marketId}-${type}`)?.value||'',r:$(`#amt-${marketId}-${type}`)?.value||'',rate:$(`#rate-${marketId}-${type}`)?.value||rateFor(type),updatedAt:new Date().toISOString(),...extra};
+  await fetchJson(API.ledgerUpdate,{method:'POST',body:JSON.stringify({activeId:state.activeId||'admin1',profileId:state.activeId||'admin1',type:ledgerApiType(type),idx,marketKey:String(m.id||marketId),date:currentDateKey(),action,record:rec,applyToVips:true})});
+  toast('Ledger saved',`${type} ${marketBaseName(m)}`);
+  await load();
+}
+window.suggestRate=(marketId,type)=>{type=ledgerTypeKey(type);const amt=Number($(`#amt-${marketId}-${type}`).value||0); const r=$(`#rate-${marketId}-${type}`); if(r)r.value=rateFor(type,amt)};
+window.applyRecovery=(marketId,type)=>{type=ledgerTypeKey(type);const plan=recoveryPlan(marketId,type); $(`#amt-${marketId}-${type}`).value=plan.stake; $(`#rate-${marketId}-${type}`).value=plan.rate; toast('Recovery suggested',plan.next)};
+window.trick=async(marketId,type,trickName,idx)=>{type=ledgerTypeKey(type); const inp=$(`#dig-${marketId}-${type}`); const raw=String(inp?.value||'').split(/[\s,]+/).filter(Boolean); const rotated=raw.length?raw.slice(Number(trickName.slice(1))-1).concat(raw.slice(0,Number(trickName.slice(1))-1)):[]; if(inp&&rotated.length)inp.value=rotated.join(','); await commitLedger(marketId,type,idx,'trick_apply',{trick:trickName});};
+window.scrapeLedger=async(marketId,type,idx)=>{type=ledgerTypeKey(type); const m=markets().find(x=>String(x.id)===String(marketId))||{}; const btn=$(`#scrape-${marketId}-${type}`); const old=btn?.innerHTML; try{if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Scraping'} const data=await fetchJson(API.scrape,{method:'POST',body:JSON.stringify({market:marketBaseName(m)})}); const digits=type==='ANK'?(data.open||data.close||data.combined):type==='JODI'?(data.jodi||data.combined):(data.combined||data.jodi); if(!digits)throw Error('Scrape data empty'); $(`#dig-${marketId}-${type}`).value=digits; await commitLedger(marketId,type,idx,'scrape_digits',{scrape:data}); toast('Scrape complete',`${type}: ${digits}`)}catch(e){toast('Scrape failed',e.message,'danger')}finally{if(btn){btn.disabled=false;btn.innerHTML=old}}};
+window.combineLedger=async(marketId,type,idx)=>{type=ledgerTypeKey(type); const m=markets().find(x=>String(x.id)===String(marketId))||{}; const btn=$(`#combine-${marketId}-${type}`); const old=btn?.innerHTML; try{if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i>'} const data=await fetchJson(API.scrape,{method:'POST',body:JSON.stringify({market:marketBaseName(m)})}); const combined=data.combined||[data.open,data.close,data.jodi].filter(Boolean).join(','); if(!combined)throw Error('Combined scrape empty'); $(`#dig-${marketId}-${type}`).value=combined; await commitLedger(marketId,type,idx,'combo_scrape',{scrape:data}); toast('Combine complete',combined)}catch(e){toast('Combine failed',e.message,'danger')}finally{if(btn){btn.disabled=false;btn.innerHTML=old}}};
+window.markLedger=async(marketId,type,status,idx)=>{await commitLedger(marketId,type,idx,`manual_${status}`,{status,_markStatus:status,autoMark:true})};
+window.markLedgerCard=(cardId,status)=>post(API.ledgerUpdate,{activeId:state.activeId||'admin1',action:`manual_${status}`,record:{status,_markStatus:status,autoMark:true},date:currentDateKey()});
+window.saveLedgerCard=(marketId,type,idx,action='manual_input')=>commitLedger(marketId,type,idx,action);
 window.marketAction=(id,action)=>post(API.market,{id,action}); window.saveRoleTargets=(id,role,v)=>post(API.market,{action:'set_role_targets',id,role,targets:v});
 window.vip=(userId,status)=>post('/api/vip_control/update',{userId,approvalStatus:status,vipAccessEnabled:status==='approved'}); window.saveExpiry=userId=>post('/api/vip_control/update',{userId,expiryDate:$(`#exp-${userId}`).value}); window.toggleAccess=(userId,on)=>post('/api/vip_control/update',{userId,vipAccessEnabled:on}); window.delVip=userId=>confirm('Archive/delete VIP?')&&post('/api/vip_control/archive',{userId});
 window.walletTx=(userId,kind)=>post(API.wallet,{userId,kind,amount:Number($(`#amt-${userId}`).value||0),description:'Admin dashboard'}); window.payment=(id,action)=>post(API.pay,{id,paymentId:id,action}); window.withdraw=(id,action)=>post(API.withdraw,{id,withdrawalId:id,action});
