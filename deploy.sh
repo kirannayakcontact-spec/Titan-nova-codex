@@ -80,7 +80,6 @@ stop_old() {
   pkill -KILL -f "python3.*flask_app.py" 2>/dev/null || true
   pkill -KILL -f "node.*Gateway.js" 2>/dev/null || true
 
-  # Best effort port cleanup if Termux has fuser/lsof installed.
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${PORT}/tcp" 2>/dev/null || true
     fuser -k "${GATEWAY_PORT}/tcp" 2>/dev/null || true
@@ -135,6 +134,9 @@ if [ -f package.json ]; then
   say "🟢 Node packages check/install"
   npm install || warn "⚠️ npm install fail hua. Gateway start try kar raha hoon."
 fi
+
+say "🧪 Active runtime syntax/reference check"
+python runtime_syntax_check.py || fail "Runtime syntax/reference check fail. Purana running app stop nahi kiya gaya."
 
 stop_old
 

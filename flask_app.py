@@ -12,7 +12,7 @@ os.environ.setdefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebas
 os.environ.setdefault("FIREBASE_DB_URL", os.environ.get("FIREBASE_URL"))
 
 _LAUNCHER_NAME = __name__
-_LAUNCHER_VERSION = "2026-07-10-strict-result-rules-v7"
+_LAUNCHER_VERSION = "2026-07-10-runtime-cleanup-v8"
 _BASE_DIR = Path(__file__).resolve().parent
 _LEGACY_FILE = _BASE_DIR / "legacy-backup" / "flask_app.py.bak"
 _BOOT_STARTED_AT = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -99,9 +99,7 @@ _register_patch("Titan Setup control patch", "titan_setup_control_patch", "regis
 _register_patch("Titan Result control patch", "titan_result_control_patch", "register_titan_result_control", ui_heavy=False)
 _register_patch("Titan strict result rules", "titan_strict_result_rules_patch", "register_titan_strict_result_rules", ui_heavy=False)
 _register_patch("Titan frontend boot/render guard", "titan_frontend_boot_fix_patch", "register_titan_frontend_boot_fix", ui_heavy=False)
-_register_patch("Titan Ledger Auto P/F UI patch", "titan_ledger_autopf_ui_patch", "register_titan_ledger_autopf_ui", ui_heavy=False)
-_register_patch("Titan Ledger Auto P/F visible control", "titan_ledger_autopf_visible_patch", "register_titan_ledger_autopf_visible", ui_heavy=False)
-_register_patch("Titan Ledger reliable control overlay", "titan_ledger_control_overlay_patch", "register_titan_ledger_control_overlay", ui_heavy=False)
+_register_patch("Titan Ledger control", "titan_ledger_control_overlay_patch", "register_titan_ledger_control_overlay", ui_heavy=False)
 _register_patch("Titan VIP control patch", "titan_vip_control_patch", "register_titan_vip_control", ui_heavy=True)
 _register_patch("Titan Codex stability patch", "titan_codex_stability_patch", "register_titan_codex_stability", ui_heavy=True)
 
