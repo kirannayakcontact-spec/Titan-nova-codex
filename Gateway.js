@@ -38,11 +38,8 @@ require.extensions[".bak"] = require.extensions[".js"];
 try { require("./gateway_wallet_alias_patch.js"); }
 catch (err) { console.warn("⚠️ Gateway wallet alias patch failed:", err && err.message ? err.message : err); }
 
-// IMPORTANT: gateway_financial_ingest_patch.js intentionally disabled.
-// It accepted text-only words such as "Deposit" and created fake payment IDs.
-// Strict payment proof handling now lives only in gateway_deposit_ocr_patch.js.
-console.log("✅ Text-only deposit ingest disabled; screenshot OCR required");
-
+// Strict payment proof handling is image-only and lives in the OCR bridge.
+console.log("✅ Text-only deposit ingest removed; screenshot OCR required");
 try { require("./gateway_deposit_ocr_patch.js"); }
 catch (err) { console.warn("⚠️ Gateway deposit OCR bridge failed:", err && err.message ? err.message : err); }
 
