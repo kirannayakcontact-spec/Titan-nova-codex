@@ -43,4 +43,8 @@ console.log("✅ Text-only deposit ingest removed; screenshot OCR required");
 try { require("./gateway_deposit_ocr_patch.js"); }
 catch (err) { console.warn("⚠️ Gateway deposit OCR bridge failed:", err && err.message ? err.message : err); }
 
+// Withdrawal is handled separately so removing unsafe deposit ingest never disables it.
+try { require("./gateway_withdrawal_runtime_patch.js"); }
+catch (err) { console.warn("⚠️ Gateway withdrawal runtime failed:", err && err.message ? err.message : err); }
+
 require("./legacy-backup/Gateway.js.bak");
