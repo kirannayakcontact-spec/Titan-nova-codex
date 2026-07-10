@@ -22,23 +22,13 @@ if (!global.__TITAN_ENTRIES_GROUP_ROUTING_V1__) {
   function cleanJid(v) { return String(v || "").trim().replace(/:\d+(?=@)/, ""); }
   function isGroup(jid) { return cleanJid(jid).endsWith("@g.us"); }
   function defaults() {
-    return {
-      enabled: true,
-      strictGroups: false,
-      allowPrivate: { gameEntry: true, withdrawal: true, deposit: true },
-      groupIds: { gameEntry: [], withdrawal: [], deposit: [] }
-    };
+    return { enabled: true, strictGroups: false, allowPrivate: { gameEntry: true, withdrawal: true, deposit: true }, groupIds: { gameEntry: [], withdrawal: [], deposit: [] } };
   }
   async function settings() {
     if (cache.settings && Date.now() - cache.at < CACHE_MS) return cache.settings;
     const raw = await get("entriesGroupRouting", {});
     const d = defaults();
-    const out = {
-      enabled: raw?.enabled !== false,
-      strictGroups: raw?.strictGroups === true,
-      allowPrivate: Object.assign({}, d.allowPrivate, raw?.allowPrivate || {}),
-      groupIds: Object.assign({}, d.groupIds, raw?.groupIds || {})
-    };
+    const out = { enabled: raw?.enabled !== false, strictGroups: raw?.strictGroups === true, allowPrivate: Object.assign({}, d.allowPrivate, raw?.allowPrivate || {}), groupIds: Object.assign({}, d.groupIds, raw?.groupIds || {}) };
     for (const k of Object.keys(out.groupIds)) out.groupIds[k] = [...new Set((Array.isArray(out.groupIds[k]) ? out.groupIds[k] : []).map(cleanJid).filter(Boolean))];
     cache = { at: Date.now(), settings: out };
     return out;
@@ -49,7 +39,7 @@ if (!global.__TITAN_ENTRIES_GROUP_ROUTING_V1__) {
     if (!cfg.enabled || !cfg.strictGroups) return true;
     if (!isGroup(chat)) return cfg.allowPrivate?.[feature] !== false;
     const allowed = cfg.groupIds?.[feature] || [];
-    return allowed.length === 0 ? false : allowed.includes(chat);
+    return allowed.length > 0 && allowed.includes(chat);
   }
   global.__TITAN_GROUP_ROUTING_ALLOW__ = allow;
   global.__TITAN_GROUP_ROUTING_REFRESH__ = () => { cache = { at: 0, settings: null }; };
@@ -67,13 +57,18 @@ if (!global.__TITAN_ENTRIES_GROUP_ROUTING_V1__) {
   function isDeposit(msg) {
     const t = text(msg);
     const m = unwrap(msg);
-    return !!m.imageMessage && /\b(deposit|paid|payment|utr|upi)\b/i.test(t || "deposit");
+    return !!m.imageMessage && (/\b(deposit|paid|payment|utr|upi)\b/i.test(t) || !t);
   }
   function isGameEntry(msg) {
     const t = text(msg);
-    if (!t || isWithdrawal(msg) || isDeposit(msg)) return false;
-    if (!/\d/.test(t)) return false;
+    if (!t || isWithdrawal(msg) || isDeposit(msg) || !/\d/.test(t)) return false;
     return /\b(ank|jodi|panel|pannel|patti|open|close|market|entry|t1|t2)\b/i.test(t) || /\d\s*[-=:xX]\s*\d/.test(t);
+  }
+  function featureOf(msg) {
+    if (isWithdrawal(msg)) return "withdrawal";
+    if (isDeposit(msg)) return "deposit";
+    if (isGameEntry(msg)) return "gameEntry";
+    return "";
   }
   async function reject(sock, chat, feature, quoted) {
     const key = `${chat}|${feature}`;
@@ -112,11 +107,9 @@ if (!global.__TITAN_ENTRIES_GROUP_ROUTING_V1__) {
                   const pass = [];
                   for (const msg of (Array.isArray(upsert?.messages) ? upsert.messages : [])) {
                     const chat = cleanJid(msg?.key?.remoteJid);
-                    if (isGameEntry(msg) && !(await allow("gameEntry", chat))) {
-                      await reject(sock, chat, "gameEntry", msg);
-                    } else {
-                      pass.push(msg);
-                    }
+                    const feature = featureOf(msg);
+                    if (feature && !(await allow(feature, chat))) await reject(sock, chat, feature, msg);
+                    else pass.push(msg);
                   }
                   if (pass.length) return handler({ ...upsert, messages: pass });
                 });
