@@ -28,6 +28,10 @@ function rateFor(type, amount=0){
   const pm=obj(obj(state.settlementSettings).payoutMultipliers);
   const configured=Number(pm[key.toLowerCase()]||pm[ledgerApiType(key)]||0);
   if(configured) return configured;
+function rateFor(type, amount=0){
+  const rates=obj(state.rates), key=String(type||'').toUpperCase();
+  const direct=Number(rates[key]||rates[key.toLowerCase()]||0);
+  if(direct) return direct;
   const defaults={ANK:9.5,JODI:95,PANEL:1400};
   const base=defaults[key]||1;
   return amount>=5000?Math.round(base*1.03*100)/100:amount>=1000?Math.round(base*1.015*100)/100:base;
@@ -69,6 +73,41 @@ function ledgerTypePanel(m,type,idx){
   </section>`;
 }
 function ledger(){const type=ledgerTypeKey(ledgerSub);return panel('Ledger',`<div class="sticky top-[69px] z-20 -mx-3 mb-3 border-b border-white/10 bg-[#0B1118]/95 px-3 py-2 backdrop-blur"><div class="grid grid-cols-3 gap-2">${['ANK','JODI','PANEL'].map(t=>`<button onclick="ledgerSub='${t}';render()" class="btn ${type===t?'btn-blue':'btn-ghost'}">${t}</button>`).join('')}</div><p class="mt-2 text-xs text-slate-400">Ek screen par sirf selected ${type} cards dikh rahe hain. Scroll me ANK/JODI/PANEL mix nahi hoga.</p></div><div class="grid gap-3 lg:grid-cols-2">${markets().map((m,i)=>ledgerTypePanel(m,type,i)).join('')}</div>`,'fa-table')}
+  const cards=arr(state.ledgerCards).filter(c=>(c.marketId||c.market)==marketId && String(c.type||'').toUpperCase()===type);
+  const last=cards.slice(-1)[0]||{};
+  const loss=Number(last.loss||last.amount||0);
+  const rate=rateFor(type,loss);
+  const stake=Math.max(10,Math.ceil((loss+100)/Math.max(rate-1,1)));
+  return {loss,rate,stake,next:`${type} next stake ${stake} @ ${rate}`};
+}
+function ledgerTypePanel(m,type){
+  const plan=recoveryPlan(m.id,type);
+  const cards=arr(state.ledgerCards).filter(c=>(c.marketId||c.market)==m.id && String(c.type||'').toUpperCase()===type).slice(-3).reverse();
+  return `<section class="rounded-2xl border border-white/10 bg-black/20 p-3">
+    <div class="flex items-center justify-between gap-2"><div><b>${type}</b><p class="text-[11px] text-slate-400">Auto rate ${plan.rate} · Recovery ${money(plan.stake)}</p></div><span class="pill">${cards[0]?.status||'READY'}</span></div>
+    <div class="mt-2 grid grid-cols-2 gap-2">
+      <input id="dig-${m.id}-${type}" class="input" placeholder="${type} digit/card">
+      <input id="amt-${m.id}-${type}" class="input" type="number" placeholder="Amount" oninput="suggestRate('${m.id}','${type}')">
+      <input id="rate-${m.id}-${type}" class="input" value="${plan.rate}" placeholder="Rate">
+      <button class="btn btn-yellow" onclick="applyRecovery('${m.id}','${type}')"><i class="fa-solid fa-calculator mr-1"></i>Recovery</button>
+    </div>
+    <div class="mt-2 grid grid-cols-4 gap-2">
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T1')">T1</button>
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T2')">T2</button>
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T3')">T3</button>
+      <button class="btn btn-ghost" onclick="trick('${m.id}','${type}','T4')">T4</button>
+    </div>
+    <div class="mt-2 grid grid-cols-5 gap-2">
+      <button class="btn btn-blue" onclick="scrapeLedger('${m.id}','${type}')">Scrape</button>
+      <button class="btn btn-yellow" onclick="combineLedger('${m.id}','${type}')">Combine</button>
+      <button class="btn btn-green" onclick="markLedger('${m.id}','${type}','pass')">PASS</button>
+      <button class="btn btn-red" onclick="markLedger('${m.id}','${type}','fail')">FAIL</button>
+      <button class="btn btn-ghost" onclick="markLedger('${m.id}','${type}','skip')">SKIP</button>
+    </div>
+    <div class="mt-2 grid gap-2">${cards.map(c=>`<div class="rounded-xl bg-white/5 p-2 text-xs"><b>${esc(c.digit||c.card||'-')}</b> · ${money(c.amount)} · ${esc(c.status||'new')} <button class="float-right text-[#00C26F]" onclick="markLedgerCard('${c.id||''}','pass')">auto PASS</button><button class="float-right mr-3 text-[#FF5D5D]" onclick="markLedgerCard('${c.id||''}','fail')">auto FAIL</button></div>`).join('')||'<p class="text-xs text-slate-500">No recent cards. Use scrape/combine or T1-T4.</p>'}</div>
+  </section>`;
+}
+function ledger(){return panel('Ledger',`<div class="mb-3 rounded-3xl border border-[#FAC748]/30 bg-[#FAC748]/10 p-3 text-sm text-slate-200"><b>ANK, JODI aur PANEL ab alag-alag panels hain.</b><br>Har panel me Scrape, Combine, T1-T4 trick buttons, auto-rate suggestion, recovery calculator, next-card hint aur PASS/FAIL auto-mark actions available hain.</div><div class="grid gap-3 xl:grid-cols-2">${markets().map(m=>`<div class="card p-3"><div class="flex justify-between gap-2"><div><b>${esc(m.displayName||m.name||m.id)}</b><p class="text-xs text-slate-400">Open ${esc(obj(m.times).open||'-')} · Close ${esc(obj(m.times).close||'-')} · Target ${arr(m.scheduleTargets).length}</p></div><span class="pill">${m.enabled===false?'OFF':'ACTIVE'}</span></div><div class="mt-3 grid gap-3">${['ANK','JODI','PANEL'].map(k=>ledgerTypePanel(m,k)).join('')}</div><div class="mt-3 grid grid-cols-2 gap-2"><button class="btn btn-blue" onclick="openTargets(['${arr(m.scheduleTargets).join("','")}'],v=>saveRoleTargets('${m.id}','schedule',v))">Schedule Targets</button><button class="btn btn-ghost" onclick="marketAction('${m.id}','reset')">Reset Market</button></div></div>`).join('')}</div>`,'fa-table')}
 function clients(){return panel('Clients (VIPs)',`<div class="grid gap-3 lg:grid-cols-2">${profiles().map(([id,p])=>`<div class="card p-3"><div class="flex gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-[#2AABEE]/20 font-black">${esc((p.name||id)[0])}</div><div class="min-w-0 flex-1"><b>${esc(p.name||id)}</b><p class="break-all text-xs text-slate-400">${esc(p.phone||'-')} · ${esc(id)}</p><p class="text-xs">${esc(p.approvalStatus||'pending')} · Exp ${esc(p.expiryDate||'not set')} · ${money(obj(state.wallets)[id]?.balance)}</p></div></div><div class="mt-3 grid grid-cols-2 gap-2"><button class="btn btn-green" onclick="vip('${id}','approved')">Approve</button><button class="btn btn-red" onclick="vip('${id}','rejected')">Reject</button><input id="exp-${id}" type="date" class="input"><button class="btn btn-blue" onclick="saveExpiry('${id}')">Set Expiry</button><button class="btn btn-ghost" onclick="toggleAccess('${id}',${p.vipAccessEnabled===false})">${p.vipAccessEnabled===false?'Enable':'Disable'}</button><button class="btn btn-red" onclick="delVip('${id}')">Delete</button><button class="btn btn-yellow col-span-2" onclick="share('/?vip=${id}')">Share App Link</button></div></div>`).join('')}</div>`,'fa-users')}
 function finance(){const subs=['summary','wallets','payments','withdrawals'];return panel('Finance',`<div class="no-scrollbar mb-3 flex gap-2 overflow-x-auto">${subs.map(s=>`<button onclick="financeSub='${s}';render()" class="btn ${financeSub===s?'btn-blue':'btn-ghost'} shrink-0">${s}</button>`).join('')}</div>${financeSub==='wallets'?wallets():financeSub==='payments'?payments():financeSub==='withdrawals'?withdrawals():summary()}`,'fa-wallet')}
 function summary(){return `<div class="grid gap-3 md:grid-cols-3"><div class="card p-4"><p>Wallet balance</p><b class="text-2xl text-[#00C26F]">${money(Object.values(obj(state.wallets)).reduce((a,w)=>a+Number(w.balance||0),0))}</b></div><div class="card p-4"><p>Pending payments</p><b>${arr(state.payments).filter(p=>String(p.status).toLowerCase().includes('pending')).length}</b></div><div class="card p-4"><p>Pending withdrawals</p><b>${arr(state.withdrawals).filter(p=>String(p.status).toLowerCase().includes('pending')).length}</b></div></div>`}
@@ -102,6 +141,13 @@ window.combineLedger=async(marketId,type,idx)=>{type=ledgerTypeKey(type); const 
 window.markLedger=async(marketId,type,status,idx)=>{await commitLedger(marketId,type,idx,`manual_${status}`,{status,_markStatus:status,autoMark:true})};
 window.markLedgerCard=(cardId,status)=>post(API.ledgerUpdate,{activeId:state.activeId||'admin1',action:`manual_${status}`,record:{status,_markStatus:status,autoMark:true},date:currentDateKey()});
 window.saveLedgerCard=(marketId,type,idx,action='manual_input')=>commitLedger(marketId,type,idx,action);
+window.suggestRate=(marketId,type)=>{const amt=Number($(`#amt-${marketId}-${type}`).value||0); const r=$(`#rate-${marketId}-${type}`); if(r)r.value=rateFor(type,amt)};
+window.applyRecovery=(marketId,type)=>{const plan=recoveryPlan(marketId,type); $(`#amt-${marketId}-${type}`).value=plan.stake; $(`#rate-${marketId}-${type}`).value=plan.rate; toast('Recovery suggested',plan.next)};
+window.trick=(marketId,type,trick)=>post(API.market,{action:'ledger_trick',marketId,id:marketId,type,trick,digit:$(`#dig-${marketId}-${type}`).value,amount:Number($(`#amt-${marketId}-${type}`).value||0),rate:Number($(`#rate-${marketId}-${type}`).value||rateFor(type))});
+window.scrapeLedger=(marketId,type)=>post(API.market,{action:'ledger_scrape',marketId,id:marketId,type});
+window.combineLedger=(marketId,type)=>post(API.market,{action:'ledger_combine',marketId,id:marketId,type,digit:$(`#dig-${marketId}-${type}`).value,amount:Number($(`#amt-${marketId}-${type}`).value||0),rate:Number($(`#rate-${marketId}-${type}`).value||rateFor(type))});
+window.markLedger=(marketId,type,status)=>post(API.market,{action:'ledger_mark',marketId,id:marketId,type,status,autoMark:true,digit:$(`#dig-${marketId}-${type}`).value});
+window.markLedgerCard=(cardId,status)=>post(API.market,{action:'ledger_card_mark',cardId,status,autoMark:true});
 window.marketAction=(id,action)=>post(API.market,{id,action}); window.saveRoleTargets=(id,role,v)=>post(API.market,{action:'set_role_targets',id,role,targets:v});
 window.vip=(userId,status)=>post('/api/vip_control/update',{userId,approvalStatus:status,vipAccessEnabled:status==='approved'}); window.saveExpiry=userId=>post('/api/vip_control/update',{userId,expiryDate:$(`#exp-${userId}`).value}); window.toggleAccess=(userId,on)=>post('/api/vip_control/update',{userId,vipAccessEnabled:on}); window.delVip=userId=>confirm('Archive/delete VIP?')&&post('/api/vip_control/archive',{userId});
 window.walletTx=(userId,kind)=>post(API.wallet,{userId,kind,amount:Number($(`#amt-${userId}`).value||0),description:'Admin dashboard'}); window.payment=(id,action)=>post(API.pay,{id,paymentId:id,action}); window.withdraw=(id,action)=>post(API.withdraw,{id,withdrawalId:id,action});
