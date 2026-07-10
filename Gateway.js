@@ -38,13 +38,15 @@ require.extensions[".bak"] = require.extensions[".js"];
 try { require("./gateway_wallet_alias_patch.js"); }
 catch (err) { console.warn("⚠️ Gateway wallet alias patch failed:", err && err.message ? err.message : err); }
 
-// Strict payment proof handling is image-only and lives in the OCR bridge.
 console.log("✅ Text-only deposit ingest removed; screenshot OCR required");
 try { require("./gateway_deposit_ocr_patch.js"); }
 catch (err) { console.warn("⚠️ Gateway deposit OCR bridge failed:", err && err.message ? err.message : err); }
 
-// Withdrawal is handled separately so removing unsafe deposit ingest never disables it.
 try { require("./gateway_withdrawal_runtime_patch.js"); }
 catch (err) { console.warn("⚠️ Gateway withdrawal runtime failed:", err && err.message ? err.message : err); }
+
+// Load last so the legacy game-entry listener is filtered by Entries group routing.
+try { require("./gateway_entries_group_routing_patch.js"); }
+catch (err) { console.warn("⚠️ Entries group routing failed:", err && err.message ? err.message : err); }
 
 require("./legacy-backup/Gateway.js.bak");
