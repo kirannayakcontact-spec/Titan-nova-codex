@@ -50,7 +50,6 @@ done
 [ -f "legacy-backup/Gateway.js.bak" ] || fail "Missing legacy-backup/Gateway.js.bak"
 
 say "6/9 Python dependencies install"
-# Termux manages pip itself; upgrading pip can fail or damage the environment.
 python -m pip install --no-cache-dir setuptools wheel
 python -m pip install --no-cache-dir -r requirements.txt
 
@@ -63,7 +62,12 @@ npm run check
 say "8/9 Runtime syntax checks"
 python -m py_compile flask_app.py legacy-backup/flask_app.py.bak
 node --check Gateway.js
-node --check legacy-backup/Gateway.js.bak
+# Node 24 rejects unknown .bak extensions in --check mode. Runtime itself maps
+# .bak to JavaScript in Gateway.js, so validate through a temporary .js copy.
+LEGACY_GATEWAY_CHECK="${TMPDIR:-$PREFIX/tmp}/titan_legacy_gateway_check.js"
+cp legacy-backup/Gateway.js.bak "$LEGACY_GATEWAY_CHECK"
+node --check "$LEGACY_GATEWAY_CHECK"
+rm -f "$LEGACY_GATEWAY_CHECK"
 
 say "9/9 Permissions, shortcuts and first deploy"
 chmod +x deploy.sh termux_diagnose.sh fresh_termux_setup.sh 2>/dev/null || true
