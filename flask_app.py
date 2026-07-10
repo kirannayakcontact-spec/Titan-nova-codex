@@ -12,7 +12,7 @@ os.environ.setdefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebas
 os.environ.setdefault("FIREBASE_DB_URL", os.environ.get("FIREBASE_URL"))
 
 _LAUNCHER_NAME = __name__
-_LAUNCHER_VERSION = "2026-07-10-termux-safe-ui-boot-v2"
+_LAUNCHER_VERSION = "2026-07-10-termux-safe-ui-deposit-v3"
 _BASE_DIR = Path(__file__).resolve().parent
 _LEGACY_FILE = _BASE_DIR / "legacy-backup" / "flask_app.py.bak"
 _BOOT_STARTED_AT = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -99,14 +99,14 @@ def _register_patch(label, module_name, func_name, ui_heavy=False):
         print(f"⚠️ {label} failed to load:", exc)
 
 
-# Core guards remain active. HTML-injection-heavy patches are skipped by default on
-# Termux so the base dashboard can respond without ERR_EMPTY_RESPONSE.
 _register_patch("Finance Deposit removal guard", "finance_deposit_removed", "register_finance_deposit_removed", ui_heavy=True)
 _register_patch("Titan runtime safety bridge", "deposit_finance_force", "register_deposit_finance_force", ui_heavy=True)
 _register_patch("Titan global realtime/local UI guard", "titan_realtime_global", "register_titan_realtime_global", ui_heavy=True)
 _register_patch("Result tab sticky toggle guard", "result_toggle_sticky", "register_result_toggle_sticky", ui_heavy=True)
 _register_patch("VIP profile delete guard", "titan_profile_delete_guard_patch", "register_vip_profile_delete_guard", ui_heavy=True)
-_register_patch("Deposit OCR guard", "deposit_ocr_guard", "register_deposit_ocr_guard", ui_heavy=True)
+# API-only OCR guards must remain active even in safe UI mode.
+_register_patch("Deposit OCR guard", "deposit_ocr_guard", "register_deposit_ocr_guard", ui_heavy=False)
+_register_patch("Strict Deposit OCR runtime", "strict_deposit_ocr_runtime", "register_strict_deposit_ocr_runtime", ui_heavy=False)
 _register_patch("Titan Firebase guard", "titan_firebase_guard_patch", "register_titan_firebase_guard", ui_heavy=True)
 _register_patch("Titan Setup control patch", "titan_setup_control_patch", "register_titan_setup_control", ui_heavy=True)
 _register_patch("Titan Result control patch", "titan_result_control_patch", "register_titan_result_control", ui_heavy=True)
