@@ -27,6 +27,7 @@ JAVASCRIPT_FILES = [
     "gateway_firebase_guard_patch.js",
     "gateway_wallet_alias_patch.js",
     "gateway_deposit_ocr_patch.js",
+    "gateway_withdrawal_runtime_patch.js",
 ]
 
 FORBIDDEN_REFERENCES = [
@@ -80,6 +81,7 @@ def check_launcher_references() -> None:
     required = [
         "titan_ledger_control_overlay_patch",
         "gateway_deposit_ocr_patch",
+        "gateway_withdrawal_runtime_patch",
         "titan_strict_result_rules_patch",
     ]
     for marker in required:
