@@ -12,7 +12,7 @@ os.environ.setdefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebas
 os.environ.setdefault("FIREBASE_DB_URL", os.environ.get("FIREBASE_URL"))
 
 _LAUNCHER_NAME = __name__
-_LAUNCHER_VERSION = "2026-07-10-termux-ledger-autopf-visible-v5"
+_LAUNCHER_VERSION = "2026-07-10-termux-ledger-control-overlay-v6"
 _BASE_DIR = Path(__file__).resolve().parent
 _LEGACY_FILE = _BASE_DIR / "legacy-backup" / "flask_app.py.bak"
 _BOOT_STARTED_AT = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -33,29 +33,17 @@ def _make_fallback_app(error, tb):
         from flask import Flask, jsonify, Response
     except Exception:
         raise error
-
     fallback = Flask(__name__)
     fallback.secret_key = os.environ.get("TITAN_FLASK_SECRET", "titan-nova-fallback")
 
     @fallback.route("/")
     def fallback_index():
-        body = f"""
-<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Titan Nova Startup Error</title>
-<style>body{{margin:0;background:#07111d;color:#fff;font-family:Arial,sans-serif;padding:18px;line-height:1.5}}.card{{max-width:760px;margin:28px auto;border:1px solid #ff5d5d55;border-radius:18px;background:#ffffff0f;padding:18px}}pre{{white-space:pre-wrap;background:#0008;padding:12px;border-radius:12px;overflow:auto;font-size:12px}}</style>
-</head><body><div class='card'><h2>⚠️ Titan Nova Flask startup error</h2>
-<p><b>Error:</b> {str(error).replace('<','&lt;').replace('>','&gt;')}</p>
-<pre>{tb[-5000:].replace('<','&lt;').replace('>','&gt;')}</pre></div></body></html>"""
+        body = f"""<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Titan Nova Startup Error</title><style>body{{margin:0;background:#07111d;color:#fff;font-family:Arial,sans-serif;padding:18px;line-height:1.5}}.card{{max-width:760px;margin:28px auto;border:1px solid #ff5d5d55;border-radius:18px;background:#ffffff0f;padding:18px}}pre{{white-space:pre-wrap;background:#0008;padding:12px;border-radius:12px;overflow:auto;font-size:12px}}</style></head><body><div class='card'><h2>⚠️ Titan Nova Flask startup error</h2><p><b>Error:</b> {str(error).replace('<','&lt;').replace('>','&gt;')}</p><pre>{tb[-5000:].replace('<','&lt;').replace('>','&gt;')}</pre></div></body></html>"""
         return Response(body, status=500, content_type="text/html; charset=utf-8")
 
     @fallback.route("/api/runtime_boot/status")
     def fallback_status():
-        return jsonify({
-            "status": "error", "version": _LAUNCHER_VERSION, "legacyLoaded": False,
-            "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE),
-            "error": _short_exc(error), "tracebackTail": tb[-6000:],
-        }), 500
-
+        return jsonify({"status": "error", "version": _LAUNCHER_VERSION, "legacyLoaded": False, "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE), "error": _short_exc(error), "tracebackTail": tb[-6000:]}), 500
     return fallback
 
 
@@ -112,6 +100,7 @@ _register_patch("Titan Result control patch", "titan_result_control_patch", "reg
 _register_patch("Titan frontend boot/render guard", "titan_frontend_boot_fix_patch", "register_titan_frontend_boot_fix", ui_heavy=False)
 _register_patch("Titan Ledger Auto P/F UI patch", "titan_ledger_autopf_ui_patch", "register_titan_ledger_autopf_ui", ui_heavy=False)
 _register_patch("Titan Ledger Auto P/F visible control", "titan_ledger_autopf_visible_patch", "register_titan_ledger_autopf_visible", ui_heavy=False)
+_register_patch("Titan Ledger reliable control overlay", "titan_ledger_control_overlay_patch", "register_titan_ledger_control_overlay", ui_heavy=False)
 _register_patch("Titan VIP control patch", "titan_vip_control_patch", "register_titan_vip_control", ui_heavy=True)
 _register_patch("Titan Codex stability patch", "titan_codex_stability_patch", "register_titan_codex_stability", ui_heavy=True)
 
@@ -122,13 +111,7 @@ if _LEGACY_LOADED:
 
         @app.route("/api/runtime_boot/status")
         def titan_runtime_boot_status():
-            return jsonify({
-                "status": "success", "version": _LAUNCHER_VERSION, "legacyLoaded": True,
-                "safeUiBoot": _SAFE_UI_BOOT, "isTermux": _IS_TERMUX,
-                "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE),
-                "patches": _PATCH_REPORT,
-                "firebaseUrlConfigured": bool(os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL")),
-            })
+            return jsonify({"status": "success", "version": _LAUNCHER_VERSION, "legacyLoaded": True, "safeUiBoot": _SAFE_UI_BOOT, "isTermux": _IS_TERMUX, "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE), "patches": _PATCH_REPORT, "firebaseUrlConfigured": bool(os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL"))})
 
         @app.route("/api/plain_health")
         def titan_plain_health():
