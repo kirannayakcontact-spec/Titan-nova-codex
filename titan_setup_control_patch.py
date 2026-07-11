@@ -175,6 +175,7 @@ def register_titan_setup_control(app):
             if key not in cfg: cfg[key] = default; repairs.append("config." + key)
         for typ in ("ank", "jodi", "pannel"):
             if not isinstance(cfg.get(typ), dict): cfg[typ] = {}; repairs.append("config." + typ)
+            cfg[typ].setdefault("cap", 0)
             cfg[typ].setdefault("tgt", 0)
         st["marketRegistry"] = normalize_market_registry(st.get("marketRegistry") or default_market_registry())
         es = st.setdefault("entrySettings", {})
@@ -245,10 +246,17 @@ def register_titan_setup_control(app):
             if "capital" in cfg_payload: cfg["capital"] = num(cfg_payload.get("capital"), cfg.get("capital", 0))
             if "dayTarget" in cfg_payload: cfg["dayTarget"] = num(cfg_payload.get("dayTarget"), cfg.get("dayTarget", 0))
             for typ in ("ank", "jodi", "pannel"):
-                if typ in cfg_payload and isinstance(cfg_payload.get(typ), dict):
-                    cfg.setdefault(typ, {})["tgt"] = num(cfg_payload[typ].get("tgt"), cfg.get(typ, {}).get("tgt", 0))
+                aliases = [typ]
+                if typ == "pannel":
+                    aliases += ["panel", "pan"]
+                for alias in aliases:
+                    if alias in cfg_payload and isinstance(cfg_payload.get(alias), dict):
+                        cfg.setdefault(typ, {})["tgt"] = num(cfg_payload[alias].get("tgt"), cfg.get(typ, {}).get("tgt", 0))
+                        cfg.setdefault(typ, {})["cap"] = num(cfg_payload[alias].get("cap"), cfg.get(typ, {}).get("cap", 0))
                 if typ + "Target" in cfg_payload:
                     cfg.setdefault(typ, {})["tgt"] = num(cfg_payload.get(typ + "Target"), cfg.get(typ, {}).get("tgt", 0))
+                if typ + "Cap" in cfg_payload:
+                    cfg.setdefault(typ, {})["cap"] = num(cfg_payload.get(typ + "Cap"), cfg.get(typ, {}).get("cap", 0))
             changed += [("profiles", "admin1")]
         if section in ("schedule", "risk", "entry", "all"):
             es = st["entrySettings"]; rs = st["riskSettings"]
