@@ -2,21 +2,23 @@
 
 Titan Nova legacy two-file runtime for Flask dashboard/API + WhatsApp Gateway.
 
-## Active runtime
+## Active production runtime
 
-The active runtime uses the old two-file style:
+The official production runtime currently uses the root legacy two-file style:
 
 ```bash
 python flask_app.py
 node Gateway.js
 ```
 
-The full previous runtime code is preserved under `legacy-backup/` and loaded by the root launchers:
+Keep this as the production runtime until a documented migration explicitly promotes a new modular runtime. The full previous runtime code is preserved under `legacy-backup/` and loaded by the root launchers:
 
 ```text
 legacy-backup/flask_app.py.bak
 legacy-backup/Gateway.js.bak
 ```
+
+The clean `andres-berlin/` folder is a future modular rebuild target, not the active production runtime yet. See `docs/RUNTIME_DECISION.md` before changing runtime ownership.
 
 ## Install
 
@@ -32,6 +34,16 @@ python -m py_compile flask_app.py
 node --check Gateway.js
 npm run check
 ```
+
+## Full health check
+
+Before changing frontend, backend, Gateway, Firebase, or money-flow code, follow:
+
+```text
+docs/HEALTH_CHECK.md
+```
+
+This checklist verifies the dashboard, Flask API, Gateway, Firebase readiness, and deploy flow before professional cleanup work starts.
 
 ## Easiest Termux deploy
 
