@@ -12,7 +12,7 @@ def register_titan_ledger_control_overlay(app):
 
     from flask import request
 
-    version = "2026-07-11-ledger-control-no-market-protocol-v5"
+    version = "2026-07-11-ledger-control-card-protocol-v6"
 
     @app.after_request
     def inject_ledger_control(resp):
@@ -22,7 +22,7 @@ def register_titan_ledger_control_overlay(app):
             if "text/html" not in (resp.headers.get("Content-Type") or "").lower():
                 return resp
             html = resp.get_data(as_text=True)
-            if not html or "titan-ledger-control-canonical-v4" in html or "</body>" not in html.lower():
+            if not html or "titan-ledger-control-canonical-v6" in html or "</body>" not in html.lower():
                 return resp
             index = html.lower().rfind("</body>")
             html = html[:index] + SCRIPT + html[index:]
@@ -36,10 +36,10 @@ def register_titan_ledger_control_overlay(app):
 
 
 SCRIPT = r'''
-<script id="titan-ledger-control-canonical-v4">
+<script id="titan-ledger-control-canonical-v6">
 (function(){
- if(window.__TITAN_LEDGER_CONTROL_CANONICAL_V4__) return;
- window.__TITAN_LEDGER_CONTROL_CANONICAL_V4__=true;
+ if(window.__TITAN_LEDGER_CONTROL_CANONICAL_V6__) return;
+ window.__TITAN_LEDGER_CONTROL_CANONICAL_V6__=true;
  const BUTTON_ID='titanLedgerControlButton';
  const MODAL_ID='titanLedgerControlModal';
  function apiHeaders(){const h={'Content-Type':'application/json','Cache-Control':'no-store'};try{const t=localStorage.getItem('TITAN_ADMIN_TOKEN')||'';if(t)h['X-Titan-Admin-Token']=t}catch(_){}return h}
@@ -87,6 +87,17 @@ SCRIPT = r'''
  }
 
 
+
+ function adminConfig(){
+   const root=window.appState||window.__BOOT_STATE__||{};
+   const profileCfg=root.profiles&&root.profiles.admin1&&root.profiles.admin1.config;
+   const cfg=(root.adminConfig&&typeof root.adminConfig==='object')?root.adminConfig:((profileCfg&&typeof profileCfg==='object')?profileCfg:{});
+   for(const k of ['ank','jodi','pannel']){if(!cfg[k]||typeof cfg[k]!=='object')cfg[k]={cap:0,tgt:0};}
+   if(typeof cfg.capital==='undefined')cfg.capital=0;
+   if(typeof cfg.dayTarget==='undefined')cfg.dayTarget=0;
+   return cfg;
+ }
+
  function recentSummary(){
    const day=(window.appState&&appState.ledgerAutoMarkRecords&&appState.ledgerAutoMarkRecords[businessDate()])||{};
    const rows=Object.values(day).filter(x=>x&&typeof x==='object');
@@ -113,6 +124,27 @@ SCRIPT = r'''
      notify('✅ Payout Saved','ANK/JODI/PANEL payout save ho gaya.','success');
    }catch(e){notify('❌ Save Error',String(e.message||e),'danger')}
  };
+
+ window.titanLedgerControlSaveCardProtocol=async function(){
+   try{
+     const config={
+       capital:Number(document.getElementById('tlc-capital').value||0),
+       dayTarget:Number(document.getElementById('tlc-day-target').value||0),
+       ank:{cap:Number(document.getElementById('tlc-ank-cap').value||0),tgt:Number(document.getElementById('tlc-ank-tgt').value||0)},
+       jodi:{cap:Number(document.getElementById('tlc-jodi-cap').value||0),tgt:Number(document.getElementById('tlc-jodi-tgt').value||0)},
+       pannel:{cap:Number(document.getElementById('tlc-pan-cap').value||0),tgt:Number(document.getElementById('tlc-pan-tgt').value||0)}
+     };
+     const res=await fetch('/api/setup_control/save',{method:'POST',headers:apiHeaders(),body:JSON.stringify({section:'market',data:{config}})});
+     const data=await res.json().catch(()=>({}));
+     if(!res.ok||data.status==='error')throw new Error(data.message||('HTTP '+res.status));
+     const saved=(data.statePatch&&data.statePatch.adminConfig)||config;
+     if(window.appState){appState.adminConfig=saved;appState.profiles=appState.profiles||{};appState.profiles.admin1=appState.profiles.admin1||{};appState.profiles.admin1.config=saved;}
+     if(window.__BOOT_STATE__){window.__BOOT_STATE__.adminConfig=saved;}
+     try{if(typeof state==='object'&&state){state.adminConfig=saved;state.profiles=state.profiles||{};state.profiles.admin1=state.profiles.admin1||{};state.profiles.admin1.config=saved;}}catch(_){}
+     notify('✅ Card Protocol Saved','ANK/JODI/PENEL card protocol Ledger Control me save ho gaya.','success');
+   }catch(e){notify('❌ Save Error',String(e.message||e),'danger')}
+ };
+
  window.titanLedgerControlRun=async function(){
    try{
      if(state().autoLedgerMarking===false)throw new Error('Auto Mark OFF hai. Pehle ON karo.');
@@ -131,9 +163,9 @@ SCRIPT = r'''
  function toggle(label,key,on){return `<label style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:#0e1b29;border-radius:12px;font-size:12px;font-weight:800"><span>${label}</span><input type="checkbox" ${on?'checked':''} onchange="titanLedgerControlSet('${key}',this.checked)"></label>`}
  window.titanLedgerControlOpen=function openControl(){
    document.getElementById(MODAL_ID)?.remove();
-   const s=state(),p=s.payoutMultipliers,sum=recentSummary();
+   const s=state(),p=s.payoutMultipliers,c=adminConfig(),sum=recentSummary();
    const modal=document.createElement('div');modal.id=MODAL_ID;modal.style.cssText='position:fixed;inset:64px 0 70px;z-index:999999;background:#07111df5;overflow:auto;padding:12px;color:#fff;font-family:Arial';
-   modal.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;background:#123047;border:1px solid #00c79a55;padding:14px;border-radius:16px"><div><b>⚙ LEDGER CONTROL CENTER</b><div style="font-size:10px;color:#9db0c0;margin-top:4px">ANK · JODI · PANEL</div></div><button onclick="document.getElementById('${MODAL_ID}').remove()" style="background:#203247;color:#fff;border:0;border-radius:10px;padding:9px 12px">✕</button></div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px"><div style="background:#132234;padding:11px;border-radius:12px;text-align:center"><small>MARKED</small><b style="display:block;margin-top:4px">${sum.marked}</b></div><div style="background:#132234;padding:11px;border-radius:12px;text-align:center"><small>PASS</small><b style="display:block;margin-top:4px;color:#4ade80">${sum.pass}</b></div><div style="background:#132234;padding:11px;border-radius:12px;text-align:center"><small>FAIL</small><b style="display:block;margin-top:4px;color:#fb7185">${sum.fail}</b></div></div><div style="background:#132234;border-radius:16px;padding:13px;margin-top:10px"><b>🤖 Auto Pass / Fail</b><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">${toggle('Auto Mark','autoLedgerMarking',s.autoLedgerMarking!==false)}${toggle('Only WAIT','autoLedgerMarkOnlyWait',s.autoLedgerMarkOnlyWait!==false)}${toggle('All VIPs','autoLedgerApplyToAllProfiles',s.autoLedgerApplyToAllProfiles!==false)}${toggle('Record Results','autoLedgerRecordResults',s.autoLedgerRecordResults!==false)}</div><button onclick="titanLedgerControlRun()" style="width:100%;margin-top:10px;padding:12px;background:#fac74822;color:#fac748;border:1px solid #fac74866;border-radius:11px;font-weight:900">MARK NOW FROM SAVED RESULTS</button></div><div style="background:#132234;border-radius:16px;padding:13px;margin-top:10px"><b>🎯 Game & Payout</b><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px"><input id="tlc-ank" value="${p.ank}" type="number" step="0.1" placeholder="ANK" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"><input id="tlc-jodi" value="${p.jodi}" type="number" step="0.1" placeholder="JODI" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"><input id="tlc-panel" value="${p.penel}" type="number" step="0.1" placeholder="PANEL" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"></div><button onclick="titanLedgerControlSavePayout()" style="width:100%;margin-top:10px;padding:12px;background:#00a884;color:white;border:0;border-radius:11px;font-weight:900">SAVE PAYOUT</button></div>`;
+   modal.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;background:#123047;border:1px solid #00c79a55;padding:14px;border-radius:16px"><div><b>⚙ LEDGER CONTROL CENTER</b><div style="font-size:10px;color:#9db0c0;margin-top:4px">ANK · JODI · PANEL</div></div><button onclick="document.getElementById('${MODAL_ID}').remove()" style="background:#203247;color:#fff;border:0;border-radius:10px;padding:9px 12px">✕</button></div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px"><div style="background:#132234;padding:11px;border-radius:12px;text-align:center"><small>MARKED</small><b style="display:block;margin-top:4px">${sum.marked}</b></div><div style="background:#132234;padding:11px;border-radius:12px;text-align:center"><small>PASS</small><b style="display:block;margin-top:4px;color:#4ade80">${sum.pass}</b></div><div style="background:#132234;padding:11px;border-radius:12px;text-align:center"><small>FAIL</small><b style="display:block;margin-top:4px;color:#fb7185">${sum.fail}</b></div></div><div style="background:#132234;border-radius:16px;padding:13px;margin-top:10px"><b>🤖 Auto Pass / Fail</b><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">${toggle('Auto Mark','autoLedgerMarking',s.autoLedgerMarking!==false)}${toggle('Only WAIT','autoLedgerMarkOnlyWait',s.autoLedgerMarkOnlyWait!==false)}${toggle('All VIPs','autoLedgerApplyToAllProfiles',s.autoLedgerApplyToAllProfiles!==false)}${toggle('Record Results','autoLedgerRecordResults',s.autoLedgerRecordResults!==false)}</div><button onclick="titanLedgerControlRun()" style="width:100%;margin-top:10px;padding:12px;background:#fac74822;color:#fac748;border:1px solid #fac74866;border-radius:11px;font-weight:900">MARK NOW FROM SAVED RESULTS</button></div><div style="background:#132234;border-radius:16px;padding:13px;margin-top:10px"><b>🧾 Capital & Card Protocol</b><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px"><input id="tlc-capital" value="${c.capital||0}" type="number" step="1" placeholder="APNA CAPITAL" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"><input id="tlc-day-target" value="${c.dayTarget||0}" type="number" step="1" placeholder="DIN KA TARGET" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"></div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">${[['ANK','ank',c.ank||{}],['JODI','jodi',c.jodi||{}],['PENEL','pan',c.pannel||c.panel||{}]].map(([label,key,obj])=>`<div style="background:#0e1b29;border:1px solid #ffffff18;border-radius:12px;padding:9px"><b style="font-size:11px">${label} CARD PROTOCOL</b><input id="tlc-${key}-cap" value="${obj.cap||0}" type="number" step="1" placeholder="Capital Cap" style="width:100%;margin-top:7px;min-width:0;padding:10px;border-radius:10px;border:1px solid #ffffff22;background:#07111d;color:white"><input id="tlc-${key}-tgt" value="${obj.tgt||0}" type="number" step="1" placeholder="Target/Card" style="width:100%;margin-top:7px;min-width:0;padding:10px;border-radius:10px;border:1px solid #ffffff22;background:#07111d;color:white"></div>`).join('')}</div><button onclick="titanLedgerControlSaveCardProtocol()" style="width:100%;margin-top:10px;padding:12px;background:#2aabee;color:white;border:0;border-radius:11px;font-weight:900">SAVE CARD PROTOCOL</button></div><div style="background:#132234;border-radius:16px;padding:13px;margin-top:10px"><b>🎯 Game & Payout</b><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px"><input id="tlc-ank" value="${p.ank}" type="number" step="0.1" placeholder="ANK" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"><input id="tlc-jodi" value="${p.jodi}" type="number" step="0.1" placeholder="JODI" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"><input id="tlc-panel" value="${p.penel}" type="number" step="0.1" placeholder="PANEL" style="min-width:0;padding:11px;border-radius:10px;border:1px solid #ffffff22;background:#0e1b29;color:white"></div><button onclick="titanLedgerControlSavePayout()" style="width:100%;margin-top:10px;padding:12px;background:#00a884;color:white;border:0;border-radius:11px;font-weight:900">SAVE PAYOUT</button></div>`;
    document.body.appendChild(modal);
  }
  function mount(){
