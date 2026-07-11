@@ -107,6 +107,7 @@ _register_patch("Titan Result control patch", "titan_result_control_patch", "reg
 _register_patch("Titan strict result rules", "titan_strict_result_rules_patch", "register_titan_strict_result_rules", ui_heavy=False)
 _register_patch("Titan frontend boot/render guard", "titan_frontend_boot_fix_patch", "register_titan_frontend_boot_fix", ui_heavy=False)
 _register_patch("Titan Ledger control", "titan_ledger_control_overlay_patch", "register_titan_ledger_control_overlay", ui_heavy=False)
+_register_patch("Wallet manual override sticky", "wallet_action_sticky", "register_wallet_action_sticky", ui_heavy=False)
 _register_patch("Titan VIP control patch", "titan_vip_control_patch", "register_titan_vip_control", ui_heavy=True)
 _register_patch("Titan Codex stability patch", "titan_codex_stability_patch", "register_titan_codex_stability", ui_heavy=True)
 _register_patch("Mobile Admin Dashboard", "titan_mobile_admin_dashboard_patch", "register_mobile_admin_dashboard", ui_heavy=True)

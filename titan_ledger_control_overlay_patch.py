@@ -77,11 +77,12 @@ SCRIPT = r'''
    if(typeof s.autoLedgerApplyToAllProfiles==='undefined')s.autoLedgerApplyToAllProfiles=true;
    if(typeof s.autoLedgerRecordResults==='undefined')s.autoLedgerRecordResults=true;
    const p=s.payoutMultipliers=(s.payoutMultipliers&&typeof s.payoutMultipliers==='object')?s.payoutMultipliers:{};
-   if(Number(p.ank||0)<=0)p.ank=9.5;
-   if(Number(p.jodi||0)<50)p.jodi=95;
-   if(Number(p.penel||0)<=0)p.penel=150;
-   if(Number(p.panel||0)<=0)p.panel=p.penel;
-   if(Number(p.patti||0)<=0)p.patti=p.penel;
+   const hasNum=v=>Number.isFinite(Number(v));
+   if(!hasNum(p.ank))p.ank=9.5;
+   if(!hasNum(p.jodi))p.jodi=95;
+   if(!hasNum(p.penel))p.penel=150;
+   if(!hasNum(p.panel))p.panel=p.penel;
+   if(!hasNum(p.patti))p.patti=p.penel;
    return s;
  }
  function recentSummary(){
@@ -94,8 +95,10 @@ SCRIPT = r'''
    const res=await fetch('/api/result_control/save_settings',{method:'POST',headers:apiHeaders(),body:JSON.stringify(patch)});
    const data=await res.json().catch(()=>({}));
    if(!res.ok||data.status!=='success')throw new Error(data.message||('HTTP '+res.status));
-   if(data.settlementSettings)appState.settlementSettings=data.settlementSettings;
+   if(data.settlementSettings){appState.settlementSettings=data.settlementSettings;if(window.__BOOT_STATE__)window.__BOOT_STATE__.settlementSettings=data.settlementSettings;}
+   try{if(typeof state==='object'&&state)state.settlementSettings=data.settlementSettings||state.settlementSettings}catch(_){}
    try{if(typeof LOCAL_KEY!=='undefined')localStorage.setItem(LOCAL_KEY,JSON.stringify(appState))}catch(_){}
+   try{if(typeof refreshResultsState==='function')refreshResultsState()}catch(_){}
    return data;
  }
  window.titanLedgerControlSet=async function(key,value){try{await saveSetting(key,!!value);notify('✅ Ledger Control','Setting save ho gayi.','success')}catch(e){notify('❌ Save Error',String(e.message||e),'danger')}};
@@ -103,6 +106,7 @@ SCRIPT = r'''
    try{
      const payout={ank:Number(document.getElementById('tlc-ank').value||9.5),jodi:Number(document.getElementById('tlc-jodi').value||95),penel:Number(document.getElementById('tlc-panel').value||150)};
      payout.panel=payout.penel;payout.patti=payout.penel;
+     if(!Number.isFinite(payout.ank)||!Number.isFinite(payout.jodi)||!Number.isFinite(payout.penel))throw new Error('Payout number invalid hai.');
      await saveSetting('payoutMultipliers',payout);
      notify('✅ Payout Saved','ANK/JODI/PANEL payout save ho gaya.','success');
    }catch(e){notify('❌ Save Error',String(e.message||e),'danger')}

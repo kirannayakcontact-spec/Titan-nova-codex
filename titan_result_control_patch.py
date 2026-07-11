@@ -156,6 +156,13 @@ def register_titan_result_control(app):
             "version": VERSION,
         }
 
+    def _is_number_like(value):
+        try:
+            float(value)
+            return True
+        except Exception:
+            return False
+
     def default_settlement_settings():
         g = G()
         fn = g.get("_default_settlement_settings")
@@ -180,11 +187,7 @@ def register_titan_result_control(app):
             pm = {}
             base["payoutMultipliers"] = pm
         pm.setdefault("ank", 9.5)
-        try:
-            j = float(pm.get("jodi"))
-        except Exception:
-            j = 0
-        if j < 50:
+        if not _is_number_like(pm.get("jodi")):
             pm["jodi"] = 95
         pm.setdefault("penel", 150)
         pm.setdefault("panel", pm.get("penel", 150))
@@ -223,7 +226,7 @@ def register_titan_result_control(app):
                 for pk, pv in v.items():
                     try: old = float(pm.get(pk))
                     except Exception: old = None
-                    if old is None or (pk == "jodi" and old < 50):
+                    if old is None:
                         pm[pk] = pv; repairs.append("payout." + pk)
             else:
                 ss.setdefault(k, v)
@@ -312,10 +315,7 @@ def register_titan_result_control(app):
                 val = num(pm_in.get(k), pm.get(k, 0))
                 if val >= 0:
                     pm[k] = val
-        try:
-            if float(pm.get("jodi", 0)) < 50:
-                pm["jodi"] = 95
-        except Exception:
+        if not _is_number_like(pm.get("jodi")):
             pm["jodi"] = 95
         if "panel" not in pm and "penel" in pm:
             pm["panel"] = pm.get("penel")
