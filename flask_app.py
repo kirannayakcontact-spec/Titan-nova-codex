@@ -103,7 +103,6 @@ _register_patch("Titan Ledger control", "titan_ledger_control_overlay_patch", "r
 _register_patch("Titan Entries group control", "titan_entries_group_control_patch", "register_titan_entries_group_control", ui_heavy=False)
 _register_patch("Titan VIP control patch", "titan_vip_control_patch", "register_titan_vip_control", ui_heavy=True)
 _register_patch("Titan Codex stability patch", "titan_codex_stability_patch", "register_titan_codex_stability", ui_heavy=True)
-_register_patch("Mobile Admin Dashboard", "titan_mobile_admin_dashboard_patch", "register_mobile_admin_dashboard", ui_heavy=False)
 
 
 if _LEGACY_LOADED:
