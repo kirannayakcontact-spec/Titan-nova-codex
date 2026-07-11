@@ -1687,6 +1687,97 @@ def _market_chart_link(base_name):
             return link.get('l') or ''
     return ''
 
+
+def _market_guess_from_url(url):
+    """Best-effort market metadata discovery from a public market/chart URL.
+
+    The registry save path remains manual and deterministic: scraping only fills
+    missing name/open/close/chart fields when the admin provides a URL. If a site
+    blocks scraping or uses an unknown layout, callers still get a clear error
+    asking for manual times instead of saving bad data.
+    """
+    import re
+    import html as _html
+    from urllib.parse import urlparse
+
+    raw_url = str(url or '').strip()
+    if not raw_url:
+        return {}
+    if not re.match(r'^https?://', raw_url, re.I):
+        raw_url = 'https://' + raw_url
+    parsed = urlparse(raw_url)
+    if not parsed.netloc:
+        return {}
+    meta = {'sourceUrl': raw_url, 'chartUrl': raw_url, 'scrapeStatus': 'url_only'}
+    try:
+        import requests
+        resp = requests.get(raw_url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; TitanNovaMarketRegistry/1.0)',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        })
+        meta['scrapeHttpStatus'] = int(getattr(resp, 'status_code', 0) or 0)
+        text = resp.text or ''
+    except Exception as exc:
+        meta['scrapeStatus'] = 'fetch_failed'
+        meta['scrapeError'] = str(exc)[:180]
+        text = ''
+
+    if not text:
+        host = parsed.netloc.split(':')[0].replace('www.', '')
+        meta['name'] = host.split('.')[0].replace('-', ' ').replace('_', ' ').upper()
+        return meta
+
+    flat = re.sub(r'(?is)<(script|style).*?</\1>', ' ', text)
+    title_match = re.search(r'(?is)<title[^>]*>(.*?)</title>', flat)
+    h1_match = re.search(r'(?is)<h1[^>]*>(.*?)</h1>', flat)
+    visible = re.sub(r'(?is)<[^>]+>', ' ', flat)
+    visible = _html.unescape(re.sub(r'\s+', ' ', visible)).strip()
+
+    title = ''
+    for candidate in (h1_match.group(1) if h1_match else '', title_match.group(1) if title_match else ''):
+        candidate = _html.unescape(re.sub(r'(?is)<[^>]+>', ' ', candidate or ''))
+        candidate = re.sub(r'\b(chart|result|live|satta|matka|panel|jodi|open|close|today)\b', ' ', candidate, flags=re.I)
+        candidate = re.sub(r'[^A-Za-z0-9 ]+', ' ', candidate)
+        candidate = re.sub(r'\s+', ' ', candidate).strip()
+        if len(candidate) >= 3:
+            title = candidate.upper()[:60]
+            break
+    if title:
+        meta['name'] = title
+
+    def norm_time(token):
+        m = re.match(r'^(\d{1,2})(?::|\.)(\d{2})\s*([AP]M)?$', str(token or '').strip(), re.I)
+        if not m:
+            return ''
+        h, minute, ap = int(m.group(1)), int(m.group(2)), (m.group(3) or '').upper()
+        if ap == 'PM' and h < 12:
+            h += 12
+        if ap == 'AM' and h == 12:
+            h = 0
+        if 0 <= h <= 23 and 0 <= minute <= 59:
+            return f'{h:02d}:{minute:02d}'
+        return ''
+
+    low = visible.lower()
+    found = {}
+    for label, key in (('open', 'openTime'), ('close', 'closeTime')):
+        for m in re.finditer(label, low):
+            window = visible[max(0, m.start()-80):m.end()+120]
+            tm = re.search(r'(\d{1,2}(?::|\.)\d{2}\s*(?:[AP]M)?)', window, re.I)
+            val = norm_time(tm.group(1)) if tm else ''
+            if val:
+                found[key] = val
+                break
+    all_times = [norm_time(x) for x in re.findall(r'\b\d{1,2}(?::|\.)\d{2}\s*(?:[AP]M)?\b', visible, re.I)]
+    all_times = [x for x in all_times if x]
+    if 'openTime' not in found and all_times:
+        found['openTime'] = all_times[0]
+    if 'closeTime' not in found and len(all_times) > 1:
+        found['closeTime'] = all_times[1]
+    meta.update(found)
+    meta['scrapeStatus'] = 'success' if found or title else 'no_market_metadata_found'
+    return meta
+
 def _default_market_registry():
     items = {}
     for order, bm in enumerate(BASE_MARKETS):
@@ -3611,13 +3702,14 @@ def api_market_action():
             return jsonify(_market_registry_response(state, {'message': 'Market registry saved'}))
 
         if action in ('upsert', 'add', 'direct_add', 'direct_add_full'):
-            name = _market_clean_name(payload.get('name') or payload.get('displayName'))
+            discovered = _market_guess_from_url(payload.get('url') or payload.get('websiteUrl') or payload.get('marketUrl') or payload.get('chartUrl'))
+            name = _market_clean_name(payload.get('name') or payload.get('displayName') or discovered.get('name'))
             if not name:
-                return jsonify({'status': 'error', 'message': 'Market name required', 'marketCoreFix': True}), 400
-            open_time = _market_clean_hhmm(payload.get('openTime') or payload.get('open'))
-            close_time = _market_clean_hhmm(payload.get('closeTime') or payload.get('close'))
+                return jsonify({'status': 'error', 'message': 'Market name ya website URL se name nahi mila', 'marketCoreFix': True}), 400
+            open_time = _market_clean_hhmm(payload.get('openTime') or payload.get('open') or discovered.get('openTime'))
+            close_time = _market_clean_hhmm(payload.get('closeTime') or payload.get('close') or discovered.get('closeTime'))
             if open_time is None or close_time is None:
-                return jsonify({'status': 'error', 'message': 'Time format HH:MM hona chahiye', 'marketCoreFix': True}), 400
+                return jsonify({'status': 'error', 'message': 'URL se Open/Close time nahi mila. Manual HH:MM time डालकर save करें.', 'marketCoreFix': True, 'scrape': discovered}), 400
             mid = str(payload.get('id') or _market_slug(name)).strip()
             website = _market_clean_name(payload.get('websiteName') or name)
             item = items.get(mid) if isinstance(items.get(mid), dict) else {'id': mid, 'name': name, 'createdAt': stamp}
@@ -3640,7 +3732,9 @@ def api_market_action():
                 'bookieTargets': _clean_market_target_list(payload.get('bookieTargets') or item.get('bookieTargets') or []),
                 'stages': {'open': bool(payload.get('openStage', True)) and bool(open_time), 'close': bool(payload.get('closeStage', True)) and bool(close_time)},
                 'times': {'open': open_time or '', 'close': close_time or ''},
-                'chartUrl': str(payload.get('chartUrl') or item.get('chartUrl') or '').strip(),
+                'chartUrl': str(payload.get('chartUrl') or discovered.get('chartUrl') or item.get('chartUrl') or '').strip(),
+                'sourceUrl': str(payload.get('url') or payload.get('websiteUrl') or payload.get('marketUrl') or discovered.get('sourceUrl') or item.get('sourceUrl') or '').strip(),
+                'scrape': discovered,
                 'archived': False,
                 'deleted': False,
                 'updatedAt': stamp,
