@@ -108,7 +108,7 @@ def register_titan_ledger_control_overlay(app):
             "changed": ["profiles/admin1/config"],
             "statePatch": {"adminConfig": config},
         })
-    version = "2026-07-11-ledger-control-card-protocol-v6"
+    version = "2026-07-11-ledger-control-ledger-protocol-api-v8"
 
     @app.after_request
     def inject_ledger_control(resp):
@@ -119,7 +119,6 @@ def register_titan_ledger_control_overlay(app):
                 return resp
             html = resp.get_data(as_text=True)
             if not html or "titan-ledger-control-canonical-v8" in html or "</body>" not in html.lower():
-            if not html or "titan-ledger-control-canonical-v6" in html or "</body>" not in html.lower():
                 return resp
             index = html.lower().rfind("</body>")
             html = html[:index] + SCRIPT + html[index:]
@@ -137,10 +136,6 @@ SCRIPT = r'''
 (function(){
  if(window.__TITAN_LEDGER_CONTROL_CANONICAL_V8__) return;
  window.__TITAN_LEDGER_CONTROL_CANONICAL_V8__=true;
-<script id="titan-ledger-control-canonical-v6">
-(function(){
- if(window.__TITAN_LEDGER_CONTROL_CANONICAL_V6__) return;
- window.__TITAN_LEDGER_CONTROL_CANONICAL_V6__=true;
  const BUTTON_ID='titanLedgerControlButton';
  const MODAL_ID='titanLedgerControlModal';
  function apiHeaders(){const h={'Content-Type':'application/json','Cache-Control':'no-store'};try{const t=localStorage.getItem('TITAN_ADMIN_TOKEN')||'';if(t)h['X-Titan-Admin-Token']=t}catch(_){}return h}
@@ -236,7 +231,6 @@ SCRIPT = r'''
        pannel:{cap:Number(document.getElementById('tlc-pan-cap').value||0),tgt:Number(document.getElementById('tlc-pan-tgt').value||0)}
      };
      const res=await fetch('/api/ledger_protocol/save',{method:'POST',headers:apiHeaders(),body:JSON.stringify({section:'ledger_protocol',data:{config}})});
-     const res=await fetch('/api/setup_control/save',{method:'POST',headers:apiHeaders(),body:JSON.stringify({section:'market',data:{config}})});
      const data=await res.json().catch(()=>({}));
      if(!res.ok||data.status==='error')throw new Error(data.message||('HTTP '+res.status));
      const saved=(data.statePatch&&data.statePatch.adminConfig)||config;
