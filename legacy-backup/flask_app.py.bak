@@ -12647,12 +12647,18 @@ withdraw status</pre>
             // let Titan calculate a new suggestion instead of permanently blocking auto-rate.
             return manualAt > 0 && manualAt >= digitAt;
         }
+        function titanLedgerBaseRateSlit(rate){
+            // Keep auto suggestions on the original base-rate slit: 10, 20, 30...
+            // Non-slit rates like 12/15/18 disturb book calculation totals.
+            const n = Number(rate || 0);
+            if(!Number.isFinite(n) || n <= 0) return 0;
+            return Math.max(10, Math.ceil(n / 10) * 10);
+        }
         function computeLedgerAutoRate(type, idx, count, debtValue, unrealValue, marginMultiplier, targetProf){
             const margin = Number(marginMultiplier || 0) - Number(count || 0);
             if(!(margin > 0)) return 0;
             const nextRate = (Number(debtValue || 0) + ((Number(unrealValue || 0) + 1) * Number(targetProf || 0))) / margin;
-            const finalRate = Math.ceil((nextRate * getHistoricalMultiplier(type, idx, currentDate)) / 10) * 10;
-            return Math.max(10, finalRate);
+            return titanLedgerBaseRateSlit(nextRate * getHistoricalMultiplier(type, idx, currentDate));
         }
         function applyLedgerAutoRateToRecord(rec, rate, reason, meta=null){
             if(!rec || !(Number(rate) > 0)) return rec;
