@@ -4046,12 +4046,18 @@ function ledgerHistoricalMultiplier(state, profile, type, idx, date){
     return 1.0 + dailyBoost + weeklyBoost;
   } catch { return 1.0; }
 }
+function ledgerBaseRateSlit(rate){
+  // Keep auto suggestions on the original base-rate slit: 10, 20, 30...
+  // Non-slit rates like 12/15/18 disturb book calculation totals.
+  const n = Number(rate || 0);
+  if(!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(10, Math.ceil(n / 10) * 10);
+}
 function computeGatewayLedgerAutoRate(state, profile, type, idx, count, debtValue, unrealValue, multiplier, targetProfit, date){
   const margin = Number(multiplier || 0) - Number(count || 0);
   if(!(margin > 0)) return 0;
   const nextRate = (Number(debtValue || 0) + ((Number(unrealValue || 0) + 1) * Number(targetProfit || 0))) / margin;
-  const finalRate = Math.ceil((nextRate * ledgerHistoricalMultiplier(state, profile, type, idx, date)) / 10) * 10;
-  return Math.max(10, finalRate);
+  return ledgerBaseRateSlit(nextRate * ledgerHistoricalMultiplier(state, profile, type, idx, date));
 }
 function gatewayLedgerTrackKey(type, market, splitOn){
   const name = String(market?.n || "").toUpperCase();
