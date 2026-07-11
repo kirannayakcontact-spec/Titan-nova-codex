@@ -135,7 +135,8 @@ SCRIPT = r'''
    let button=document.getElementById(BUTTON_ID);
    if(!ledgerVisible()){if(button)button.remove();document.getElementById(MODAL_ID)?.remove();return}
    if(button)return;
-   button=document.createElement('button');button.id=BUTTON_ID;button.textContent='⚙ CONTROL';button.style.cssText='position:fixed;right:12px;top:145px;z-index:999998;background:#00a884;color:#fff;border:0;border-radius:22px;padding:11px 15px;font-weight:900;box-shadow:0 5px 20px #0008';button.onclick=window.titanLedgerControlOpen;document.body.appendChild(button);
+   const tabs=document.querySelector('.pill-tabs'); if(!tabs)return;
+   button=document.createElement('button');button.id=BUTTON_ID;button.innerHTML='⚙ Control';button.className='pill-tab titan-ledger-control-tab';button.style.cssText='background:#00a884;color:#fff;border-color:#00a884;box-shadow:0 5px 20px #0005;white-space:nowrap';button.onclick=window.titanLedgerControlOpen;tabs.appendChild(button);
  }
  new MutationObserver(mount).observe(document.documentElement,{childList:true,subtree:true});
  setInterval(mount,700);setTimeout(mount,100);setTimeout(mount,1200);

@@ -12361,7 +12361,7 @@ withdraw status</pre>
                 <div class="pill-tabs">
                     <button onclick="setSubTab('ank')" class="pill-tab ${t === 'ank' ? 'active' : ''}">Ank <span class="text-[9px] opacity-60 ml-1">x9.5</span></button>
                     <button onclick="setSubTab('jodi')" class="pill-tab ${t === 'jodi' ? 'active' : ''}">Jodi <span class="text-[9px] opacity-60 ml-1">x95</span></button>
-                    <button onclick="setSubTab('pannel')" class="pill-tab ${t === 'pannel' ? 'active' : ''}">Pannel <span class="text-[9px] opacity-60 ml-1">x150</span></button>
+                    <button onclick="setSubTab('pannel')" class="pill-tab ${t === 'pannel' ? 'active' : ''}">Panel <span class="text-[9px] opacity-60 ml-1">x150</span></button>
                 </div>
             `;
         }
@@ -13235,7 +13235,7 @@ withdraw status</pre>
                     <div class="native-card p-4 mb-6 space-y-2">
                         ${protoRow('ank',    'ANK (x9.5)',   'text-[var(--primary)]')}
                         ${protoRow('jodi',   'JODI (x95)',   'text-[#B85CFF]')}
-                        ${protoRow('pannel', 'PANNEL (x150)','text-[var(--amber)]')}
+                        ${protoRow('pannel', 'PANEL (x150)','text-[var(--amber)]')}
                     </div>
 
                     ${canEdit ? `<button onclick="autoSave(); showToast('Settings saved!', 'green')"
