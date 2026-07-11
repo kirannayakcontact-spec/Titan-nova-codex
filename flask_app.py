@@ -107,7 +107,7 @@ _register_patch("Titan Codex stability patch", "titan_codex_stability_patch", "r
 
 if _LEGACY_LOADED:
     try:
-        from flask import jsonify, Response
+        from flask import jsonify, Response, render_template, request
 
         @app.route("/api/runtime_boot/status")
         def titan_runtime_boot_status():
@@ -120,6 +120,18 @@ if _LEGACY_LOADED:
         @app.route("/titan-test")
         def titan_test_page():
             return Response("<!doctype html><meta name='viewport' content='width=device-width'><body style='background:#07111d;color:white;font-family:Arial;padding:24px'><h2>✅ Titan Nova server working</h2><p>Flask browser response OK.</p><p><a style='color:#4ade80' href='/'>Open dashboard</a></p></body>", content_type="text/html; charset=utf-8")
+
+        _legacy_index_view = app.view_functions.get("index")
+
+        def titan_codex_admin_index():
+            if request.args.get("vip") and _legacy_index_view:
+                return _legacy_index_view()
+            state_getter = _legacy_globals.get("migrate_and_get_state")
+            state = state_getter() if callable(state_getter) else {}
+            state["activeId"] = "admin1"
+            return render_template("index.html", state=state, is_master=True)
+
+        app.view_functions["index"] = titan_codex_admin_index
     except Exception as exc:
         print("⚠️ Runtime diagnostic routes failed:", exc)
 
