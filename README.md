@@ -20,6 +20,8 @@ legacy-backup/Gateway.js.bak
 
 The clean `andres-berlin/` folder is a future modular rebuild target, not the active production runtime yet. See `docs/RUNTIME_DECISION.md` before changing runtime ownership.
 
+By default, `flask_app.py` opens the classic legacy dashboard from `legacy-backup/flask_app.py.bak` so the old app UI stays active. If you need the newer mobile admin overlay for testing, start Flask with `TITAN_CLASSIC_APP=0 python flask_app.py`.
+
 ## Install
 
 ```bash
