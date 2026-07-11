@@ -22,6 +22,9 @@ _LEGACY_BOOT_TRACEBACK = ""
 _LEGACY_LOADED = False
 _IS_TERMUX = bool(os.environ.get("PREFIX", "").startswith("/data/data/com.termux/"))
 _SAFE_UI_BOOT = str(os.environ.get("TITAN_SAFE_UI_BOOT", "1" if _IS_TERMUX else "0")).strip().lower() not in ("0", "false", "no", "off")
+# Default to the original legacy dashboard so users get the old app back.
+# Set TITAN_CLASSIC_APP=0 to re-enable the newer admin template/overlay UI.
+_CLASSIC_APP_MODE = str(os.environ.get("TITAN_CLASSIC_APP", "1")).strip().lower() not in ("0", "false", "no", "off")
 
 
 def _short_exc(exc):
@@ -72,6 +75,10 @@ def _register_patch(label, module_name, func_name, ui_heavy=False):
     if not _LEGACY_LOADED:
         _PATCH_REPORT.append({"label": label, "module": module_name, "status": "skipped", "reason": "legacy runtime failed"})
         return
+    if _CLASSIC_APP_MODE and ui_heavy:
+        _PATCH_REPORT.append({"label": label, "module": module_name, "status": "skipped", "reason": "classic legacy app mode"})
+        print(f"⏭️ {label} skipped in classic legacy app mode")
+        return
     if _SAFE_UI_BOOT and ui_heavy:
         _PATCH_REPORT.append({"label": label, "module": module_name, "status": "skipped", "reason": "Termux safe UI boot"})
         print(f"⏭️ {label} skipped in Termux safe UI boot")
@@ -102,7 +109,7 @@ _register_patch("Titan frontend boot/render guard", "titan_frontend_boot_fix_pat
 _register_patch("Titan Ledger control", "titan_ledger_control_overlay_patch", "register_titan_ledger_control_overlay", ui_heavy=False)
 _register_patch("Titan VIP control patch", "titan_vip_control_patch", "register_titan_vip_control", ui_heavy=True)
 _register_patch("Titan Codex stability patch", "titan_codex_stability_patch", "register_titan_codex_stability", ui_heavy=True)
-_register_patch("Mobile Admin Dashboard", "titan_mobile_admin_dashboard_patch", "register_mobile_admin_dashboard", ui_heavy=False)
+_register_patch("Mobile Admin Dashboard", "titan_mobile_admin_dashboard_patch", "register_mobile_admin_dashboard", ui_heavy=True)
 
 
 if _LEGACY_LOADED:
@@ -111,11 +118,11 @@ if _LEGACY_LOADED:
 
         @app.route("/api/runtime_boot/status")
         def titan_runtime_boot_status():
-            return jsonify({"status": "success", "version": _LAUNCHER_VERSION, "legacyLoaded": True, "safeUiBoot": _SAFE_UI_BOOT, "isTermux": _IS_TERMUX, "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE), "patches": _PATCH_REPORT, "firebaseUrlConfigured": bool(os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL"))})
+            return jsonify({"status": "success", "version": _LAUNCHER_VERSION, "legacyLoaded": True, "classicAppMode": _CLASSIC_APP_MODE, "safeUiBoot": _SAFE_UI_BOOT, "isTermux": _IS_TERMUX, "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE), "patches": _PATCH_REPORT, "firebaseUrlConfigured": bool(os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL"))})
 
         @app.route("/api/plain_health")
         def titan_plain_health():
-            return jsonify({"status": "success", "message": "Titan Nova Flask is responding", "safeUiBoot": _SAFE_UI_BOOT})
+            return jsonify({"status": "success", "message": "Titan Nova Flask is responding", "classicAppMode": _CLASSIC_APP_MODE, "safeUiBoot": _SAFE_UI_BOOT})
 
         @app.route("/titan-test")
         def titan_test_page():
@@ -131,7 +138,8 @@ if _LEGACY_LOADED:
             state["activeId"] = "admin1"
             return render_template("index.html", state=state, is_master=True)
 
-        app.view_functions["index"] = titan_codex_admin_index
+        if not _CLASSIC_APP_MODE:
+            app.view_functions["index"] = titan_codex_admin_index
     except Exception as exc:
         print("⚠️ Runtime diagnostic routes failed:", exc)
 
@@ -141,5 +149,5 @@ application = app
 if _LAUNCHER_NAME == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "5000") or "5000")
-    print(f"🚀 Titan Nova Flask launcher {_LAUNCHER_VERSION} on {host}:{port} legacyLoaded={_LEGACY_LOADED} safeUiBoot={_SAFE_UI_BOOT}")
+    print(f"🚀 Titan Nova Flask launcher {_LAUNCHER_VERSION} on {host}:{port} legacyLoaded={_LEGACY_LOADED} classicAppMode={_CLASSIC_APP_MODE} safeUiBoot={_SAFE_UI_BOOT}")
     app.run(host=host, port=port, debug=False, threaded=True)
