@@ -123,7 +123,7 @@ SCRIPT = r'''
    }catch(e){notify('❌ Auto P/F Error',String(e.message||e),'danger')}
  };
  function toggle(label,key,on){return `<label style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:#0e1b29;border-radius:12px;font-size:12px;font-weight:800"><span>${label}</span><input type="checkbox" ${on?'checked':''} onchange="titanLedgerControlSet('${key}',this.checked)"></label>`}
- function openControl(){
+ window.titanLedgerControlOpen=function openControl(){
    document.getElementById(MODAL_ID)?.remove();
    const s=state(),p=s.payoutMultipliers,sum=recentSummary();
    const modal=document.createElement('div');modal.id=MODAL_ID;modal.style.cssText='position:fixed;inset:64px 0 70px;z-index:999999;background:#07111df5;overflow:auto;padding:12px;color:#fff;font-family:Arial';
@@ -135,7 +135,7 @@ SCRIPT = r'''
    let button=document.getElementById(BUTTON_ID);
    if(!ledgerVisible()){if(button)button.remove();document.getElementById(MODAL_ID)?.remove();return}
    if(button)return;
-   button=document.createElement('button');button.id=BUTTON_ID;button.textContent='⚙ CONTROL';button.style.cssText='position:fixed;right:12px;top:145px;z-index:999998;background:#00a884;color:#fff;border:0;border-radius:22px;padding:11px 15px;font-weight:900;box-shadow:0 5px 20px #0008';button.onclick=openControl;document.body.appendChild(button);
+   button=document.createElement('button');button.id=BUTTON_ID;button.textContent='⚙ CONTROL';button.style.cssText='position:fixed;right:12px;top:145px;z-index:999998;background:#00a884;color:#fff;border:0;border-radius:22px;padding:11px 15px;font-weight:900;box-shadow:0 5px 20px #0008';button.onclick=window.titanLedgerControlOpen;document.body.appendChild(button);
  }
  new MutationObserver(mount).observe(document.documentElement,{childList:true,subtree:true});
  setInterval(mount,700);setTimeout(mount,100);setTimeout(mount,1200);
