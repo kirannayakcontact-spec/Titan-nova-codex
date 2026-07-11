@@ -19,7 +19,6 @@ PYTHON_FILES = [
     "titan_strict_result_rules_patch.py",
     "titan_frontend_boot_fix_patch.py",
     "titan_ledger_control_overlay_patch.py",
-    "titan_entries_group_control_patch.py",
 ]
 
 JAVASCRIPT_FILES = [
@@ -27,7 +26,6 @@ JAVASCRIPT_FILES = [
     "gateway_codex_preflight_patch.js",
     "gateway_firebase_guard_patch.js",
     "gateway_wallet_alias_patch.js",
-    "gateway_entries_group_routing_patch.js",
     "gateway_deposit_ocr_patch.js",
     "gateway_withdrawal_runtime_patch.js",
 ]
@@ -55,7 +53,14 @@ def check_python(path: pathlib.Path) -> None:
 
 def check_javascript(path: pathlib.Path) -> None:
     try:
-        result = subprocess.run(["node", "--check", str(path)], cwd=ROOT, text=True, capture_output=True, timeout=30, check=False)
+        result = subprocess.run(
+            ["node", "--check", str(path)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
     except FileNotFoundError:
         fail("Node.js missing; JavaScript syntax check nahi ho sakta.")
     except Exception as exc:
@@ -66,14 +71,15 @@ def check_javascript(path: pathlib.Path) -> None:
 
 
 def check_launcher_references() -> None:
-    combined = "\n".join((ROOT / name).read_text(encoding="utf-8") for name in ("flask_app.py", "Gateway.js"))
+    combined = "\n".join(
+        (ROOT / name).read_text(encoding="utf-8")
+        for name in ("flask_app.py", "Gateway.js")
+    )
     for forbidden in FORBIDDEN_REFERENCES:
         if re.search(rf"\b{re.escape(forbidden)}\b", combined):
             fail(f"Obsolete runtime reference remains: {forbidden}")
     required = [
         "titan_ledger_control_overlay_patch",
-        "titan_entries_group_control_patch",
-        "gateway_entries_group_routing_patch",
         "gateway_deposit_ocr_patch",
         "gateway_withdrawal_runtime_patch",
         "titan_strict_result_rules_patch",
@@ -88,6 +94,7 @@ def main() -> int:
     for name in PYTHON_FILES + JAVASCRIPT_FILES:
         if not (ROOT / name).is_file():
             fail(f"Required runtime file missing: {name}")
+
     for name in PYTHON_FILES:
         check_python(ROOT / name)
     for name in JAVASCRIPT_FILES:
