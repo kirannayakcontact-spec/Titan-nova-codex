@@ -10909,7 +10909,7 @@ withdraw status</pre>
             data = data || {};
             if(data.status === 'already_connected') return '<span class="text-[var(--green)] font-bold">WhatsApp already connected.</span>';
             if(data.pairingCode){
-                return '<div class="bg-[rgba(0,194,111,0.08)] border border-[rgba(0,194,111,0.16)] rounded-xl p-3 text-center"><p class="text-[9px] text-[var(--text-muted)] uppercase font-black">Mobile Link Code</p><p class="text-white text-[24px] font-black tracking-[0.18em] mt-1">' + data.pairingCode + '</p><p class="text-[10px] text-[var(--text-muted)] mt-2">WhatsApp → Linked devices → Link with phone number me ye code enter karo.</p></div>';
+                return '<div class="bg-[rgba(0,194,111,0.08)] border border-[rgba(0,194,111,0.16)] rounded-xl p-3 text-center"><p class="text-[9px] text-[var(--text-muted)] uppercase font-black">Mobile Link Code</p><p class="text-white text-[24px] font-black tracking-[0.18em] mt-1">' + data.pairingCode + '</p><p class="text-[10px] text-[var(--text-muted)] mt-2">WhatsApp → Linked devices → Link with phone number me ye code enter karo. Code fail ho to Get Code dobara dabao.</p></div>';
             }
             if(data.message){
                 const safe = String(data.message).replace(/[<>&]/g, function(s){ return ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]); });
@@ -11020,9 +11020,10 @@ withdraw status</pre>
                                 <div class="bg-[rgba(42,171,238,0.07)] border border-[rgba(42,171,238,0.16)] rounded-xl p-3">
                                     <p class="text-white font-black text-[11px] uppercase mb-2"><i class="fas fa-mobile-screen-button text-[var(--primary)] mr-1"></i> Mobile Number Link</p>
                                     <div class="grid grid-cols-[1fr_auto] gap-2">
-                                        <input id="wa-pairing-phone" class="native-input text-xs" inputmode="tel" autocomplete="tel" placeholder="Mobile number, e.g. 9876543210">
+                                        <input id="wa-pairing-phone" class="native-input text-xs" inputmode="tel" autocomplete="tel" placeholder="Same WhatsApp number, e.g. 919876543210">
                                         <button onclick="requestWhatsAppPairingCode()" class="bg-[var(--primary)] text-white px-3 rounded-xl font-black text-[9px] uppercase active:scale-95">Get Code</button>
                                     </div>
+                                    <p class="text-[9px] text-[var(--text-muted)] mt-2">Primary WhatsApp account ka same mobile number country code ke saath daalo. Galat/other number se code reject hoga.</p>
                                     <div id="wa-pairing-result" class="mt-2 text-[10px]">${pairingCodeHtml(appState.waPairingResult || waLogin)}</div>
                                 </div>
                             </div>`}
