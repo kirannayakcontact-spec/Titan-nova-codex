@@ -7820,6 +7820,23 @@ def api_wa_reset_session():
     except Exception as e:
         return jsonify({'status': 'offline', 'message': str(e)}), 503
 
+
+@app.route('/api/wa_pairing_code', methods=['POST'])
+def api_wa_pairing_code():
+    try:
+        data = request.get_json(silent=True) or {}
+        phone = str(data.get('phone') or data.get('mobile') or data.get('number') or '').strip()
+        if not phone:
+            return jsonify({'status': 'error', 'message': 'Mobile number required'}), 400
+        res = _gateway_request('POST', '/wa_pairing_code', json={'phone': phone}, timeout=18)
+        try:
+            payload = res.json()
+        except Exception:
+            payload = {'status': 'error', 'message': res.text[:300]}
+        return jsonify(payload), res.status_code
+    except Exception as e:
+        return jsonify({'status': 'offline', 'message': str(e)}), 503
+
 @app.route('/api/wa_qr_image')
 def api_wa_qr_image():
     try:
@@ -10858,10 +10875,47 @@ withdraw status</pre>
                 const res = await fetch('/api/wa_reset_session', {method:'POST'});
                 const data = await res.json();
                 if(data.status !== 'success') throw new Error(data.message || 'Reset failed');
+                appState.waPairingResult = null;
                 showRealNotification('✅ WhatsApp Reset', 'Fresh QR generate ho raha hai. 3-5 sec wait karein.', 'success');
                 setTimeout(refreshHealthMonitor, 2500);
                 setTimeout(refreshHealthMonitor, 6500);
             }catch(e){ showRealNotification('❌ Reset Error', String(e.message || e), 'danger'); }
+        }
+        async function requestWhatsAppPairingCode(){
+            const input = document.getElementById('wa-pairing-phone');
+            const phone = (input && input.value || '').trim();
+            const box = document.getElementById('wa-pairing-result');
+            if(!phone){
+                showRealNotification('❌ Mobile Required', 'WhatsApp mobile number enter karo.', 'danger');
+                if(input) input.focus();
+                return;
+            }
+            if(box) box.innerHTML = '<span class="text-[var(--amber)]">Pairing code generate ho raha hai...</span>';
+            try{
+                const res = await fetch('/api/wa_pairing_code', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({phone})});
+                const data = await res.json();
+                appState.waPairingResult = data;
+                if(data.status !== 'success' && data.status !== 'already_connected') throw new Error(data.message || 'Pairing code failed');
+                if(box) box.innerHTML = pairingCodeHtml(data);
+                showRealNotification('✅ Link Code Ready', data.pairingCode ? ('Code: ' + data.pairingCode) : (data.message || 'WhatsApp already connected'), 'success');
+                setTimeout(refreshHealthMonitor, 2500);
+            }catch(e){
+                appState.waPairingResult = {status:'error', message:String(e.message || e)};
+                if(box) box.innerHTML = pairingCodeHtml(appState.waPairingResult);
+                showRealNotification('❌ Link Code Error', String(e.message || e), 'danger');
+            }
+        }
+        function pairingCodeHtml(data){
+            data = data || {};
+            if(data.status === 'already_connected') return '<span class="text-[var(--green)] font-bold">WhatsApp already connected.</span>';
+            if(data.pairingCode){
+                return '<div class="bg-[rgba(0,194,111,0.08)] border border-[rgba(0,194,111,0.16)] rounded-xl p-3 text-center"><p class="text-[9px] text-[var(--text-muted)] uppercase font-black">Mobile Link Code</p><p class="text-white text-[24px] font-black tracking-[0.18em] mt-1">' + data.pairingCode + '</p><p class="text-[10px] text-[var(--text-muted)] mt-2">WhatsApp → Linked devices → Link with phone number me ye code enter karo.</p></div>';
+            }
+            if(data.message){
+                const safe = String(data.message).replace(/[<>&]/g, function(s){ return ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]); });
+                return '<span class="text-[var(--rose)]">' + safe + '</span>';
+            }
+            return '<span class="text-[var(--text-muted)]">Mobile number daal ke Get Link Code dabao.</span>';
         }
         async function refreshWaLoginCard(){
             try{
@@ -10963,6 +11017,14 @@ withdraw status</pre>
                         ${waConnected ? `<div class="bg-[rgba(0,194,111,0.08)] border border-[rgba(0,194,111,0.16)] rounded-xl p-3 text-[10px] text-[var(--green)]">WhatsApp connected: ${gw.user ? (gw.user.name || gw.user.id || 'Connected') : 'Connected'}</div>` : `
                             <div class="grid grid-cols-1 gap-3">
                                 ${waLogin.qrAvailable ? `<div class="bg-white rounded-2xl p-3 mx-auto w-[220px] h-[220px] flex items-center justify-center"><img src="/api/wa_qr_image?ts=${Date.now()}" class="w-[200px] h-[200px]" alt="WhatsApp QR"></div><p class="text-[var(--text-muted)] text-[10px] text-center">WhatsApp → Linked devices → Link a device → QR scan karo.</p>` : `<div class="bg-[rgba(250,199,72,0.08)] border border-[rgba(250,199,72,0.16)] rounded-xl p-3 text-[10px] text-[var(--amber)]">QR abhi available nahi hai. Refresh karo ya Reset Session dabao.</div>`}
+                                <div class="bg-[rgba(42,171,238,0.07)] border border-[rgba(42,171,238,0.16)] rounded-xl p-3">
+                                    <p class="text-white font-black text-[11px] uppercase mb-2"><i class="fas fa-mobile-screen-button text-[var(--primary)] mr-1"></i> Mobile Number Link</p>
+                                    <div class="grid grid-cols-[1fr_auto] gap-2">
+                                        <input id="wa-pairing-phone" class="native-input text-xs" inputmode="tel" autocomplete="tel" placeholder="Mobile number, e.g. 9876543210">
+                                        <button onclick="requestWhatsAppPairingCode()" class="bg-[var(--primary)] text-white px-3 rounded-xl font-black text-[9px] uppercase active:scale-95">Get Code</button>
+                                    </div>
+                                    <div id="wa-pairing-result" class="mt-2 text-[10px]">${pairingCodeHtml(appState.waPairingResult || waLogin)}</div>
+                                </div>
                             </div>`}
                         <div class="grid grid-cols-2 gap-2 mt-3">
                             <button onclick="refreshWaLoginCard()" class="bg-[var(--surface-light)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-sync mr-1"></i> Refresh QR</button>
