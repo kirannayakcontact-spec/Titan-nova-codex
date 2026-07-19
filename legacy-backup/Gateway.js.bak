@@ -424,6 +424,10 @@ let sock = null;
 let connected = false;
 let lastQR = "";
 let lastQRAt = "";
+let lastPairingCode = "";
+let lastPairingPhone = "";
+let lastPairingAt = "";
+let lastPairingError = "";
 let whatsappStartInProgress = false;
 let whatsappResetCount = 0;
 let lastSessionResetAt = "";
@@ -5405,6 +5409,10 @@ async function restartWhatsAppFresh(reason = "manual_reset"){
   gatewayHealth.lastDisconnectCode = "";
   lastQR = "";
   lastQRAt = "";
+  lastPairingCode = "";
+  lastPairingPhone = "";
+  lastPairingAt = "";
+  lastPairingError = "";
   await stopWhatsAppSocket(reason);
   const cleared = clearWhatsAppSessionFiles();
   console.log(`🔐 WhatsApp session reset (${reason}). Auth cleared: ${cleared.ok ? "YES" : "NO"}${cleared.error ? " - " + cleared.error : ""}`);
@@ -5432,7 +5440,7 @@ async function startWhatsApp(){
     sock.ev.on("connection.update", async (u) => {
       const { connection, lastDisconnect, qr } = u;
       if(qr){ lastQR = qr; lastQRAt = new Date().toISOString(); gatewayHealth.lastWhatsAppEvent = "qr"; gatewayObsEvent("whatsapp_qr_ready", "warning", "WhatsApp QR ready for login", {at:lastQRAt}); qrcode.generate(qr, {small:true}); console.log("📲 Scan QR in WhatsApp > Linked devices"); }
-      if(connection === "open") { connected = true; lastQR = ""; lastQRAt = ""; gatewayHealth.lastWhatsAppEvent = "open"; gatewayObsEvent("whatsapp_connected", "info", "WhatsApp connected", {user:sock?.user || null}); console.log("WhatsApp connected"); await syncTargets(); }
+      if(connection === "open") { connected = true; lastQR = ""; lastQRAt = ""; lastPairingError = ""; gatewayHealth.lastWhatsAppEvent = "open"; gatewayObsEvent("whatsapp_connected", "info", "WhatsApp connected", {user:sock?.user || null}); console.log("WhatsApp connected"); await syncTargets(); }
       if(connection === "close") {
         connected = false;
         gatewayHealth.lastWhatsAppEvent = "close";
@@ -5553,6 +5561,11 @@ app.get("/wa_login_status", (req,res)=>{
     qr:lastQR,
     qrAt:lastQRAt,
     qrAgeSeconds,
+    pairingCodeAvailable:!!lastPairingCode,
+    pairingCode:lastPairingCode,
+    pairingPhone:lastPairingPhone,
+    pairingAt:lastPairingAt,
+    pairingError:lastPairingError,
     authDir:AUTH_DIR,
     resetCount:whatsappResetCount,
     lastSessionResetAt,
@@ -5566,6 +5579,72 @@ app.post("/wa_reset_session", async (req,res)=>{
     res.json({status:"success", message:"WhatsApp session reset. Fresh QR will appear shortly.", cleared:out, authDir:AUTH_DIR});
   } catch(e) {
     res.status(500).json({status:"error", message:e.message || String(e)});
+  }
+});
+
+
+function normalizePairingPhone(input){
+  let digits = String(input || "").replace(/\D/g, "");
+  if(digits.startsWith("00")) digits = digits.slice(2);
+  if(digits.length === 11 && digits.startsWith("0")) digits = "91" + digits.slice(1);
+  if(digits.length === 10) digits = "91" + digits;
+  if(digits.length < 10 || digits.length > 15) return "";
+  return digits;
+}
+function waitMs(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+async function requestWhatsAppPairingCode(phoneInput){
+  const phone = normalizePairingPhone(phoneInput);
+  if(!phone){
+    lastPairingError = "Valid mobile number required. Example: 9876543210";
+    return {status:"error", message:lastPairingError};
+  }
+  if(connected){
+    return {status:"already_connected", connected:true, user:sock?.user || null, message:"WhatsApp already connected."};
+  }
+  try{
+    if(!sock){
+      await startWhatsApp();
+      await waitMs(900);
+    } else if(whatsappStartInProgress) {
+      await waitMs(900);
+    }
+    if(!sock || typeof sock.requestPairingCode !== "function"){
+      throw new Error("Pairing code API not ready. Reset session, wait for QR, then try again.");
+    }
+    const rawCode = await sock.requestPairingCode(phone);
+    const cleanCode = String(rawCode || "").replace(/\s+/g, "").toUpperCase();
+    const displayCode = cleanCode ? cleanCode.match(/.{1,4}/g).join("-") : "";
+    if(!displayCode) throw new Error("Empty pairing code received from WhatsApp.");
+    lastPairingCode = displayCode;
+    lastPairingPhone = phone;
+    lastPairingAt = new Date().toISOString();
+    lastPairingError = "";
+    gatewayHealth.lastWhatsAppEvent = "pairing_code";
+    gatewayObsEvent("whatsapp_pairing_code_ready", "warning", "WhatsApp mobile pairing code ready", {phone:lastPairingPhone, at:lastPairingAt});
+    return {
+      status:"success",
+      connected:false,
+      pairingCode:lastPairingCode,
+      pairingPhone:lastPairingPhone,
+      pairingAt:lastPairingAt,
+      message:"Mobile number link code ready. WhatsApp > Linked devices > Link with phone number me code enter karein.",
+      note:"Code expire ho sakta hai; expire ho to fresh code generate karein."
+    };
+  }catch(e){
+    lastPairingError = e && e.message ? e.message : String(e);
+    gatewayObsError("whatsapp_pairing_code_error", e, {phone});
+    return {status:"error", connected:false, message:lastPairingError, pairingPhone:phone};
+  }
+}
+
+app.post("/wa_pairing_code", async (req,res)=>{
+  try {
+    const phone = req.body?.phone || req.body?.mobile || req.body?.number || "";
+    const out = await requestWhatsAppPairingCode(phone);
+    res.status(out.status === "error" ? 400 : 200).json(out);
+  } catch(e) {
+    lastPairingError = e.message || String(e);
+    res.status(500).json({status:"error", message:lastPairingError});
   }
 });
 
