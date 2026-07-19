@@ -7828,7 +7828,7 @@ def api_wa_pairing_code():
         phone = str(data.get('phone') or data.get('mobile') or data.get('number') or '').strip()
         if not phone:
             return jsonify({'status': 'error', 'message': 'Mobile number required'}), 400
-        res = _gateway_request('POST', '/wa_pairing_code', json={'phone': phone}, timeout=18)
+        res = _gateway_request('POST', '/wa_pairing_code', json={'phone': phone, 'fresh': True}, timeout=105)
         try:
             payload = res.json()
         except Exception:
@@ -10909,7 +10909,7 @@ withdraw status</pre>
             data = data || {};
             if(data.status === 'already_connected') return '<span class="text-[var(--green)] font-bold">WhatsApp already connected.</span>';
             if(data.pairingCode){
-                return '<div class="bg-[rgba(0,194,111,0.08)] border border-[rgba(0,194,111,0.16)] rounded-xl p-3 text-center"><p class="text-[9px] text-[var(--text-muted)] uppercase font-black">Mobile Link Code</p><p class="text-white text-[24px] font-black tracking-[0.18em] mt-1">' + data.pairingCode + '</p><p class="text-[10px] text-[var(--text-muted)] mt-2">WhatsApp → Linked devices → Link with phone number me ye code enter karo. Code fail ho to Get Code dobara dabao.</p></div>';
+                return '<div class="bg-[rgba(0,194,111,0.08)] border border-[rgba(0,194,111,0.16)] rounded-xl p-3 text-center"><p class="text-[9px] text-[var(--text-muted)] uppercase font-black">Mobile Link Code</p><p class="text-white text-[24px] font-black tracking-[0.18em] mt-1">' + data.pairingCode + '</p><p class="text-[10px] text-[var(--text-muted)] mt-2">WhatsApp → Linked devices → Link with phone number me ye code enter karo. QR scan ya secondary phone ki zarurat nahi.</p></div>';
             }
             if(data.message){
                 const safe = String(data.message).replace(/[<>&]/g, function(s){ return ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]); });
