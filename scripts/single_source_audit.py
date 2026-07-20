@@ -38,7 +38,6 @@ ACTIVE_ROOT_FILES = {
 }
 
 ACTIVE_SKIP_PARTS = {
-    "andres-berlin",
     "backend",
     "bot",
     "docs",

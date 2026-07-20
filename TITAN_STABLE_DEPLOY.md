@@ -44,7 +44,7 @@ python titan_smoke_test.py
 python titan_dead_code_audit.py
 ```
 
-Do not run checks against removed files such as `sitecustomize.py` or `usercustomize.py`.
+Only run checks against files that are part of the current runtime manifest.
 
 ## 5. Optional Phase 4 banner cleanup
 
