@@ -112,6 +112,17 @@ Gateway health/server:
 http://127.0.0.1:3000
 ```
 
+## Fast PWA and offline reads
+
+The active classic dashboard installs `titan_pwa_fast_patch.py` automatically.
+Successful `/api/state` and `/api/market_registry` reads are kept in IndexedDB
+for up to 24 hours and are used when the network is unavailable or slow. Static
+PWA assets are cached by the service worker.
+
+For data safety, POST/PUT/PATCH/DELETE requests are never cached, queued, or
+replayed in the browser. A financial or settings change is only successful after
+the Flask/Firebase request responds successfully.
+
 ## View logs
 
 Flask:
