@@ -102,6 +102,7 @@ _register_patch("VIP profile delete guard", "titan_profile_delete_guard_patch", 
 _register_patch("Deposit OCR guard", "deposit_ocr_guard", "register_deposit_ocr_guard", ui_heavy=False)
 _register_patch("Strict Deposit OCR runtime", "strict_deposit_ocr_runtime", "register_strict_deposit_ocr_runtime", ui_heavy=False)
 _register_patch("Titan Firebase guard", "titan_firebase_guard_patch", "register_titan_firebase_guard", ui_heavy=True)
+_register_patch("Titan fast PWA", "titan_pwa_fast_patch", "register_titan_pwa_fast", ui_heavy=False)
 _register_patch("Titan Setup control patch", "titan_setup_control_patch", "register_titan_setup_control", ui_heavy=True)
 _register_patch("Titan Result control patch", "titan_result_control_patch", "register_titan_result_control", ui_heavy=False)
 _register_patch("Titan strict result rules", "titan_strict_result_rules_patch", "register_titan_strict_result_rules", ui_heavy=False)
