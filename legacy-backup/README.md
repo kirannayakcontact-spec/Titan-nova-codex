@@ -6,7 +6,6 @@ They are no longer active entrypoints.
 Active new work starts from:
 
 ```text
-andres-berlin/
 ```
 
 Backed up files:

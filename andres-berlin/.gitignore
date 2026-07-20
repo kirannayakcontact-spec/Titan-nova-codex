@@ -1,7 +1,0 @@
-__pycache__/
-*.py[cod]
-.env
-node_modules/
-npm-debug.log*
-auth_info_baileys/
-*.jsonl

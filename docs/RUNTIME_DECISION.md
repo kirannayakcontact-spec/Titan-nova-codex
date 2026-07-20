@@ -39,25 +39,13 @@ WhatsApp/automation
   -> Firebase shared state
 ```
 
-## Clean modular rebuild target
+## Removed experimental runtime
 
-The `andres-berlin/` folder is a clean modular starter/rebuild target. It is not
-the production runtime yet.
-
-Use it as the professional migration direction after the current production flow
-is documented, checked, and migrated safely.
-
-## Rule before migration
-
-Do not switch production from the root runtime to `andres-berlin/` until all of
-these are complete:
-
-1. Frontend dashboard loads successfully.
-2. Flask API health and state endpoints are verified.
-3. Gateway health and WhatsApp login endpoints are verified.
-4. Payment, wallet, withdrawal, entry, result, and schedule flows are mapped.
-5. Deploy scripts and README point to the same promoted runtime.
-6. A rollback path to the root runtime exists.
+The incomplete modular scaffold and its alternate admin UI were not used by the
+production launchers and have been removed. This prevents an unsupported API/UI
+from being started accidentally. A future migration must be developed on a
+separate branch and must pass the full health checklist before it can replace
+the production runtime.
 
 ## Safe next steps
 
@@ -65,4 +53,4 @@ these are complete:
 2. Follow `docs/HEALTH_CHECK.md` before changing frontend, backend, Gateway, Firebase, or money-flow code.
 3. Document active API contracts.
 4. Clean configuration and security without changing business behavior.
-5. Gradually move legacy code into normal modules only after each flow is tested.
+5. Move legacy code only as part of a tested, documented migration.

@@ -23,20 +23,10 @@ _LEGACY_BOOT_TRACEBACK = ""
 _LEGACY_LOADED = False
 _IS_TERMUX = bool(os.environ.get("PREFIX", "").startswith("/data/data/com.termux/"))
 _SAFE_UI_BOOT = str(os.environ.get("TITAN_SAFE_UI_BOOT", "1" if _IS_TERMUX else "0")).strip().lower() not in ("0", "false", "no", "off")
-# Default to the original legacy dashboard so users get the old app back.
-# Set TITAN_CLASSIC_APP=0 to re-enable the newer admin template/overlay UI.
-_CLASSIC_APP_MODE = str(os.environ.get("TITAN_CLASSIC_APP", "1")).strip().lower() not in ("0", "false", "no", "off")
 
 
 def _short_exc(exc):
     return f"{exc.__class__.__name__}: {exc}"
-
-
-def _build_admin_state(state):
-    """Return an isolated template state without mutating the runtime cache."""
-    if not isinstance(state, dict):
-        state = {}
-    return {**state, "activeId": "admin1"}
 
 
 def _make_fallback_app(error, tb):
@@ -85,13 +75,9 @@ def _register_patch(label, module_name, func_name, ui_heavy=False):
     if not _LEGACY_LOADED:
         _PATCH_REPORT.append({"label": label, "module": module_name, "status": "skipped", "reason": "legacy runtime failed"})
         return
-    if _CLASSIC_APP_MODE and ui_heavy:
-        _PATCH_REPORT.append({"label": label, "module": module_name, "status": "skipped", "reason": "classic legacy app mode"})
-        print(f"⏭️ {label} skipped in classic legacy app mode")
-        return
-    if _SAFE_UI_BOOT and ui_heavy:
-        _PATCH_REPORT.append({"label": label, "module": module_name, "status": "skipped", "reason": "Termux safe UI boot"})
-        print(f"⏭️ {label} skipped in Termux safe UI boot")
+    if ui_heavy:
+        _PATCH_REPORT.append({"label": label, "module": module_name, "status": "skipped", "reason": "classic UI only"})
+        print(f"⏭️ {label} skipped; classic UI is the only supported dashboard")
         return
     try:
         module = __import__(module_name, fromlist=[func_name])
@@ -121,40 +107,24 @@ _register_patch("Titan Ledger control", "titan_ledger_control_overlay_patch", "r
 _register_patch("Wallet manual override sticky", "wallet_action_sticky", "register_wallet_action_sticky", ui_heavy=False)
 _register_patch("Titan VIP control patch", "titan_vip_control_patch", "register_titan_vip_control", ui_heavy=True)
 _register_patch("Titan Codex stability patch", "titan_codex_stability_patch", "register_titan_codex_stability", ui_heavy=True)
-_register_patch("Mobile Admin Dashboard", "titan_mobile_admin_dashboard_patch", "register_mobile_admin_dashboard", ui_heavy=True)
 
 
 if _LEGACY_LOADED:
     try:
-        from flask import jsonify, Response, render_template, request
+        from flask import jsonify, Response
 
         @app.route("/api/runtime_boot/status")
         def titan_runtime_boot_status():
-            return jsonify({"status": "success", "version": _LAUNCHER_VERSION, "legacyLoaded": True, "classicAppMode": _CLASSIC_APP_MODE, "safeUiBoot": _SAFE_UI_BOOT, "isTermux": _IS_TERMUX, "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE), "patches": _PATCH_REPORT, "firebaseUrlConfigured": bool(os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL"))})
+            return jsonify({"status": "success", "version": _LAUNCHER_VERSION, "legacyLoaded": True, "safeUiBoot": _SAFE_UI_BOOT, "isTermux": _IS_TERMUX, "startedAt": _BOOT_STARTED_AT, "legacyFile": str(_LEGACY_FILE), "patches": _PATCH_REPORT, "firebaseUrlConfigured": bool(os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL"))})
 
         @app.route("/api/plain_health")
         def titan_plain_health():
-            return jsonify({"status": "success", "message": "Titan Nova Flask is responding", "classicAppMode": _CLASSIC_APP_MODE, "safeUiBoot": _SAFE_UI_BOOT})
+            return jsonify({"status": "success", "message": "Titan Nova Flask is responding", "safeUiBoot": _SAFE_UI_BOOT})
 
         @app.route("/titan-test")
         def titan_test_page():
             return Response("<!doctype html><meta name='viewport' content='width=device-width'><body style='background:#07111d;color:white;font-family:Arial;padding:24px'><h2>✅ Titan Nova server working</h2><p>Flask browser response OK.</p><p><a style='color:#4ade80' href='/'>Open dashboard</a></p></body>", content_type="text/html; charset=utf-8")
 
-        _legacy_index_view = app.view_functions.get("index")
-
-        def titan_codex_admin_index():
-            if request.args.get("vip") and _legacy_index_view:
-                return _legacy_index_view()
-            state_getter = _legacy_globals.get("migrate_and_get_state")
-            state = state_getter() if callable(state_getter) else {}
-            return render_template(
-                "index.html",
-                state=_build_admin_state(state),
-                is_master=True,
-            )
-
-        if not _CLASSIC_APP_MODE:
-            app.view_functions["index"] = titan_codex_admin_index
     except Exception as exc:
         print("⚠️ Runtime diagnostic routes failed:", exc)
 
@@ -164,5 +134,5 @@ application = app
 if _LAUNCHER_NAME == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "5000") or "5000")
-    print(f"🚀 Titan Nova Flask launcher {_LAUNCHER_VERSION} on {host}:{port} legacyLoaded={_LEGACY_LOADED} classicAppMode={_CLASSIC_APP_MODE} safeUiBoot={_SAFE_UI_BOOT}")
+    print(f"🚀 Titan Nova Flask launcher {_LAUNCHER_VERSION} on {host}:{port} legacyLoaded={_LEGACY_LOADED} safeUiBoot={_SAFE_UI_BOOT}")
     app.run(host=host, port=port, debug=False, threaded=True)
