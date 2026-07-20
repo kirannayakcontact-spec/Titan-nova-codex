@@ -8,6 +8,13 @@
 process.env.FIREBASE_URL = process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json";
 process.env.FIREBASE_DB_URL = process.env.FIREBASE_DB_URL || process.env.FIREBASE_URL;
 
+// The deploy guides and operators use Gateway-specific names so Flask and the
+// Gateway can be configured independently.  The legacy runtime reads PORT/HOST,
+// therefore normalize the public launcher contract before loading it.  Keep the
+// generic variables as the higher-priority compatibility override.
+process.env.PORT = process.env.PORT || process.env.GATEWAY_PORT || "3000";
+process.env.HOST = process.env.HOST || process.env.GATEWAY_HOST || process.env.TITAN_GATEWAY_HOST || "127.0.0.1";
+
 try {
   const qrTerminal = require("qrcode-terminal");
   if (qrTerminal && typeof qrTerminal.generate === "function" && !qrTerminal.generate.__titanCompactQr) {
