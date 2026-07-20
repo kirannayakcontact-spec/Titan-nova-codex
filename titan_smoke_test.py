@@ -45,22 +45,67 @@ def main() -> None:
     if app is None:
         raise SystemExit("flask_app.app missing")
 
-    routes = {rule.rule for rule in app.url_map.iter_rules()}
+    routes = {}
+    for rule in app.url_map.iter_rules():
+        routes.setdefault(rule.rule, set()).update(rule.methods)
     required = {
-        "/",
-        "/api/security_status",
-        "/api/admin_login",
-        "/api/admin_logout",
-        "/api/firebase_data_guard_status",
-        "/api/deposit_flow_v1/status",
-        "/api/deposit_flow_v1/settings",
-        "/api/deposit_flow_v1/setup_ui",
+        "/": {"GET"},
+        "/api/plain_health": {"GET"},
+        "/api/runtime_boot/status": {"GET"},
+        "/api/security_status": {"GET"},
+        "/api/admin_login": {"POST"},
+        "/api/admin_logout": {"POST"},
+        "/api/firebase_data_guard_status": {"GET"},
+        "/api/state": {"GET"},
+        "/api/market_registry": {"GET", "POST"},
+        "/api/payments": {"GET"},
+        "/api/withdrawals": {"GET"},
+        "/api/wallets": {"GET"},
+        "/api/entries": {"GET"},
+        "/api/results": {"GET"},
+        "/api/settlements": {"GET"},
+        "/api/gateway_status": {"GET"},
+        "/api/wa_login_status": {"GET"},
+        "/api/deposit_flow_v1/status": {"GET"},
+        "/api/deposit_flow_v1/settings": {"GET", "POST"},
+        "/api/deposit_flow_v1/request": {"POST"},
+        "/api/deposit_flow_v1/list": {"GET"},
+        "/api/deposit_flow_v1/update": {"POST"},
+        "/api/deposit_flow_v1/setup_ui": {"GET"},
     }
-    missing = sorted(required - routes)
+    missing = sorted(path for path in required if path not in routes)
     if missing:
         raise SystemExit("Missing required routes: " + ", ".join(missing))
 
-    print("Titan Nova smoke test OK: core Flask routes registered")
+    wrong_methods = []
+    for path, expected_methods in required.items():
+        if path not in routes:
+            continue
+        missing_methods = expected_methods - routes[path]
+        if missing_methods:
+            wrong_methods.append(f"{path} missing {','.join(sorted(missing_methods))}")
+    if wrong_methods:
+        raise SystemExit("Invalid route methods: " + "; ".join(wrong_methods))
+
+    client = app.test_client()
+    health = client.get("/api/plain_health")
+    if health.status_code != 200 or health.get_json(silent=True, force=True).get("status") != "success":
+        raise SystemExit("Plain health endpoint contract failed")
+
+    boot = client.get("/api/runtime_boot/status")
+    boot_data = boot.get_json(silent=True, force=True) or {}
+    if boot.status_code != 200 or not boot_data.get("legacyLoaded"):
+        raise SystemExit("Runtime boot endpoint reports an unhealthy legacy runtime")
+    failed_patches = [patch for patch in boot_data.get("patches", []) if patch.get("status") == "error"]
+    if failed_patches:
+        raise SystemExit("Runtime patches failed: " + ", ".join(patch.get("label", "unknown") for patch in failed_patches))
+
+    dashboard = client.get("/")
+    body = dashboard.get_data(as_text=True)
+    if dashboard.status_code != 200 or "<!doctype html" not in body.lower():
+        raise SystemExit("Dashboard HTML contract failed")
+
+    print(f"Titan Nova smoke test OK: {len(required)} API/UI contracts and runtime patches verified")
 
 
 if __name__ == "__main__":

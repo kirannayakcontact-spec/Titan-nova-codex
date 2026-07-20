@@ -39,7 +39,7 @@ Expected good result: no unexpected modified files.
 Run these before starting servers:
 
 ```bash
-python -m py_compile flask_app.py backend/app.py
+python -m py_compile flask_app.py
 node --check Gateway.js
 npm run check
 python runtime_syntax_check.py
@@ -71,7 +71,7 @@ Expected good result:
 Terminal 2:
 
 ```bash
-GATEWAY_PORT=3000 node Gateway.js
+GATEWAY_HOST=127.0.0.1 GATEWAY_PORT=3000 node Gateway.js
 ```
 
 Expected good result:
@@ -79,6 +79,8 @@ Expected good result:
 - Gateway starts without syntax/runtime boot crash.
 - QR/login status endpoints respond.
 - If WhatsApp is not logged in, QR/login status should still respond with a clear state.
+- The startup line uses the requested `GATEWAY_HOST` and `GATEWAY_PORT` (unless
+  the compatibility `HOST`/`PORT` variables were explicitly set).
 
 ## 5. Flask health endpoints
 
