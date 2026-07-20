@@ -3,10 +3,11 @@
 # Run UI/API: python flask_app.py
 # ==========================================================
 
-from pathlib import Path
 import os
 import traceback
 import time
+from html import escape
+from pathlib import Path
 
 os.environ.setdefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json")
 os.environ.setdefault("FIREBASE_DB_URL", os.environ.get("FIREBASE_URL"))
@@ -31,6 +32,13 @@ def _short_exc(exc):
     return f"{exc.__class__.__name__}: {exc}"
 
 
+def _build_admin_state(state):
+    """Return an isolated template state without mutating the runtime cache."""
+    if not isinstance(state, dict):
+        state = {}
+    return {**state, "activeId": "admin1"}
+
+
 def _make_fallback_app(error, tb):
     try:
         from flask import Flask, jsonify, Response
@@ -41,7 +49,9 @@ def _make_fallback_app(error, tb):
 
     @fallback.route("/")
     def fallback_index():
-        body = f"""<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Titan Nova Startup Error</title><style>body{{margin:0;background:#07111d;color:#fff;font-family:Arial,sans-serif;padding:18px;line-height:1.5}}.card{{max-width:760px;margin:28px auto;border:1px solid #ff5d5d55;border-radius:18px;background:#ffffff0f;padding:18px}}pre{{white-space:pre-wrap;background:#0008;padding:12px;border-radius:12px;overflow:auto;font-size:12px}}</style></head><body><div class='card'><h2>⚠️ Titan Nova Flask startup error</h2><p><b>Error:</b> {str(error).replace('<','&lt;').replace('>','&gt;')}</p><pre>{tb[-5000:].replace('<','&lt;').replace('>','&gt;')}</pre></div></body></html>"""
+        safe_error = escape(str(error))
+        safe_traceback = escape(tb[-5000:])
+        body = f"""<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Titan Nova Startup Error</title><style>body{{margin:0;background:#07111d;color:#fff;font-family:Arial,sans-serif;padding:18px;line-height:1.5}}.card{{max-width:760px;margin:28px auto;border:1px solid #ff5d5d55;border-radius:18px;background:#ffffff0f;padding:18px}}pre{{white-space:pre-wrap;background:#0008;padding:12px;border-radius:12px;overflow:auto;font-size:12px}}</style></head><body><div class='card'><h2>⚠️ Titan Nova Flask startup error</h2><p><b>Error:</b> {safe_error}</p><pre>{safe_traceback}</pre></div></body></html>"""
         return Response(body, status=500, content_type="text/html; charset=utf-8")
 
     @fallback.route("/api/runtime_boot/status")
@@ -137,8 +147,11 @@ if _LEGACY_LOADED:
                 return _legacy_index_view()
             state_getter = _legacy_globals.get("migrate_and_get_state")
             state = state_getter() if callable(state_getter) else {}
-            state["activeId"] = "admin1"
-            return render_template("index.html", state=state, is_master=True)
+            return render_template(
+                "index.html",
+                state=_build_admin_state(state),
+                is_master=True,
+            )
 
         if not _CLASSIC_APP_MODE:
             app.view_functions["index"] = titan_codex_admin_index
