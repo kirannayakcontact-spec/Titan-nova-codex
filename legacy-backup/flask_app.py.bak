@@ -10214,6 +10214,8 @@ HTML_TEMPLATE = """
             return (appState.withdrawals || []).find(w => String(w.id || '') === String(id || '')) || null;
         }
         function withdrawalUpiId(w){
+            const direct = String((w || {}).extractedUpiVpa || '').trim();
+            if(direct) return direct;
             const txt = String((w || {}).detail || '');
             const m = txt.match(/[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9._-]{2,}/);
             return m ? m[0] : '';
@@ -10236,7 +10238,7 @@ HTML_TEMPLATE = """
             const w = findWithdrawalById(id);
             if(!w) return;
             const method = String(w.method || '').toLowerCase();
-            if(method === 'upi'){
+            if(withdrawalUpiId(w)){
                 const link = withdrawalUpiPayLink(w);
                 if(!link){ showRealNotification('⚠️ UPI Missing', 'UPI ID detail me nahi mila. Copy Details use karo.', 'warning'); return; }
                 window.location.href = link;
@@ -10483,7 +10485,7 @@ withdraw status</pre>
                             <div class="stat-box"><p class="stat-lbl">Hold</p><p class="stat-val text-[var(--amber)]">${fmtMoney(walletHold(wallet))}</p></div>
                         </div>
                         ${detail}
-                        <div class="grid grid-cols-2 gap-2 mt-3"><button onclick="copyWithdrawalDetail('${attrEscape(w.id)}')" class="bg-[var(--surface-light)] text-white border border-[var(--border)] py-2 rounded-xl font-black text-[9px] uppercase active:scale-95"><i class="fas fa-copy mr-1"></i> Copy Details</button>${String(w.method||'').toLowerCase()==='upi' && withdrawalUpiPayLink(w) ? `<a href="${attrEscape(withdrawalUpiPayLink(w))}" class="text-center bg-[rgba(42,171,238,0.12)] text-[var(--primary)] border border-[rgba(42,171,238,0.25)] py-2 rounded-xl font-black text-[9px] uppercase active:scale-95"><i class="fas fa-link mr-1"></i> UPI Link</a>` : `<span></span>`}</div>
+                        <div class="grid grid-cols-2 gap-2 mt-3"><button onclick="copyWithdrawalDetail('${attrEscape(w.id)}')" class="bg-[var(--surface-light)] text-white border border-[var(--border)] py-2 rounded-xl font-black text-[9px] uppercase active:scale-95"><i class="fas fa-copy mr-1"></i> Copy Details</button>${withdrawalUpiPayLink(w) ? `<button onclick="openWithdrawalPayNow('${attrEscape(w.id)}')" class="text-center bg-[rgba(42,171,238,0.12)] text-[var(--primary)] border border-[rgba(42,171,238,0.25)] py-2 rounded-xl font-black text-[9px] uppercase active:scale-95"><i class="fas fa-mobile-screen mr-1"></i> Pay UPI</button>` : `<span></span>`}</div>
                         <p class="text-[9px] text-[var(--text-muted)] mt-2">Requested: ${htmlEscape(String(w.createdAt || w.time || '').replace('T',' '))}</p>
                         ${approvedAt}${paidAt}${utr}
                         ${renderWithdrawalButtons(w)}

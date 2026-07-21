@@ -74,10 +74,10 @@ async function handleDepositImage(sock, baileys, msg){
     const data = res && res.data ? res.data : {};
     const status = String(data.status || "").toUpperCase();
 
-    if(status === "OCR_VALID"){
+    if(status === "AUTO_CREDIT" || status === "ADMIN_REVIEW" || status === "OCR_VALID"){
       const ex = data.extracted || {};
       await sendReply(sock, chatJid,
-        `✅ Payment screenshot verified.\nAmount: ₹${ex.amount || amount || "-"}\nUTR: ${ex.utr || "-"}\nReceiver UPI: ${ex.receiver_upi || "-"}\nProof ID: ${data.proof_id || "-"}\nStatus: Admin approval pending.`, msg);
+        `✅ Payment screenshot verified.\nAmount: ₹${ex.amount || amount || "-"}\nUTR: ${ex.utr || "-"}\nReceiver UPI: ${ex.receiver_upi || "-"}\nProof ID: ${data.proof_id || "-"}\nConfidence: ${Math.round(Number(data.confidence || 0) * 100)}%\nStatus: ${data.wallet_credited ? "Wallet auto-credited" : "Admin review pending"}.`, msg);
       return;
     }
 
