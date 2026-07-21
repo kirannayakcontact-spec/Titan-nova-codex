@@ -28,9 +28,12 @@ class MultiSessionArchitectureTests(unittest.TestCase):
 
     def test_dashboard_is_additive_and_responsive(self):
         source = (ROOT / "bot_connection_manager.py").read_text()
-        self.assertIn("display:flex;flex-wrap:wrap", source)
-        self.assertIn("calc(33.333% - 12px)", source)
-        self.assertIn("calc(50% - 12px)", source)
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", source)
+        self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", source)
+        self.assertIn("grid-template-columns:1fr", source)
+        self.assertIn("main.appendChild(manager)", source)
+        self.assertNotIn('id="tbcm-modal"', source)
+        self.assertNotIn('id="tbcm-open"', source)
         self.assertIn("@app.after_request", source)
 
     def test_canonical_gateway_owns_legacy_webhooks_and_multi_session_routes(self):
