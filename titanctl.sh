@@ -93,7 +93,7 @@ update_app(){
   git pull
   install_deps
   info "Syntax check..."
-  python -m py_compile flask_app.py deposit_professional_v2.py deposit_finance_merge.py deposit_finance_force.py 2>/dev/null || python -m py_compile flask_app.py
+  python -m py_compile flask_app.py deposit_professional_v2.py deposit_finance_native.py deposit_screenshot_routes.py
   if [ -f Gateway.js ]; then node --check Gateway.js; fi
   ok "Update complete."
 }
