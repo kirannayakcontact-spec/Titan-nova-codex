@@ -53,21 +53,17 @@ def register_strict_deposit_ocr(app):
             got_upi = base._norm_upi(extracted.get("receiver_upi"))
             payment_status = str(extracted.get("status") or "").lower()
 
-            if ocr_error:
-                return jsonify({"ok": False, "status": "OCR_FAILED", "reason": f"OCR failed: {ocr_error}. No proof ID created."}), 422
-            if payment_status != "success":
-                return jsonify({"ok": False, "status": "INVALID_PAYMENT_STATUS", "reason": "Successful/completed payment status not detected. No proof ID created."}), 422
-            if got_amount <= 0:
-                return jsonify({"ok": False, "status": "AMOUNT_MISSING", "reason": "Payment amount not detected. No proof ID created."}), 422
+            needs_manual_review = bool(
+                ocr_error or ocr_confidence < 0.70 or not got_utr
+                or got_amount <= 0 or payment_status != "success"
+            )
             if expected_amount > 0 and abs(got_amount - expected_amount) > 0.009:
                 return jsonify({"ok": False, "status": "AMOUNT_MISMATCH", "reason": f"Expected amount {expected_amount}, screenshot amount {got_amount}. No proof ID created."}), 422
-            if not got_utr:
-                return jsonify({"ok": False, "status": "UTR_MISSING", "reason": "UTR/reference number not detected. No proof ID created."}), 422
-            if not configured_upi:
+            if not configured_upi and not needs_manual_review:
                 return jsonify({"ok": False, "status": "RECEIVER_NOT_CONFIGURED", "reason": "Admin receiver UPI is not configured. No proof ID created."}), 422
-            if not got_upi:
+            if not got_upi and not needs_manual_review:
                 return jsonify({"ok": False, "status": "RECEIVER_MISSING", "reason": "Receiver UPI not detected in screenshot. No proof ID created."}), 422
-            if got_upi != configured_upi:
+            if got_upi and configured_upi and got_upi != configured_upi:
                 return jsonify({"ok": False, "status": "RECEIVER_MISMATCH", "reason": f"Expected receiver {configured_upi}, screenshot receiver {got_upi}. No proof ID created."}), 422
 
             dup = base._duplicate_reason(state, got_utr, image_hash)
@@ -76,7 +72,7 @@ def register_strict_deposit_ocr(app):
 
             proof_id = "DP-" + datetime.now().strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:8].upper()
             confidence = round(min(1.0, (ocr_confidence * 0.55) + 0.45), 3)
-            high_confidence = confidence >= float(base.os.environ.get("TITAN_DEPOSIT_AUTO_CREDIT_CONFIDENCE", "0.85"))
+            high_confidence = not needs_manual_review
             proof = {
                 "id": proof_id,
                 "feature_version": "2026-07-10-strict-image-only-v2",
@@ -89,10 +85,10 @@ def register_strict_deposit_ocr(app):
                 "extracted_receiver_upi": got_upi,
                 "utr": got_utr,
                 "payment_status_text": payment_status,
-                "status": "AUTO_CREDIT" if high_confidence else "ADMIN_REVIEW",
+                "status": "PENDING_MANUAL_REVIEW" if needs_manual_review else "AUTO_MATCH",
                 "confidence": confidence,
                 "confidence_level": "high" if high_confidence else "low",
-                "reason": "High-confidence proof verified." if high_confidence else "Proof matched but OCR confidence needs admin review.",
+                "reason": (ocr_error or "Blurry/incomplete OCR; admin review required.") if needs_manual_review else "High-confidence UTR and amount matched.",
                 "ocr_text": ocr_text[-4000:],
                 "image_hash": image_hash,
                 "created_at": base._now_iso(),
@@ -104,11 +100,7 @@ def register_strict_deposit_ocr(app):
             state["deposit_proofs"] = proofs
             credited = False
             credit_message = "Admin review required."
-            if high_confidence:
-                credited, credit_message = base._credit_wallet_once(state, proof_id, proof, "ocr_auto_credit")
-                if not credited:
-                    proof["status"] = "ADMIN_REVIEW"
-                    proof["reason"] = credit_message
+            # AUTO_MATCH verifies the screenshot only; explicit admin approval moves money.
             base._upsert_audit(state, {"type": "strict_deposit_ocr_verify", "proof_id": proof_id, "status": proof["status"], "confidence": confidence, "user_id": user_id})
             base._fb_root_put(state)
             return jsonify({"ok": True, "status": proof["status"], "proof_id": proof_id, "confidence": confidence, "wallet_credited": credited, "extracted": extracted, "reason": proof["reason"]})

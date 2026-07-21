@@ -453,7 +453,7 @@ if (!global.__TITAN_WITHDRAWAL_RUNTIME_V1__) {
   function phone(v) { const d = digits(v); return d.length >= 10 ? d.slice(-10) : d; }
   function senderIds(m, chat) { const k = m?.key || {}; return [...new Set([k.participant, k.participantPn, k.senderPn, k.participantAlt, m?.participant, chat].map(cleanJid).filter(Boolean))]; }
   function amount(s) { const t = String(s || "").replace(/,/g, " "); const m = t.match(/(?:withdraw|withdrawal|wd|amount|₹|rs\.?|inr)\D{0,18}([0-9]+(?:\.[0-9]+)?)/i) || t.match(/^\s*([0-9]+(?:\.[0-9]+)?)/); const n = m ? Number(m[1]) : 0; return Number.isFinite(n) && n > 0 && n <= 2000000 ? Math.round(n * 100) / 100 : 0; }
-  function upi(s) { const m = String(s || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+/i); return m ? m[0].toLowerCase() : ""; }
+  function upi(s) { const text = String(s || ""); const m = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+/i); if (m) return m[0].toLowerCase(); const d = text.replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) + "@" + String(process.env.TITAN_MOBILE_UPI_HANDLE || "ybl").replace(/^@/, "").toLowerCase() : ""; }
   function messageKey(m) { const k = m?.key || {}; return [k.remoteJid || "", k.participant || "", k.id || ""].join("|"); }
   function nextId(list) { return "W" + new Date().toISOString().slice(2,10).replace(/-/g, "") + "-" + String((Array.isArray(list) ? list.length : 0) + 1).padStart(4, "0"); }
 
