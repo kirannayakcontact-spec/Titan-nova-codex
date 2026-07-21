@@ -54,7 +54,7 @@ tail -f gateway.log
 ## Stop both
 
 ```bash
-pkill -f "python .*flask_app.py" 2>/dev/null || true; pkill -f "node .*Gateway.js" 2>/dev/null || true
+pkill -f "python .*flask_app.py" 2>/dev/null || true; pkill -f "node .*whatsapp_multi_session.js" 2>/dev/null || true
 ```
 
 ## Manual two-terminal run
@@ -70,7 +70,7 @@ Terminal 2:
 
 ```bash
 cd ~/Titan-nova-codex
-node Gateway.js
+node whatsapp_multi_session.js
 ```
 
 ## If command says folder not found

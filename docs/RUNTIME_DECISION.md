@@ -6,7 +6,7 @@ Titan Nova production currently uses the root legacy two-file runtime:
 
 ```bash
 python flask_app.py
-node Gateway.js
+node whatsapp_multi_session.js
 ```
 
 This is the only runtime that should be used for production deploys until a
@@ -32,7 +32,7 @@ Browser/Admin/VIP UI
   -> Firebase shared state
 
 WhatsApp/automation
-  -> node Gateway.js
+  -> node whatsapp_multi_session.js
   -> gateway safety/compatibility patches
   -> legacy-backup/Gateway.js.bak
   -> WhatsApp Gateway + schedules + notifications

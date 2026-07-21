@@ -68,7 +68,7 @@ python titan_vip_profile_fix_patch.py --apply
 
 info "Running preflight checks"
 python -m py_compile flask_app.py
-node --check Gateway.js
+node --check whatsapp_multi_session.js
 python titan_smoke_test.py
 python titan_dead_code_audit.py || warn "Dead-code audit reported cleanup targets. Continuing because this is not a runtime failure."
 
@@ -76,13 +76,13 @@ if [ "${TITAN_APPLY_PHASE4_CLEANUP:-0}" = "1" ]; then
   info "Applying optional Phase 4 banner cleanup"
   python titan_phase4_banner_cleanup.py --apply
   python -m py_compile flask_app.py
-  node --check Gateway.js
+  node --check whatsapp_multi_session.js
   python titan_smoke_test.py
 fi
 
 info "Stopping old Titan processes if running"
 pkill -f "python flask_app.py" 2>/dev/null || true
-pkill -f "node Gateway.js" 2>/dev/null || true
+pkill -f "node whatsapp_multi_session.js" 2>/dev/null || true
 sleep 1
 
 info "Starting Flask dashboard in background"
@@ -90,7 +90,7 @@ nohup python flask_app.py > "$FLASK_LOG" 2>&1 &
 FLASK_PID=$!
 
 info "Starting WhatsApp Gateway in background"
-nohup node Gateway.js > "$GATEWAY_LOG" 2>&1 &
+nohup node whatsapp_multi_session.js > "$GATEWAY_LOG" 2>&1 &
 GATEWAY_PID=$!
 
 sleep 2
@@ -111,4 +111,4 @@ printf 'Gateway log: %s\n' "$GATEWAY_LOG"
 printf '\nUseful commands:\n'
 printf '  tail -f %s\n' "$FLASK_LOG"
 printf '  tail -f %s\n' "$GATEWAY_LOG"
-printf '  pkill -f "python flask_app.py"; pkill -f "node Gateway.js"\n'
+printf '  pkill -f "python flask_app.py"; pkill -f "node whatsapp_multi_session.js"\n'

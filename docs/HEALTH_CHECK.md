@@ -8,7 +8,7 @@ working before any professional cleanup starts.
 
 ```bash
 python flask_app.py
-node Gateway.js
+node whatsapp_multi_session.js
 ```
 
 This matches the official production decision in `docs/RUNTIME_DECISION.md`.
@@ -71,7 +71,7 @@ Expected good result:
 Terminal 2:
 
 ```bash
-GATEWAY_HOST=127.0.0.1 GATEWAY_PORT=3000 node Gateway.js
+GATEWAY_HOST=127.0.0.1 GATEWAY_PORT=3000 node whatsapp_multi_session.js
 ```
 
 Expected good result:
@@ -199,7 +199,7 @@ Expected good result:
 | Port 5000 busy | Old Flask still running | Stop old process or run `bash deploy.sh` |
 | Port 3000 busy | Old Gateway still running | Stop old process or run `bash deploy.sh` |
 | `/api/runtime_boot/status` says `legacyLoaded=false` | Legacy Flask failed to load | Read Flask traceback in response/log |
-| Gateway connection refused from Flask | Gateway not running or wrong port | Start `node Gateway.js` and verify port 3000 |
+| Gateway connection refused from Flask | Gateway not running or wrong port | Start `node whatsapp_multi_session.js` and verify port 3000 |
 | WhatsApp not logged in | Session missing/expired | Open QR/login status and scan QR |
 | Firebase warning | Config/network/data issue | Do not save money-flow data until checked |
 

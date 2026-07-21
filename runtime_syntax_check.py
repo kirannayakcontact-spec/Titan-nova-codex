@@ -23,6 +23,8 @@ PYTHON_FILES = [
 
 JAVASCRIPT_FILES = [
     "Gateway.js",
+    "whatsapp_multi_session.js",
+    "multi_session_manager.js",
     "gateway_codex_preflight_patch.js",
 ]
 
@@ -69,7 +71,7 @@ def check_javascript(path: pathlib.Path) -> None:
 def check_launcher_references() -> None:
     combined = "\n".join(
         (ROOT / name).read_text(encoding="utf-8")
-        for name in ("flask_app.py", "Gateway.js")
+        for name in ("flask_app.py", "whatsapp_multi_session.js", "multi_session_manager.js")
     )
     for forbidden in FORBIDDEN_REFERENCES:
         if re.search(rf"\b{re.escape(forbidden)}\b", combined):
