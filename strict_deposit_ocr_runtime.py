@@ -34,10 +34,11 @@ def register_strict_deposit_ocr_runtime(app):
             phone = base._norm_phone(data.get("phone_number") or data.get("phone") or user_id)
             image_hash = hashlib.sha256(image_bytes).hexdigest()
 
-            ocr_text, ocr_error = base._ocr_text(image_bytes)
+            ocr_text, ocr_error, ocr_confidence = base._ocr_text_with_confidence(image_bytes)
             manual_text = str(data.get("ocr_text") or "").strip()
             if manual_text and not ocr_text:
                 ocr_text = manual_text
+                ocr_confidence = 0.75
             extracted = base._extract_payment_text(ocr_text)
             state = base._fb_root_get()
             configured_upi = expected_upi or base._deposit_settings_receiver(state)
@@ -69,6 +70,8 @@ def register_strict_deposit_ocr_runtime(app):
                 return jsonify({"ok": False, "status": dup, "reason": "Same UTR/image already submitted. No new proof ID created."}), 409
 
             proof_id = "DP-" + datetime.now().strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:8].upper()
+            confidence = round(min(1.0, (ocr_confidence * 0.55) + 0.45), 3)
+            high_confidence = confidence >= float(base.os.environ.get("TITAN_DEPOSIT_AUTO_CREDIT_CONFIDENCE", "0.85"))
             proof = {
                 "id": proof_id,
                 "feature_version": "2026-07-10-strict-image-only-v2",
@@ -81,8 +84,10 @@ def register_strict_deposit_ocr_runtime(app):
                 "extracted_receiver_upi": got_upi,
                 "utr": got_utr,
                 "payment_status_text": payment_status,
-                "status": "OCR_VALID",
-                "reason": "Amount, UTR, success status and receiver UPI verified.",
+                "status": "AUTO_CREDIT" if high_confidence else "ADMIN_REVIEW",
+                "confidence": confidence,
+                "confidence_level": "high" if high_confidence else "low",
+                "reason": "High-confidence proof verified." if high_confidence else "Proof matched but OCR confidence needs admin review.",
                 "ocr_text": ocr_text[-4000:],
                 "image_hash": image_hash,
                 "created_at": base._now_iso(),
@@ -92,9 +97,16 @@ def register_strict_deposit_ocr_runtime(app):
             proofs = base._all_proofs(state)
             proofs[proof_id] = proof
             state["deposit_proofs"] = proofs
-            base._upsert_audit(state, {"type": "strict_deposit_ocr_verify", "proof_id": proof_id, "status": "OCR_VALID", "user_id": user_id})
+            credited = False
+            credit_message = "Admin review required."
+            if high_confidence:
+                credited, credit_message = base._credit_wallet_once(state, proof_id, proof, "ocr_auto_credit")
+                if not credited:
+                    proof["status"] = "ADMIN_REVIEW"
+                    proof["reason"] = credit_message
+            base._upsert_audit(state, {"type": "strict_deposit_ocr_verify", "proof_id": proof_id, "status": proof["status"], "confidence": confidence, "user_id": user_id})
             base._fb_root_put(state)
-            return jsonify({"ok": True, "status": "OCR_VALID", "proof_id": proof_id, "extracted": extracted, "reason": proof["reason"]})
+            return jsonify({"ok": True, "status": proof["status"], "proof_id": proof_id, "confidence": confidence, "wallet_credited": credited, "extracted": extracted, "reason": proof["reason"]})
         except Exception as exc:
             return jsonify({"ok": False, "status": "ERROR", "reason": f"{exc}. No proof ID created."}), 500
 

@@ -16,6 +16,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from flask import jsonify, request
@@ -29,6 +30,18 @@ try:  # Optional runtime dependency. Termux also needs tesseract binary installe
     import pytesseract
 except Exception:  # pragma: no cover
     pytesseract = None
+
+try:  # Optional, but preferred: removes screenshot noise before OCR.
+    import cv2
+    import numpy as np
+except Exception:  # pragma: no cover
+    cv2 = None
+    np = None
+
+try:  # Optional: zbar shared library is also required by pyzbar.
+    from pyzbar.pyzbar import decode as decode_qr
+except Exception:  # pragma: no cover
+    decode_qr = None
 
 FEATURE_VERSION = "2026-07-09-upi-deposit-ocr-guard-v1"
 
@@ -102,15 +115,41 @@ def _read_image_bytes() -> Tuple[bytes, str]:
     return base64.b64decode(b64), "base64-upload.jpg"
 
 
-def _ocr_text(image_bytes: bytes) -> Tuple[str, str]:
+def _prepare_ocr_image(image_bytes: bytes):
+    """Use OpenCV denoising/adaptive thresholding when it is available."""
+    if cv2 is None or np is None:
+        return Image.open(io.BytesIO(image_bytes))
+    raw = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(raw, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise ValueError("Invalid or unsupported image")
+    image = cv2.fastNlMeansDenoising(image, None, 12, 7, 21)
+    return cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                 cv2.THRESH_BINARY, 31, 11)
+
+
+def _ocr_text_with_confidence(image_bytes: bytes) -> Tuple[str, str, float]:
     if Image is None or pytesseract is None:
-        return "", "OCR engine not installed. Install Pillow + pytesseract and Termux package tesseract for auto OCR."
+        return "", "OCR engine not installed. Install Pillow + pytesseract and Termux package tesseract for auto OCR.", 0.0
     try:
-        img = Image.open(io.BytesIO(image_bytes))
+        img = _prepare_ocr_image(image_bytes)
         text = pytesseract.image_to_string(img, config="--psm 6") or ""
-        return text.strip(), ""
+        confidence = 0.0
+        try:
+            output = getattr(pytesseract, "Output", None)
+            data = pytesseract.image_to_data(img, config="--psm 6", output_type=output.DICT)
+            values = [float(v) for v in data.get("conf", []) if float(v) >= 0]
+            confidence = round((sum(values) / len(values)) / 100, 3) if values else 0.0
+        except Exception:
+            confidence = 0.0
+        return text.strip(), "", confidence
     except Exception as exc:
-        return "", f"OCR failed: {exc}"
+        return "", f"OCR failed: {exc}", 0.0
+
+
+def _ocr_text(image_bytes: bytes) -> Tuple[str, str]:
+    text, error, _confidence = _ocr_text_with_confidence(image_bytes)
+    return text, error
 
 
 def _extract_amount(text: str) -> float:
@@ -287,7 +326,28 @@ def register_deposit_ocr_guard(app):
             "version": FEATURE_VERSION,
             "pillow_available": Image is not None,
             "pytesseract_available": pytesseract is not None,
+            "opencv_available": cv2 is not None,
+            "pyzbar_available": decode_qr is not None,
         })
+
+    @app.post("/api/withdrawal/decode-qr")
+    def withdrawal_decode_qr():
+        """Decode a withdrawal QR locally and return only its payment target."""
+        try:
+            image_bytes, _filename = _read_image_bytes()
+            if Image is None or decode_qr is None:
+                return jsonify({"ok": False, "status": "QR_DECODER_UNAVAILABLE", "reason": "Pyzbar/zbar is not installed."}), 503
+            decoded = decode_qr(Image.open(io.BytesIO(image_bytes)))
+            raw = decoded[0].data.decode("utf-8", "replace").strip() if decoded else ""
+            if not raw:
+                return jsonify({"ok": False, "status": "QR_NOT_DETECTED", "reason": "No readable QR found."}), 422
+            params = parse_qs(urlparse(raw).query) if raw.lower().startswith("upi://") else {}
+            vpa = _norm_upi((params.get("pa") or [""])[0])
+            if not re.fullmatch(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+", vpa):
+                return jsonify({"ok": False, "status": "VPA_NOT_FOUND", "reason": "QR is not a valid UPI payment QR."}), 422
+            return jsonify({"ok": True, "status": "VPA_EXTRACTED", "vpa": vpa})
+        except Exception as exc:
+            return jsonify({"ok": False, "status": "QR_DECODE_ERROR", "reason": str(exc)}), 400
 
     @app.post("/api/deposit/ocr-verify")
     def deposit_ocr_verify():

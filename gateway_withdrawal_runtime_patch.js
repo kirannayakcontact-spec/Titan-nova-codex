@@ -8,6 +8,7 @@ if (!global.__TITAN_WITHDRAWAL_RUNTIME_V1__) {
   global.__TITAN_WITHDRAWAL_RUNTIME_V1__ = true;
 
   const FB = String(process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json").replace(/\/+$/, "");
+  const BACKEND_URL = String(process.env.TITAN_BACKEND_URL || process.env.FLASK_URL || process.env.BACKEND_URL || "http://127.0.0.1:5000").replace(/\/+$/, "");
   const TZ = process.env.APP_TZ || "Asia/Kolkata";
 
   function fbUrl(path) {
@@ -39,6 +40,15 @@ if (!global.__TITAN_WITHDRAWAL_RUNTIME_V1__) {
       for await (const c of stream) { const b = Buffer.from(c); size += b.length; if (size > 1200000) break; chunks.push(b); }
       const buf = Buffer.concat(chunks);
       return buf.length ? `data:${image.mimetype || "image/jpeg"};base64,${buf.toString("base64")}` : "";
+    } catch { return ""; }
+  }
+
+  async function qrVpa(image) {
+    if (!image) return "";
+    try {
+      const base64 = String(image).split(",", 2)[1] || "";
+      const r = await axios.post(BACKEND_URL + "/api/withdrawal/decode-qr", { image_base64: base64 }, { timeout: 15000, maxBodyLength: 2000000 });
+      return upi(r?.data?.vpa || "");
     } catch { return ""; }
   }
 
@@ -84,6 +94,7 @@ if (!global.__TITAN_WITHDRAWAL_RUNTIME_V1__) {
       if (duplicate) { await reply(sock, chat, `⚠️ Withdrawal already submitted. ID: #${duplicate.id}`, m); return true; }
 
       const image = hasImage(m) ? await imageData(baileys, m) : "";
+      const decodedVpa = image ? await qrVpa(image) : "";
       const method = image ? "qr" : (upi(body) ? "upi" : "manual");
       const id = nextId(state.withdrawals);
       const holdBefore = wallet.hold;
@@ -91,7 +102,7 @@ if (!global.__TITAN_WITHDRAWAL_RUNTIME_V1__) {
       wallet.walletHold = wallet.hold;
       wallet.ledger.push({ id: "WHOLD-" + Date.now(), withdrawalId: id, time: now(), type: "withdrawal_hold", amount: 0, balanceBefore: wallet.balance, balanceAfter: wallet.balance, holdBefore, holdAfter: wallet.hold, source: "whatsapp_withdrawal_runtime" });
 
-      const rec = { id, userId: found.id, userName: found.profile?.name || found.id, phone: found.profile?.phone || "", senderJid: senderIds(m, chat)[0] || chat, chatJid: chat, messageKey: key, amount: value, method, detail: image ? "QR image attached" : (upi(body) || body.replace(/^\s*(withdraw|withdrawal|wd)\b/i, "").trim()), qrImageData: image, status: "pending", paymentStatus: "pending_approval", holdApplied: true, holdAmount: value, walletBalanceAtRequest: wallet.balance, walletHoldAfter: wallet.hold, source: "whatsapp_withdrawal_runtime", createdAt: now(), approvalNotified: false, paidNotified: false };
+      const rec = { id, userId: found.id, userName: found.profile?.name || found.id, phone: found.profile?.phone || "", senderJid: senderIds(m, chat)[0] || chat, chatJid: chat, messageKey: key, amount: value, method, detail: decodedVpa || (image ? "QR image attached; VPA decode needs admin review" : (upi(body) || body.replace(/^\s*(withdraw|withdrawal|wd)\b/i, "").trim())), extractedUpiVpa: decodedVpa, qrDecodeStatus: image ? (decodedVpa ? "VPA_EXTRACTED" : "ADMIN_REVIEW") : "NOT_APPLICABLE", qrImageData: image, status: "pending", paymentStatus: "pending_approval", holdApplied: true, holdAmount: value, walletBalanceAtRequest: wallet.balance, walletHoldAfter: wallet.hold, source: "whatsapp_withdrawal_runtime", createdAt: now(), approvalNotified: false, paidNotified: false };
       state.withdrawals.push(rec);
       state.wallets[found.id] = wallet;
       await put("withdrawals", state.withdrawals.slice(-1000));
