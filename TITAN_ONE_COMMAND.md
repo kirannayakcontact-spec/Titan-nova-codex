@@ -75,7 +75,7 @@ tail -f ~/titan-app/logs/gateway.log
 ## Stop app
 
 ```bash
-pkill -f "python flask_app.py"; pkill -f "node Gateway.js"
+pkill -f "python flask_app.py"; pkill -f "node whatsapp_multi_session.js"
 ```
 
 ## Optional Phase 4 cleanup during deploy

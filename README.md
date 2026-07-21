@@ -8,7 +8,7 @@ The official production runtime currently uses the root legacy two-file style:
 
 ```bash
 python flask_app.py
-node Gateway.js
+node whatsapp_multi_session.js
 ```
 
 Keep this as the production runtime until a documented migration explicitly promotes a new modular runtime. The full previous runtime code is preserved under `legacy-backup/` and loaded by the root launchers:
@@ -34,7 +34,7 @@ npm install
 
 ```bash
 python -m py_compile flask_app.py
-node --check Gateway.js
+node --check whatsapp_multi_session.js
 npm run check
 ```
 
@@ -90,7 +90,7 @@ Terminal 2:
 
 ```bash
 cd ~/Titan-nova-codex
-node Gateway.js
+node whatsapp_multi_session.js
 ```
 
 ## Check if both are running
@@ -141,7 +141,7 @@ tail -f gateway.log
 ## Stop both
 
 ```bash
-pkill -f "python .*flask_app.py" 2>/dev/null || true; pkill -f "node .*Gateway.js" 2>/dev/null || true
+pkill -f "python .*flask_app.py" 2>/dev/null || true; pkill -f "node .*whatsapp_multi_session.js" 2>/dev/null || true
 ```
 
 ## If folder not found

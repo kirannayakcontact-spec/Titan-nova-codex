@@ -33,7 +33,7 @@ cd ~/titan-app && ./titan_one_command.sh
 ## Manual reset from Termux
 
 ```bash
-pkill -f "node Gateway.js" 2>/dev/null || true
+pkill -f "node whatsapp_multi_session.js" 2>/dev/null || true
 rm -rf ~/titan-app/auth_info_baileys
 cd ~/titan-app && ./titan_one_command.sh
 ```

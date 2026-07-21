@@ -43,7 +43,7 @@ for optional_pkg in libtiff openjpeg; do
 done
 
 say "5/9 Required project files verify"
-for f in flask_app.py Gateway.js requirements.txt package.json deploy.sh; do
+for f in flask_app.py whatsapp_multi_session.js requirements.txt package.json deploy.sh; do
   [ -f "$f" ] || fail "Missing file: $f"
 done
 [ -f "legacy-backup/flask_app.py.bak" ] || fail "Missing legacy-backup/flask_app.py.bak"
@@ -61,7 +61,7 @@ npm run check
 
 say "8/9 Runtime syntax checks"
 python -m py_compile flask_app.py legacy-backup/flask_app.py.bak
-node --check Gateway.js
+node --check whatsapp_multi_session.js
 # Node 24 rejects unknown .bak extensions in --check mode. Runtime itself maps
 # .bak to JavaScript in Gateway.js, so validate through a temporary .js copy.
 LEGACY_GATEWAY_CHECK="${TMPDIR:-$PREFIX/tmp}/titan_legacy_gateway_check.js"

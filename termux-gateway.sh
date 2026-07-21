@@ -6,4 +6,4 @@ echo "🛠️ Restoring Titan Nova runtime files if missing..."
 python titan_runtime_files.py --ensure
 
 echo "🚀 Starting Titan Nova WhatsApp Gateway..."
-node Gateway.js
+node whatsapp_multi_session.js

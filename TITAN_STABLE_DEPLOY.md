@@ -79,7 +79,7 @@ Terminal 2:
 
 ```bash
 cd ~/titan-app
-node Gateway.js
+node whatsapp_multi_session.js
 ```
 
 ## Why this fixes many-tab failure

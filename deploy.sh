@@ -74,10 +74,12 @@ stop_old() {
   say "🛑 Old Flask/Gateway stop"
   pkill -TERM -f "python.*flask_app.py" 2>/dev/null || true
   pkill -TERM -f "python3.*flask_app.py" 2>/dev/null || true
+  pkill -TERM -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
   pkill -TERM -f "node.*Gateway.js" 2>/dev/null || true
   sleep 2
   pkill -KILL -f "python.*flask_app.py" 2>/dev/null || true
   pkill -KILL -f "python3.*flask_app.py" 2>/dev/null || true
+  pkill -KILL -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
   pkill -KILL -f "node.*Gateway.js" 2>/dev/null || true
 
   if command -v fuser >/dev/null 2>&1; then
@@ -144,11 +146,11 @@ stop_old
 : > gateway.log
 
 say "🚀 Flask start: http://127.0.0.1:${PORT}"
-PYTHONUNBUFFERED=1 HOST="$HOST" PORT="$PORT" nohup python flask_app.py > flask.log 2>&1 &
+PYTHONUNBUFFERED=1 HOST="$HOST" PORT="$PORT" GATEWAY_URL="http://127.0.0.1:${GATEWAY_PORT}" nohup python flask_app.py > flask.log 2>&1 &
 FLASK_PID=$!
 
 say "🚀 Gateway start: http://127.0.0.1:${GATEWAY_PORT}"
-GATEWAY_PORT="$GATEWAY_PORT" nohup node Gateway.js > gateway.log 2>&1 &
+GATEWAY_PORT="$GATEWAY_PORT" nohup node whatsapp_multi_session.js > gateway.log 2>&1 &
 GATEWAY_PID=$!
 
 if wait_http "Runtime boot status" "http://127.0.0.1:${PORT}/api/runtime_boot/status" 25; then

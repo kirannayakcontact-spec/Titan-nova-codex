@@ -94,7 +94,7 @@ update_app(){
   install_deps
   info "Syntax check..."
   python -m py_compile flask_app.py deposit_professional_v2.py deposit_finance_native.py deposit_screenshot_routes.py
-  if [ -f Gateway.js ]; then node --check Gateway.js; fi
+  if [ -f whatsapp_multi_session.js ]; then node --check whatsapp_multi_session.js; fi
   ok "Update complete."
 }
 
@@ -112,19 +112,19 @@ start_app(){
     if is_running "$FLASK_PID"; then ok "Flask started PID $(cat "$FLASK_PID")"; else err "Flask start failed. Run: bash titanctl.sh logs"; fi
   fi
 
-  if [ -f Gateway.js ]; then
+  if [ -f whatsapp_multi_session.js ]; then
     if is_running "$GATEWAY_PID"; then
       warn "Gateway already running PID $(cat "$GATEWAY_PID")"
     else
       info "Starting WhatsApp Gateway on port $GATEWAY_PORT ..."
       : > "$GATEWAY_LOG"
-      nohup env GATEWAY_PORT="$GATEWAY_PORT" node Gateway.js >> "$GATEWAY_LOG" 2>&1 &
+      nohup env GATEWAY_PORT="$GATEWAY_PORT" node whatsapp_multi_session.js >> "$GATEWAY_LOG" 2>&1 &
       echo $! > "$GATEWAY_PID"
       sleep 1
       if is_running "$GATEWAY_PID"; then ok "Gateway started PID $(cat "$GATEWAY_PID")"; else err "Gateway start failed. Run: bash titanctl.sh logs"; fi
     fi
   else
-    warn "Gateway.js nahi mila, sirf Flask start hua."
+    warn "whatsapp_multi_session.js nahi mila, sirf Flask start hua."
   fi
 
   echo
