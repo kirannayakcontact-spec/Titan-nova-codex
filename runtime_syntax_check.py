@@ -14,8 +14,8 @@ ROOT = pathlib.Path(__file__).resolve().parent
 PYTHON_FILES = [
     "flask_app.py",
     "deposit_ocr_guard.py",
-    "strict_deposit_ocr_runtime.py",
-    "titan_result_control_patch.py",
+    "deposit_screenshot_routes.py",
+    "deposit_finance_native.py",
     "titan_strict_result_rules_patch.py",
     "titan_frontend_boot_fix_patch.py",
     "titan_ledger_control_overlay_patch.py",
@@ -24,10 +24,6 @@ PYTHON_FILES = [
 JAVASCRIPT_FILES = [
     "Gateway.js",
     "gateway_codex_preflight_patch.js",
-    "gateway_firebase_guard_patch.js",
-    "gateway_wallet_alias_patch.js",
-    "gateway_deposit_ocr_patch.js",
-    "gateway_withdrawal_runtime_patch.js",
 ]
 
 FORBIDDEN_REFERENCES = [
@@ -80,8 +76,9 @@ def check_launcher_references() -> None:
             fail(f"Obsolete runtime reference remains: {forbidden}")
     required = [
         "titan_ledger_control_overlay_patch",
-        "gateway_deposit_ocr_patch",
-        "gateway_withdrawal_runtime_patch",
+        "BEGIN CONSOLIDATED gateway_deposit_ocr_patch.js",
+        "BEGIN CONSOLIDATED gateway_withdrawal_runtime_patch.js",
+        "OWNER_CODE_LOGIN_V1",
         "titan_strict_result_rules_patch",
     ]
     for marker in required:

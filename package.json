@@ -8,7 +8,7 @@
     "gateway": "node Gateway.js",
     "start": "node Gateway.js",
     "bot": "node Gateway.js",
-    "check": "node --check Gateway.js && node --check gateway_codex_preflight_patch.js && node --check gateway_deposit_ocr_patch.js && node --check gateway_firebase_guard_patch.js && node --check gateway_wallet_alias_patch.js && node --check gateway_withdrawal_runtime_patch.js",
+    "check": "node --check Gateway.js && node --check gateway_codex_preflight_patch.js",
     "test": "npm run check && python -m unittest discover -s tests -v && python titan_smoke_test.py"
   },
   "dependencies": {

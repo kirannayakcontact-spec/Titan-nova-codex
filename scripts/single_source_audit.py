@@ -24,7 +24,6 @@ SUFFIXES = {".py", ".js", ".html", ".md", ".txt"}
 ACTIVE_ROOT_FILES = {
     "flask_app.py",
     "Gateway.js",
-    "deposit_finance_force.py",
     "titan_realtime_global.py",
     "settlement_toggle_sticky.py",
     "settlement_toggle_ui_guard.py",
@@ -32,7 +31,6 @@ ACTIVE_ROOT_FILES = {
     "deposit_finance_native.py",
     "deposit_screenshot_routes.py",
     "deposit_screenshot_ui.py",
-    "deposit_finance_merge.py",
     "deposit_professional_v2.py",
     "titan_native_ui.py",
 }
