@@ -6201,18 +6201,11 @@ async function startWhatsApp(){
         if(!rememberIncomingMessage(m)) continue;
         const complianceHandled = await handleWhatsappComplianceCommandMessage(m);
         if(complianceHandled) continue;
-        const commandHandled = await handleBotCommandMessage(m);
-        if(commandHandled) continue;
-        const smartCommandHandled = await handleSmartUserCommandMessage(m);
-        if(smartCommandHandled) continue;
-        const stopped = await handleSpamGuardMessage(m);
-        if(!stopped){
-          const depositHandled = await handleIncomingDepositScreenshotMessage(m);
-          if(!depositHandled) {
-            const withdrawalHandled = await handleIncomingWithdrawalMessage(m);
-            if(!withdrawalHandled) await handleIncomingEntryMessage(m);
-          }
-        }
+        // owner_bot is deliberately isolated from public game, money, result,
+        // and ledger traffic. Preserve only the legacy master/control command
+        // handler; #declare is accepted exclusively on result_bot.
+        const ownerText=getMessageText(m);
+        if(!/^#declare\b/i.test(ownerText)) await handleBotCommandMessage(m);
       }
       saveProcessedMessageCache();
     });
@@ -6269,6 +6262,28 @@ function gatewayAuthMiddleware(req, res, next){
 const app = express();
 app.use(express.json({limit:"2mb"}));
 app.use(gatewayAuthMiddleware);
+
+// Additive multi-session architecture. The stable legacy socket remains the
+// owner_bot; four isolated sessions reuse the existing validated handlers.
+const { TitanMultiSessionManager } = require("./whatsapp_multi_session.js");
+async function withRoleSocket(roleSocket, handler){
+  const previousSocket=sock, previousConnected=connected;
+  sock=roleSocket; connected=!!roleSocket;
+  try { return await handler(); }
+  finally { sock=previousSocket; connected=previousConnected; }
+}
+const multiSessionManager = new TitanMultiSessionManager({
+  stateDir:TITAN_STATE_DIR,
+  ownerStatus:()=>({connected,user:sock?.user||null,qr:lastQR,qrAt:lastQRAt,lastEvent:gatewayHealth.lastWhatsAppEvent}),
+  ownerSend:(to,text)=>sendText(to,text,{type:"critical_owner_event"}),
+  handlers:{
+    finance_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleIncomingDepositScreenshotMessage(m))return true;return handleIncomingWithdrawalMessage(m);}),
+    game_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleSmartUserCommandMessage(m))return true;if(await handleSpamGuardMessage(m))return true;return handleIncomingEntryMessage(m);}),
+    result_bot:(m,ctx)=>/^#declare\b/i.test(ctx.text)?withRoleSocket(ctx.socket,()=>handleBotCommandMessage(m)):false,
+    ledger_bot:(m,ctx)=>/^(?:[#!\/]?(?:ledger|schedule|audit|accounting))\b/i.test(ctx.text)?withRoleSocket(ctx.socket,()=>handleBotCommandMessage(m)):false
+  }
+});
+multiSessionManager.registerRoutes(app,gatewayAuthMiddleware);
 
 app.get("/wa_login_status", (req,res)=>{
   const qrAgeSeconds = lastQRAt ? Math.floor((Date.now() - new Date(lastQRAt).getTime()) / 1000) : null;
@@ -7041,6 +7056,7 @@ function managedTimeout(name, fn, delayMs){
 
 app.listen(PORT, HOST, () => { console.log(`🚀 Titan Gateway running: http://${HOST}:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {host:HOST, port:PORT, timezone:APP_TZ}); });
 startWhatsApp().catch(e => console.error("WA start error", e));
+multiSessionManager.startAll().catch(e => console.error("Multi-session start error", e));
 managedInterval("whatsapp_target_sync", async () => { if(connected) await syncTargets({periodic:true}); }, WHATSAPP_TARGET_SYNC_INTERVAL_MS);
 managedInterval("schedule_tick", scheduleTick, TITAN_SCHEDULE_POLL_MS);
 managedInterval("result_tick", resultTick, TITAN_RESULT_POLL_MS);
