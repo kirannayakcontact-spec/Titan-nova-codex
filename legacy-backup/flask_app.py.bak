@@ -10225,7 +10225,8 @@ HTML_TEMPLATE = """
             if(!upi) return '';
             const amount = Number((w || {}).amount || 0);
             const note = 'Withdrawal ' + String((w || {}).id || '');
-            return 'upi://pay?pa=' + encodeURIComponent(upi) + '&am=' + encodeURIComponent(amount.toFixed(2)) + '&cu=INR&tn=' + encodeURIComponent(note);
+            const name = String((w || {}).userName || (w || {}).userId || 'Titan User');
+            return 'upi://pay?pa=' + encodeURIComponent(upi) + '&pn=' + encodeURIComponent(name) + '&am=' + encodeURIComponent(amount.toFixed(2)) + '&cu=INR&tn=' + encodeURIComponent(note);
         }
         async function copyWithdrawalDetail(id){
             const w = findWithdrawalById(id);
@@ -10348,7 +10349,7 @@ HTML_TEMPLATE = """
                 return `<div class="grid grid-cols-2 gap-2 mt-3"><button onclick="withdrawalAction('${id}','approve')" class="bg-[var(--green)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-check mr-1"></i> Approve</button><button onclick="withdrawalAction('${id}','reject')" class="bg-[rgba(255,93,93,0.12)] text-[var(--rose)] border border-[rgba(255,93,93,0.25)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-times mr-1"></i> Reject</button></div>`;
             }
             if(status === 'approved'){
-                return `<div class="grid grid-cols-3 gap-2 mt-3"><button onclick="openWithdrawalPayNow('${id}')" class="bg-[var(--primary)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-mobile-screen-button mr-1"></i> Pay Now</button><button onclick="markWithdrawalPaid('${id}')" class="bg-[var(--green)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-circle-check mr-1"></i> Mark Paid</button><button onclick="withdrawalAction('${id}','reject')" class="bg-[rgba(255,93,93,0.12)] text-[var(--rose)] border border-[rgba(255,93,93,0.25)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-ban mr-1"></i> Cancel</button></div>`;
+                return `<div class="grid grid-cols-3 gap-2 mt-3"><button onclick="openWithdrawalPayNow('${id}')" class="bg-[var(--primary)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-mobile-screen-button mr-1"></i> Pay via UPI App</button><button onclick="markWithdrawalPaid('${id}')" class="bg-[var(--green)] text-white py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-circle-check mr-1"></i> Mark Paid</button><button onclick="withdrawalAction('${id}','reject')" class="bg-[rgba(255,93,93,0.12)] text-[var(--rose)] border border-[rgba(255,93,93,0.25)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-ban mr-1"></i> Cancel</button></div>`;
             }
             return `<div class="grid grid-cols-2 gap-2 mt-3"><button onclick="copyWithdrawalDetail('${id}')" class="bg-[var(--surface-light)] text-white border border-[var(--border)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-copy mr-1"></i> Copy Details</button></div>`;
         }

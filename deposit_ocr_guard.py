@@ -43,7 +43,7 @@ try:  # Optional: zbar shared library is also required by pyzbar.
 except Exception:  # pragma: no cover
     decode_qr = None
 
-FEATURE_VERSION = "2026-07-09-upi-deposit-ocr-guard-v1"
+FEATURE_VERSION = "2026-07-21-upi-deposit-ocr-guard-v2"
 
 SUCCESS_WORDS = ("success", "successful", "paid", "completed", "credited", "sent")
 REJECT_STATUS_WORDS = ("failed", "failure", "declined", "cancelled", "canceled", "pending", "processing")
@@ -120,12 +120,16 @@ def _prepare_ocr_image(image_bytes: bytes):
     if cv2 is None or np is None:
         return Image.open(io.BytesIO(image_bytes))
     raw = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(raw, cv2.IMREAD_GRAYSCALE)
+    image = cv2.imdecode(raw, cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("Invalid or unsupported image")
-    image = cv2.fastNlMeansDenoising(image, None, 12, 7, 21)
-    return cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                 cv2.THRESH_BINARY, 31, 11)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+    contrast = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(gray)
+    _level, otsu = cv2.threshold(contrast, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    adaptive = cv2.adaptiveThreshold(contrast, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                     cv2.THRESH_BINARY, 31, 9)
+    return cv2.bitwise_and(otsu, adaptive)
 
 
 def _ocr_text_with_confidence(image_bytes: bytes) -> Tuple[str, str, float]:
@@ -168,8 +172,9 @@ def _extract_amount(text: str) -> float:
 
 def _extract_utr(text: str) -> str:
     patterns = [
+        r"\b(202\d{13,16})\b",
+        r"\b(\d{12})\b",
         r"(?:utr|upi\s*ref(?:erence)?|reference\s*(?:no|number|id)?|transaction\s*(?:id|no|number)|txn\s*(?:id|no)?)\D{0,18}([A-Z0-9]{8,24})",
-        r"\b([0-9]{10,18})\b",
     ]
     for pat in patterns:
         m = re.search(pat, text, re.I)
@@ -199,6 +204,31 @@ def _extract_payment_text(text: str) -> Dict[str, Any]:
         "receiver_upi": _extract_upi(text),
         "status": _extract_status(text),
     }
+
+
+def _format_withdrawal_vpa(value: Any) -> str:
+    value = _norm_upi(value)
+    if re.fullmatch(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+", value):
+        return value
+    digits = re.sub(r"\D+", "", value)
+    if len(digits) >= 10:
+        handle = os.environ.get("TITAN_MOBILE_UPI_HANDLE", "ybl").lstrip("@").lower()
+        return digits[-10:] + "@" + handle
+    return ""
+
+
+def _decode_upi_qr(image_bytes: bytes) -> str:
+    raw = ""
+    if decode_qr is not None and Image is not None:
+        decoded = decode_qr(Image.open(io.BytesIO(image_bytes)))
+        raw = decoded[0].data.decode("utf-8", "replace").strip() if decoded else ""
+    if not raw and cv2 is not None and np is not None:
+        image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is not None:
+            raw, _points, _straight = cv2.QRCodeDetector().detectAndDecode(image)
+    if raw.lower().startswith("upi://"):
+        raw = (parse_qs(urlparse(raw).query).get("pa") or [""])[0]
+    return _format_withdrawal_vpa(raw)
 
 
 def _deposit_settings_receiver(state: Dict[str, Any]) -> str:
@@ -334,17 +364,14 @@ def register_deposit_ocr_guard(app):
     def withdrawal_decode_qr():
         """Decode a withdrawal QR locally and return only its payment target."""
         try:
-            image_bytes, _filename = _read_image_bytes()
-            if Image is None or decode_qr is None:
-                return jsonify({"ok": False, "status": "QR_DECODER_UNAVAILABLE", "reason": "Pyzbar/zbar is not installed."}), 503
-            decoded = decode_qr(Image.open(io.BytesIO(image_bytes)))
-            raw = decoded[0].data.decode("utf-8", "replace").strip() if decoded else ""
-            if not raw:
+            payload = request.get_json(silent=True) or {}
+            direct = payload.get("upi_id") or payload.get("vpa") or payload.get("phone")
+            vpa = _format_withdrawal_vpa(direct)
+            if not vpa:
+                image_bytes, _filename = _read_image_bytes()
+                vpa = _decode_upi_qr(image_bytes)
+            if not vpa:
                 return jsonify({"ok": False, "status": "QR_NOT_DETECTED", "reason": "No readable QR found."}), 422
-            params = parse_qs(urlparse(raw).query) if raw.lower().startswith("upi://") else {}
-            vpa = _norm_upi((params.get("pa") or [""])[0])
-            if not re.fullmatch(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+", vpa):
-                return jsonify({"ok": False, "status": "VPA_NOT_FOUND", "reason": "QR is not a valid UPI payment QR."}), 422
             return jsonify({"ok": True, "status": "VPA_EXTRACTED", "vpa": vpa})
         except Exception as exc:
             return jsonify({"ok": False, "status": "QR_DECODE_ERROR", "reason": str(exc)}), 400
