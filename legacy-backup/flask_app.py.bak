@@ -8343,6 +8343,97 @@ HTML_TEMPLATE = """
         }
 
 
+        /* ── TITAN NOVA PROFESSIONAL FINANCE UI ── */
+        :root {
+            --app-bg: #07111D;
+            --surface: #0F1E2E;
+            --surface-light: #132538;
+            --surface-mid: #1A3045;
+            --primary: #4ADE80;
+            --primary-dark: #22C55E;
+            --primary-glow: rgba(74,222,128,.18);
+            --green: #4ADE80;
+            --green-dark: #22C55E;
+            --green-glow: rgba(74,222,128,.16);
+            --cyan: #38BDF8;
+            --cyan-glow: rgba(56,189,248,.15);
+            --rose: #FF6B6B;
+            --rose-glow: rgba(255,107,107,.16);
+            --amber: #FFD700;
+            --text-main: #FFFFFF;
+            --text-muted: #A0AEC0;
+            --border: #1E293B;
+            --radius-lg: 12px;
+            --radius-md: 10px;
+            --header-h: 68px;
+        }
+        body {
+            background: radial-gradient(circle at 82% -10%, rgba(74,222,128,.09), transparent 28%), #07111D;
+            font-family: 'Inter','Roboto',sans-serif;
+        }
+        body::before { opacity: .18; }
+        .app-bar {
+            height: var(--header-h); padding: 0 18px;
+            background: rgba(7,17,29,.94); border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(18px); box-shadow: 0 8px 30px rgba(0,0,0,.16);
+        }
+        .brand-mark { width: 38px; height: 38px; display:grid; place-items:center; border-radius:11px; color:#06120b; background:linear-gradient(135deg,#86EFAC,#22C55E); box-shadow:0 0 24px rgba(74,222,128,.22); font-weight:900; }
+        .live-chip { display:flex; align-items:center; gap:6px; color:var(--primary); font:700 9px/1 'Inter',sans-serif; letter-spacing:.12em; text-transform:uppercase; }
+        .live-dot { width:7px; height:7px; border-radius:50%; background:var(--primary); box-shadow:0 0 0 4px rgba(74,222,128,.12); animation:titanPulse 1.8s infinite; }
+        @keyframes titanPulse { 50% { opacity:.45; box-shadow:0 0 0 7px rgba(74,222,128,0); } }
+        .header-search { display:none; height:42px; width:min(32vw,380px); align-items:center; gap:10px; padding:0 14px; border:1px solid var(--border); border-radius:10px; background:#0F1E2E; color:var(--text-muted); }
+        .header-search input { width:100%; background:transparent; border:0; outline:0; color:#fff; font-size:13px; }
+        .header-search input::placeholder { color:#718096; }
+        .native-card, .stat-box { box-shadow:0 8px 28px rgba(0,0,0,.14); transition:transform .3s ease,border-color .3s ease,box-shadow .3s ease; }
+        .native-card:hover { transform:translateY(-2px); border-color:#2B4055; box-shadow:0 14px 34px rgba(0,0,0,.22); }
+        .native-input { min-height:44px; background:#0A1725; border-color:var(--border); }
+        button, .nav-item, .side-link-btn { min-height:44px; cursor:pointer; }
+        button:focus-visible, input:focus-visible, .nav-item:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+        .wallet-hud { gap:12px; padding:16px; background:transparent; }
+        .stat-box { background:linear-gradient(145deg,#122438,#0D1B2A); border-radius:12px; padding:14px 16px; }
+        .stat-val { font-family:ui-monospace,'SFMono-Regular',Consolas,monospace; font-size:17px; letter-spacing:-.02em; }
+        .stat-lbl { color:var(--text-muted); letter-spacing:.09em; }
+        .pill-tabs { padding:8px 16px; gap:8px; background:transparent; }
+        .pill-tab { min-height:42px; border:1px solid transparent; }
+        .pill-tab.active { color:#07111D; background:var(--primary); border-color:var(--primary); }
+        .bottom-nav { background:rgba(15,30,46,.96); border-color:var(--border); backdrop-filter:blur(18px); }
+        .nav-item.active { color:var(--primary); background:rgba(74,222,128,.08); }
+        .nav-item.active::after { background:var(--primary); }
+        #sidebar { background:#0B1928; border-color:var(--border); }
+        .sidebar-grid { display:flex; flex-direction:column; gap:5px; padding:12px; }
+        .side-link-btn { display:flex; align-items:center; gap:12px; padding:0 13px; border-radius:10px; text-align:left; font-size:11px; letter-spacing:.04em; }
+        .side-link-btn i { width:18px; font-size:14px; text-align:center; }
+        .side-link-btn.active { color:var(--primary); background:rgba(74,222,128,.1); border-color:rgba(74,222,128,.24); }
+        .sidebar-section-label { padding:14px 13px 5px; color:#64748B; font-size:9px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
+        .tg-toast { background:#132538; border-color:#29425A; }
+        .sheet-content, .install-modal-content { background:#0F1E2E; border-color:var(--primary); }
+        .wa-vip-page { background:#07111D; color:#fff; }
+        .wa-vip-page .wa-card { background:#0F1E2E; border-color:var(--border); }
+        .wa-vip-page .wa-title,.wa-vip-page .wa-name { color:#fff; }
+        .wa-vip-page .wa-subtitle,.wa-vip-page .wa-meta,.wa-vip-page .wa-phone { color:var(--text-muted); }
+        .wa-vip-page .wa-section { color:var(--amber); }
+        .wa-vip-page .wa-input,.wa-vip-page .wa-action,.wa-vip-page input[type=date] { background:#132538; color:#fff; }
+        @media (min-width:768px) {
+            body { padding-bottom:0; }
+            .header-search { display:flex; }
+            .bottom-nav { display:none; }
+            #sidebar { left:0; width:244px; z-index:60; box-shadow:12px 0 34px rgba(0,0,0,.12); }
+            #sidebar .p-5 { min-height:var(--header-h); padding:14px 16px; }
+            #top-bar-container { margin-left:244px; }
+            #screen-content { margin-left:244px; width:calc(100% - 244px); padding:18px 22px 40px; }
+            #sidebar-overlay { display:none !important; }
+            .wallet-hud { grid-template-columns:repeat(4,minmax(0,1fr)); }
+            .wallet-hud .col-span-2 { grid-column:span 2/span 2; }
+            .native-card { margin-bottom:14px; }
+        }
+        @media (min-width:1024px) {
+            #screen-content { padding:24px 30px 48px; }
+            .wallet-hud { padding:0 0 18px; }
+            .stat-box { padding:18px; }
+            .stat-val { font-size:20px; }
+        }
+        @media (min-width:1440px) { #screen-content { max-width:1500px; } }
+
         /* ── v14 ADMIN MOBILE POLISH ── */
         .v14-admin-fab {
             position: fixed;
@@ -12410,9 +12501,10 @@ withdraw status</pre>
             }
 
             let titleSection = (appState.activeId === 'admin1')
-                ? `<div class="flex flex-col items-center"><h1 class="text-[15px] font-black tracking-tight text-white leading-tight">TITAN NOVA</h1><span class="text-[9px] text-[var(--primary)] font-bold uppercase tracking-wider">Admin Panel</span></div>`
-                : `<div class="flex flex-col items-center"><h1 class="text-[15px] font-black tracking-tight text-white leading-tight">${state.name}</h1><span class="text-[9px] text-[var(--primary)] font-bold uppercase tracking-wider">VIP App${!IS_MASTER ? ' • LIVE' : ''}</span></div>`;
+                ? `<div class="flex items-center gap-3"><span class="brand-mark">T</span><div><h1 class="text-[15px] font-black tracking-tight text-white leading-tight">TITAN NOVA</h1><span class="live-chip mt-1"><span class="live-dot"></span>Markets live</span></div></div>`
+                : `<div class="flex items-center gap-3"><span class="brand-mark"><i class="fas fa-crown text-xs"></i></span><div><h1 class="text-[15px] font-black tracking-tight text-white leading-tight">${state.name}</h1><span class="live-chip mt-1"><span class="live-dot"></span>VIP secure</span></div></div>`;
 
+            const searchSection = `<label class="header-search" aria-label="Search dashboard"><i class="fas fa-search text-xs"></i><input id="titan-global-search" type="search" placeholder="Search users, markets, transactions..." onkeydown="handleGlobalSearch(event)"></label>`;
             let rightSection = `<div class="flex items-center gap-2">`;
 
             if (!IS_MASTER) {
@@ -12447,7 +12539,7 @@ withdraw status</pre>
                 </div>
             </div>`;
 
-            container.innerHTML = `${leftIcon} ${titleSection} ${rightSection}`;
+            container.innerHTML = `${leftIcon} ${titleSection} ${searchSection} ${rightSection}`;
         }
 
         // ── VIP capability helpers ──────────────────────────────
@@ -12472,10 +12564,28 @@ withdraw status</pre>
         }
         // ────────────────────────────────────────────────────────
 
+        function handleGlobalSearch(event) {
+            if(event.key !== 'Enter') return;
+            const query = String(event.target.value || '').trim().toLowerCase();
+            const routes = IS_MASTER ? {
+                dashboard:'ledger', ledger:'ledger', user:'clients', vip:'clients', wallet:'finance',
+                transaction:'finance', payment:'finance', market:'markets', result:'results',
+                whatsapp:'forward', bot:'forward', security:'guard', device:'guard', setting:'setup'
+            } : { dashboard:'ledger', market:'ledger', wallet:'membership', profile:'settings', vip:'membership' };
+            const match = Object.keys(routes).find(key => query.includes(key));
+            if(match) {
+                setMainNav(routes[match]);
+                event.target.value = '';
+                showRealNotification('Search', `Opened ${match}`, 'success');
+            } else {
+                showRealNotification('No match', 'Try users, markets, wallet, WhatsApp, security or settings.', 'info');
+            }
+        }
+
         function renderBottomNav() {
             let navHtml = '';
             const navItems = [
-                { id: 'ledger', icon: 'fa-gamepad', label: 'Ledger' },
+                { id: 'ledger', icon: 'fa-chart-line', label: 'Dashboard' },
                 { id: 'audit', icon: 'fa-chart-pie', label: 'Audit' }
             ];
 
@@ -12500,10 +12610,16 @@ withdraw status</pre>
             }
 
             navItems.forEach(item => {
-                navHtml += `<div onclick="setMainNav('${item.id}')" class="nav-item ${mainNav === item.id ? 'active' : ''}"><i class="fas ${item.icon}"></i><span>${item.label}</span></div>`;
+                navHtml += `<div role="button" tabindex="0" onclick="setMainNav('${item.id}')" onkeydown="if(event.key==='Enter'||event.key===' ')setMainNav('${item.id}')" class="nav-item ${mainNav === item.id ? 'active' : ''}"><i class="fas ${item.icon}"></i><span>${item.label}</span></div>`;
             });
             const navEl = document.getElementById('bottom-nav-container');
             navEl.innerHTML = navHtml;
+            const sidebarNav = document.getElementById('sidebar-links-container');
+            if(sidebarNav) {
+                const management = navItems.map(item => `<button onclick="setMainNav('${item.id}')" class="side-link-btn ${mainNav === item.id ? 'active' : ''}"><i class="fas ${item.icon}"></i><span>${item.label}</span></button>`).join('');
+                const resources = chartLinks.slice(0, 5).map(link => `<a href="${link.l}" target="_blank" rel="noopener" class="side-link-btn"><i class="fas fa-arrow-up-right-from-square"></i><span>${link.n}</span></a>`).join('');
+                sidebarNav.innerHTML = `<div class="sidebar-section-label">Workspace</div>${management}<div class="sidebar-section-label">Market charts</div>${resources}`;
+            }
             const activeItem = navEl.querySelector('.nav-item.active');
             if(activeItem) {
                 setTimeout(() => {
