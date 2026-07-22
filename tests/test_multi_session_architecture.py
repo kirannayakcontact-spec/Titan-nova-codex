@@ -26,12 +26,15 @@ class MultiSessionArchitectureTests(unittest.TestCase):
                       'result:"result_bot"', 'ledger:"ledger_bot"', 'crash:"owner_bot"'):
             self.assertIn(route, source)
 
-    def test_dashboard_is_additive_and_responsive(self):
+    def test_dashboard_is_guard_tab_only_and_responsive(self):
         source = (ROOT / "bot_connection_manager.py").read_text()
         self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", source)
         self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", source)
         self.assertIn("grid-template-columns:1fr", source)
-        self.assertIn("main.appendChild(manager)", source)
+        self.assertIn('mainNav===\'guard\'', source)
+        self.assertIn("manager.hidden=!guardOpen", source)
+        self.assertIn("if(guardOpen&&main&&manager.parentElement!==main)main.appendChild(manager)", source)
+        self.assertIn('aria-labelledby="tbcm-title" hidden', source)
         self.assertNotIn('id="tbcm-modal"', source)
         self.assertNotIn('id="tbcm-open"', source)
         self.assertIn("@app.after_request", source)
