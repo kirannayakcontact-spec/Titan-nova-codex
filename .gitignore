@@ -32,3 +32,14 @@ last_known_good.json
 .env
 .env.*
 !.env.example
+
+# Generated runtime logs and caches
+*.log
+logs/
+titan_codex_gateway_events.jsonl
+titan_gateway_firebase_guard.jsonl
+titan_results_scrape_confirm.json
+gateway_targets_cache.json
+titan_state/
+.titan_state/
+auth_info_*/
