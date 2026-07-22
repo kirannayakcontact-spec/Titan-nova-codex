@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '2026.07.20.1';
+  const VERSION = '2026.07.22.1';
   const DB_NAME = 'titan-nova-local';
   const STORE = 'safe-get-cache';
   const DB_VERSION = 1;
@@ -108,4 +108,3 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register(`/sw.js?v=${VERSION}`).catch(() => {});
   });
 })();
-

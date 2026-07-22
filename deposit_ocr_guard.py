@@ -102,17 +102,42 @@ def _norm_phone(value: Any) -> str:
 def _read_image_bytes() -> Tuple[bytes, str]:
     if "image" in request.files:
         f = request.files["image"]
-        return f.read(), f.filename or "upload.jpg"
+        data, name = f.read(), f.filename or "upload.jpg"
+        return _validate_image_upload(data, name)
     if "file" in request.files:
         f = request.files["file"]
-        return f.read(), f.filename or "upload.jpg"
+        data, name = f.read(), f.filename or "upload.jpg"
+        return _validate_image_upload(data, name)
     payload = request.get_json(silent=True) or {}
     b64 = payload.get("image_base64") or payload.get("base64") or payload.get("image") or ""
     if isinstance(b64, str) and b64.startswith("data:image/"):
         b64 = b64.split(",", 1)[1]
     if not b64:
         raise ValueError("image file or image_base64 is required")
-    return base64.b64decode(b64), "base64-upload.jpg"
+    try:
+        data = base64.b64decode(b64, validate=True)
+    except Exception as exc:
+        raise ValueError("Invalid base64 image") from exc
+    return _validate_image_upload(data, "base64-upload.jpg")
+
+
+def _validate_image_upload(data: bytes, filename: str) -> Tuple[bytes, str]:
+    max_bytes = int(os.getenv("TITAN_OCR_MAX_IMAGE_BYTES", str(6 * 1024 * 1024)))
+    if not data or len(data) > max_bytes:
+        raise ValueError(f"Image must be between 1 and {max_bytes} bytes")
+    if Image is None:
+        raise ValueError("Image validation unavailable")
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image.verify()
+            if image.format not in {"JPEG", "PNG", "WEBP"}:
+                raise ValueError("Only JPEG, PNG, and WebP images are accepted")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("Invalid or corrupt image") from exc
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", os.path.basename(filename))[:120]
+    return data, safe_name or "upload.jpg"
 
 
 def _prepare_ocr_image(image_bytes: bytes):

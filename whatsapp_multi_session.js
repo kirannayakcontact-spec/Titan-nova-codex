@@ -628,6 +628,7 @@ const FIREBASE_URL_FROM_ENV = !!(process.env.FIREBASE_URL || process.env.FIREBAS
 const TITAN_STATE_DIR = process.env.TITAN_STATE_DIR || process.cwd();
 try { fs.mkdirSync(TITAN_STATE_DIR, {recursive:true}); } catch(e) {}
 const AUTH_DIR = process.env.WHATSAPP_AUTH_DIR || path.join(TITAN_STATE_DIR, "auth_info_baileys");
+const { usePersistentAuthState } = require("./redis_auth_state.js");
 const TARGET_CACHE_FILE = path.join(TITAN_STATE_DIR, "whatsapp_targets_cache.json");
 const SENT_LOG_FILE = path.join(TITAN_STATE_DIR, "titan_schedule_sent_log.json");
 const SPAM_GUARD_STATE_FILE = path.join(TITAN_STATE_DIR, "titan_spam_guard_state.json");
@@ -6056,7 +6057,7 @@ async function startWhatsApp(){
     try {
       if(!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive:true });
     } catch(e) {}
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { state, saveCreds } = await usePersistentAuthState(AUTH_DIR, "owner_bot", useMultiFileAuthState);
     authCredsRegistered = !!(state && state.creds && state.creds.registered);
     const { version } = await fetchLatestBaileysVersion();
     const socketInstance = makeWASocket({

@@ -139,6 +139,9 @@ fi
 
 say "🧪 Active runtime syntax/reference check"
 python runtime_syntax_check.py || fail "Runtime syntax/reference check fail. Purana running app stop nahi kiya gaya."
+npm run check || fail "Gateway JavaScript syntax check failed; deployment stopped."
+python -m pytest -q || fail "Backend tests failed; deployment stopped."
+npx jest --runInBand || fail "Gateway Jest tests failed; deployment stopped."
 
 stop_old
 
@@ -162,6 +165,10 @@ else
 fi
 
 sleep 2
+
+if ! wait_http "Gateway health" "http://127.0.0.1:${GATEWAY_PORT}/api/health" 10; then
+  warn "⚠️ Gateway /health response unavailable; inspect gateway.log."
+fi
 
 echo ""
 echo "✅ Titan Nova start command complete"
