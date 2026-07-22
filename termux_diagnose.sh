@@ -69,6 +69,13 @@ PY
 fi
 
 echo ""
+echo "--- Automated preflight ---"
+python runtime_syntax_check.py 2>&1 || true
+python -m pytest -q 2>&1 || true
+npm run check 2>&1 || true
+npx jest --runInBand 2>&1 || true
+
+echo ""
 echo "--- Phone IP ---"
 if command -v ip >/dev/null 2>&1; then
   ip -4 addr show wlan0 2>/dev/null | grep "inet " || true

@@ -10,6 +10,7 @@ const {
   default: makeWASocket, useMultiFileAuthState, DisconnectReason,
   fetchLatestBaileysVersion, Browsers
 } = require("@whiskeysockets/baileys");
+const { usePersistentAuthState } = require("./redis_auth_state.js");
 
 const ROLES = Object.freeze(["owner_bot", "finance_bot", "game_bot", "result_bot", "ledger_bot"]);
 const COLORS = {owner_bot:"\x1b[35m", finance_bot:"\x1b[33m", game_bot:"\x1b[36m", result_bot:"\x1b[32m", ledger_bot:"\x1b[34m"};
@@ -58,24 +59,28 @@ class TitanMultiSessionManager {
     try{
       const authDir=path.join(this.stateDir,"auth_info_baileys",role);
       fs.mkdirSync(authDir,{recursive:true});
-      const {state,saveCreds}=await useMultiFileAuthState(authDir);
+      const {state,saveCreds}=await usePersistentAuthState(authDir, role, useMultiFileAuthState);
       const {version}=await fetchLatestBaileysVersion();
       const socket=makeWASocket({version,auth:state,printQRInTerminal:false,browser:Browsers.ubuntu(`TitanNova-${role}`),logger:pino({level:"silent"})});
       rec.socket=socket; rec.lastEvent="connecting"; rec.lastError="";
-      socket.ev.on("creds.update",saveCreds);
-      socket.ev.on("connection.update",u=>this.onConnection(role,socket,u));
-      socket.ev.on("messages.upsert",u=>this.onMessages(role,u));
+      socket.ev.on("creds.update",(...args)=>Promise.resolve(saveCreds(...args)).catch(e=>this.log(role,"error",e.message)));
+      socket.ev.on("connection.update",u=>Promise.resolve(this.onConnection(role,socket,u)).catch(e=>this.log(role,"error",e.message)));
+      socket.ev.on("messages.upsert",u=>Promise.resolve(this.onMessages(role,u)).catch(e=>this.log(role,"error",e.message)));
     } finally { this.starting.delete(role); }
   }
   onConnection(role,socket,{connection,lastDisconnect,qr}){
     const rec=this.sessions.get(role); if(rec.socket!==socket)return;
     if(qr){rec.qr=qr;rec.qrAt=new Date().toISOString();rec.lastEvent="qr";qrcode.generate(qr,{small:true});this.log(role,"info","QR ready");}
-    if(connection==="open"){rec.connected=true;rec.qr="";rec.user=socket.user||null;rec.lastEvent="open";this.log(role,"info","connected");}
+    if(connection==="open"){rec.connected=true;rec.reconnectAttempt=0;rec.qr="";rec.user=socket.user||null;rec.lastEvent="open";this.log(role,"info","connected");}
     if(connection==="close"){
       rec.connected=false;rec.socket=null;rec.lastEvent="close";
       const code=lastDisconnect?.error?.output?.statusCode; const loggedOut=code===DisconnectReason.loggedOut;
       rec.lastError=String(code||"connection closed");this.log(role,loggedOut?"error":"warn",`disconnected (${rec.lastError})`);
-      if(!loggedOut)setTimeout(()=>this.start(role).catch(e=>this.log(role,"error",e.message)),3000);
+      if(!loggedOut){
+        const attempt=Math.min(8,Number(rec.reconnectAttempt||0)+1); rec.reconnectAttempt=attempt;
+        const delay=Math.min(60000,1000*(2**(attempt-1)))+Math.floor(Math.random()*500);
+        setTimeout(()=>this.start(role).catch(e=>this.log(role,"error",e.message)),delay);
+      }
     }
   }
   async onMessages(role,{messages=[]}){

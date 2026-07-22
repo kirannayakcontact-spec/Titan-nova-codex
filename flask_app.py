@@ -145,6 +145,7 @@ _register_patch("Titan Ledger control", "titan_ledger_control_overlay_patch", "r
 # silently leaving the Admin Dashboard endpoints unavailable (404).
 from bot_connection_manager import register_bot_connection_manager
 register_bot_connection_manager(app)
+
 _PATCH_REPORT.append({"label": "Bot Connection Manager", "module": "bot_connection_manager", "status": "loaded"})
 print("✅ Bot Connection Manager loaded")
 _register_core_controller("Wallet manual override", "register_wallet_action_sticky", ui_heavy=False)
@@ -171,6 +172,10 @@ if _LEGACY_LOADED:
     except Exception as exc:
         print("⚠️ Runtime diagnostic routes failed:", exc)
 
+
+# Register last so limits cover legacy routes and every production patch.
+from security_runtime import register_security_runtime
+register_security_runtime(app)
 
 application = app
 

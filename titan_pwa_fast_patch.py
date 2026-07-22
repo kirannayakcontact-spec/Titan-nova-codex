@@ -9,11 +9,12 @@ from __future__ import annotations
 from flask import Response
 
 
-PWA_VERSION = "2026.07.20.1"
+PWA_VERSION = "2026.07.22.1"
 
 SERVICE_WORKER = f"""'use strict';
 const VERSION = 'titan-pwa-{PWA_VERSION}';
 const STATIC_CACHE = VERSION + '-static';
+const PAGE_CACHE = VERSION + '-pages';
 const STATIC_ASSETS = ['/static/pwa-fast.js?v={PWA_VERSION}', '/icon.svg'];
 
 self.addEventListener('install', event => {{
@@ -40,11 +41,26 @@ self.addEventListener('fetch', event => {{
   // out of Cache Storage avoids two competing local sources of truth.
   if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) return;
 
+  // Immutable application assets are cache-first.
   if (url.origin === self.location.origin && (url.pathname.startsWith('/static/') || url.pathname === '/icon.svg')) {{
     event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(response => {{
       if (response.ok) caches.open(STATIC_CACHE).then(cache => cache.put(request, response.clone()));
       return response;
     }})));
+    return;
+  }}
+
+  // Navigations use stale-while-revalidate: render the last safe shell now and
+  // refresh it in the background. API and financial writes are never included.
+  if (request.mode === 'navigate' && url.origin === self.location.origin) {{
+    event.respondWith(caches.open(PAGE_CACHE).then(async cache => {{
+      const cached = await cache.match(request);
+      const network = fetch(request).then(response => {{
+        if (response.ok) cache.put(request, response.clone());
+        return response;
+      }});
+      return cached || network;
+    }}));
   }}
 }});
 """
@@ -98,4 +114,3 @@ def register_titan_pwa_fast(app):
         return response
 
     app.config["TITAN_PWA_FAST_VERSION"] = PWA_VERSION
-

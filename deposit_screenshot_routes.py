@@ -33,6 +33,11 @@ def register_strict_deposit_ocr(app):
             form = request.form.to_dict() if request.form else {}
             payload = request.get_json(silent=True) or {}
             data = {**payload, **form}
+            if request.headers.get("X-Titan-OCR-Worker") != "1":
+                from deposit_tasks import enqueue_deposit_ocr
+                job = enqueue_deposit_ocr(image_bytes, data)
+                if job is not None:
+                    return jsonify({"ok": True, "status": "QUEUED", "job_id": job.id}), 202
             expected_amount = base._clean_amount(data.get("expected_amount") or data.get("amount"))
             expected_upi = base._norm_upi(data.get("expected_receiver_upi") or data.get("receiver_upi") or data.get("upi"))
             user_id = str(data.get("user_id") or data.get("customer_id") or data.get("phone_number") or data.get("from") or "").strip()
