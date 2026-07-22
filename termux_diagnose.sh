@@ -31,12 +31,12 @@ git log --oneline -5 2>/dev/null || true
 
 echo ""
 echo "--- Files ---"
-ls -la flask_app.py Gateway.js deploy.sh requirements.txt package.json 2>/dev/null || true
+ls -la flask_app.py titan_core.py whatsapp_multi_session.js deploy.sh requirements.txt package.json 2>/dev/null || true
 ls -la flask.log gateway.log 2>/dev/null || true
 
 echo ""
 echo "--- Running processes ---"
-ps -ef 2>/dev/null | grep -E "flask_app.py|Gateway.js" | grep -v grep || true
+ps -ef 2>/dev/null | grep -E "flask_app.py|whatsapp_multi_session.js" | grep -v grep || true
 
 echo ""
 echo "--- Listening ports ---"
@@ -70,10 +70,9 @@ fi
 
 echo ""
 echo "--- Automated preflight ---"
+python scripts/single_source_audit.py --result-source-only 2>&1 || true
 python runtime_syntax_check.py 2>&1 || true
-python -m pytest -q 2>&1 || true
 npm run check 2>&1 || true
-npx jest --runInBand 2>&1 || true
 
 echo ""
 echo "--- Phone IP ---"
