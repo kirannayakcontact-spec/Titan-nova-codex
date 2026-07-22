@@ -3250,7 +3250,7 @@ function inferOpenFromCloseResult(v){
 function isApprovedLiveResultSource(item){
   const src = String(item?.sourceUrl || "").toLowerCase();
   const block = String(item?.block || "").toUpperCase();
-  return src.includes("sattamatkadpboss.mobi") && (block === "LIVE MATKA RESULT" || block === "LIVE UPDATE");
+  return (src.includes("dpbosss.net.in") || src.includes("dpbosss")) && (block === "LIVE MATKA RESULT" || block === "LIVE UPDATE");
 }
 function formatResultMessage(market, result, stage){
   const clean = cleanResult(result);
