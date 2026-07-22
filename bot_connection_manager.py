@@ -63,7 +63,7 @@ def register_bot_connection_manager(app):
 
 
 BOT_MANAGER_UI = r'''
-<section id="titan-bot-connection-manager" class="native-card" aria-labelledby="tbcm-title">
+<section id="titan-bot-connection-manager" class="native-card" aria-labelledby="tbcm-title" hidden>
  <div class="tbcm-head">
   <div><span class="tbcm-eyebrow">WhatsApp Gateway</span><h2 id="tbcm-title">Bot Connection Manager</h2><p>Five isolated sessions, monitored in one place</p></div>
   <button type="button" onclick="TitanBots.load()" aria-label="Refresh bot connections"><span aria-hidden="true">&#8635;</span> Refresh</button>
@@ -81,9 +81,16 @@ BOT_MANAGER_UI = r'''
  const roles=['owner_bot','finance_bot','game_bot','result_bot','ledger_bot'];
  const label=r=>r.replace(/_bot$/,'').replace(/_/g,' ');
  const manager=document.getElementById('titan-bot-connection-manager');
- function placeInDashboard(){const main=document.getElementById('screen-content')||document.querySelector('main');if(main&&manager.parentElement!==main)main.appendChild(manager)}
- window.TitanBots={timer:null,async load(){let d={bots:[]};try{const res=await fetch('/api/bot_connection_manager/status',{cache:'no-store'});if(res.ok)d=await res.json()}catch(e){}const byRole=new Map((d.bots||[]).map(b=>[b.role,b]));const g=document.getElementById('tbcm-grid');if(!g)return;g.innerHTML=roles.map(role=>{const b=byRole.get(role)||{role,connected:false,qr:false};const connected=!!b.connected;return `<article class="tbcm-card ${connected?'tbcm-on':''}"><div class="tbcm-card-head"><span class="tbcm-role">${label(role)}</span><span class="tbcm-status"><span class="tbcm-dot"></span>${connected?'Connected':'Disconnected'}</span></div>${b.qr?`<div class="tbcm-qr"><img src="/api/bot_connection_manager/qr/${role}?t=${Date.now()}" alt="QR code for ${label(role)} bot"></div>`:'<div class="tbcm-qr tbcm-wait">Waiting for QR&hellip;</div>'}${role==='owner_bot'?'<span class="tbcm-owner-note">Primary session</span>':`<button type="button" onclick="TitanBots.reset('${role}')">Reset session</button>`}</article>`}).join('')},async reset(role){if(!roles.includes(role))return;await fetch('/api/bot_connection_manager/reset/'+role,{method:'POST'});setTimeout(()=>this.load(),800)}};
- placeInDashboard();new MutationObserver(placeInDashboard).observe(document.body,{childList:true,subtree:true});TitanBots.load();TitanBots.timer=setInterval(()=>TitanBots.load(),4000);
+ function isGuardTab(){try{return typeof mainNav!=='undefined'&&mainNav==='guard'}catch(e){return false}}
+ function syncPlacement(){
+  const guardOpen=isGuardTab(),main=document.getElementById('screen-content');
+  manager.hidden=!guardOpen;
+  if(guardOpen&&main&&manager.parentElement!==main)main.appendChild(manager);
+  return guardOpen;
+ }
+ window.TitanBots={timer:null,lastLoad:0,async load(){if(!syncPlacement())return;this.lastLoad=Date.now();let d={bots:[]};try{const res=await fetch('/api/bot_connection_manager/status',{cache:'no-store'});if(res.ok)d=await res.json()}catch(e){}const byRole=new Map((d.bots||[]).map(b=>[b.role,b]));const g=document.getElementById('tbcm-grid');if(!g)return;g.innerHTML=roles.map(role=>{const b=byRole.get(role)||{role,connected:false,qr:false};const connected=!!b.connected;return `<article class="tbcm-card ${connected?'tbcm-on':''}"><div class="tbcm-card-head"><span class="tbcm-role">${label(role)}</span><span class="tbcm-status"><span class="tbcm-dot"></span>${connected?'Connected':'Disconnected'}</span></div>${b.qr?`<div class="tbcm-qr"><img src="/api/bot_connection_manager/qr/${role}?t=${Date.now()}" alt="QR code for ${label(role)} bot"></div>`:'<div class="tbcm-qr tbcm-wait">Waiting for QR&hellip;</div>'}${role==='owner_bot'?'<span class="tbcm-owner-note">Primary session</span>':`<button type="button" onclick="TitanBots.reset('${role}')">Reset session</button>`}</article>`}).join('')},async reset(role){if(!isGuardTab()||!roles.includes(role))return;await fetch('/api/bot_connection_manager/reset/'+role,{method:'POST'});setTimeout(()=>this.load(),800)}};
+ new MutationObserver(()=>syncPlacement()).observe(document.body,{childList:true,subtree:true});
+ syncPlacement();TitanBots.timer=setInterval(()=>{if(syncPlacement()&&Date.now()-TitanBots.lastLoad>=3900)TitanBots.load()},1000);
 })();
 </script>
 '''
