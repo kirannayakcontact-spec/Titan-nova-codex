@@ -25,9 +25,10 @@ and deployment weight.
 
 ## Install
 
+Heavy install is only needed first time or when dependencies change:
+
 ```bash
-python -m pip install -r requirements.txt
-npm install
+bash deploy.sh install
 ```
 
 ## Check
@@ -48,55 +49,70 @@ docs/HEALTH_CHECK.md
 
 This checklist verifies the dashboard, Flask API, Gateway, Firebase readiness, and deploy flow before professional cleanup work starts.
 
-## Easiest Termux deploy
+## Fast Termux Commands
 
-First time or after new GitHub update, run only this small command:
+Use these after the first install. They skip heavy `pip install`, `npm install`, `pytest`, and `jest`, so phone deploy is much faster.
 
-```bash
-cd ~/Titan-nova-codex && git pull origin main && bash deploy.sh
-```
-
-If your folder name is `titan-app`, use this:
+If your folder is `~/Titan-nova-codex`:
 
 ```bash
-cd ~/titan-app && git pull origin main && bash deploy.sh
+cd ~/Titan-nova-codex && git pull origin main && bash deploy.sh update
 ```
 
-After this, future deploy is even shorter:
+If your folder is `~/github`:
 
 ```bash
-bash deploy.sh
+cd ~/github && git pull origin main && bash deploy.sh update
 ```
 
-`deploy.sh` does all work automatically:
+Restart only:
 
-1. Pulls latest GitHub code.
-2. Installs Python requirements.
-3. Installs Node packages.
-4. Stops old Flask/Gateway.
-5. Starts both Flask and Gateway in background.
-6. Shows logs.
+```bash
+cd ~/github && bash deploy.sh restart
+```
+
+Stop:
+
+```bash
+cd ~/github && bash deploy.sh stop
+```
+
+Status:
+
+```bash
+cd ~/github && bash deploy.sh status
+```
+
+## First Time Folder `github`
+
+If the folder does not exist, create it once:
+
+```bash
+cd ~ && git clone https://github.com/kirannayakcontact-spec/Titan-nova-codex.git github && cd ~/github && bash deploy.sh install
+```
+
+After that, use only the fast commands above.
 
 ## Run in Termux manually
 
 Terminal 1:
 
 ```bash
-cd ~/Titan-nova-codex
+cd ~/github
 python flask_app.py
 ```
 
 Terminal 2:
 
 ```bash
-cd ~/Titan-nova-codex
+cd ~/github
 node whatsapp_multi_session.js
 ```
 
 ## Check if both are running
 
 ```bash
-ps -ef | grep -E "flask_app.py|Gateway.js" | grep -v grep
+ps -ef | grep -E "flask_app.py|whatsapp_multi_session.js|Gateway.js" | grep -v grep
 ```
 
 ## Open app
@@ -141,23 +157,7 @@ tail -f gateway.log
 ## Stop both
 
 ```bash
-pkill -f "python .*flask_app.py" 2>/dev/null || true; pkill -f "node .*whatsapp_multi_session.js" 2>/dev/null || true
-```
-
-## If folder not found
-
-Clone first:
-
-```bash
-cd ~
-git clone https://github.com/kirannayakcontact-spec/Titan-nova-codex.git
-cd ~/Titan-nova-codex
-```
-
-Then run:
-
-```bash
-bash deploy.sh
+bash deploy.sh stop
 ```
 
 ## Extra guide
