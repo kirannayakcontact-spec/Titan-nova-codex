@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Titan Nova Termux deploy helper
-# Usage: bash deploy.sh
+# Fast usage:
+#   bash deploy.sh update    # git pull + fast restart
+#   bash deploy.sh restart   # fast restart only
+#   bash deploy.sh stop      # stop Flask/Gateway
+# Heavy install/check:
+#   bash deploy.sh install   # pip/npm install + restart
+#   bash deploy.sh full      # install + full tests + restart
 
 set -u
 
@@ -11,11 +17,24 @@ fail() { printf '\n\033[1;31m%s\033[0m\n' "$1"; exit 1; }
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$APP_DIR" || fail "App folder open nahi hua: $APP_DIR"
 
+MODE="${1:-restart}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-5000}"
 GATEWAY_PORT="${GATEWAY_PORT:-3000}"
 
-say "📦 Titan Nova deploy start"
+usage() {
+  cat <<EOF
+Titan Nova deploy commands:
+  bash deploy.sh update    GitHub update + fast restart
+  bash deploy.sh restart   Fast restart only
+  bash deploy.sh stop      Stop Flask and Gateway
+  bash deploy.sh status    Show running ports/processes
+  bash deploy.sh install   Install Python/Node deps, then restart
+  bash deploy.sh full      Install deps + full tests, then restart
+EOF
+}
+
+say "📦 Titan Nova deploy: ${MODE}"
 echo "Folder: $APP_DIR"
 echo "Host:   $HOST"
 echo "Port:   $PORT"
@@ -40,25 +59,8 @@ except Exception:
 PY
 }
 
-show_runtime_status() {
-  echo ""
-  echo "--- Runtime boot status ---"
-  if command -v curl >/dev/null 2>&1; then
-    curl -sS --max-time 8 "http://127.0.0.1:${PORT}/api/runtime_boot/status" 2>&1 || true
-    echo ""
-  else
-    python - <<PY 2>&1 || true
-import urllib.request
-try:
-    print(urllib.request.urlopen('http://127.0.0.1:${PORT}/api/runtime_boot/status', timeout=8).read().decode())
-except Exception as e:
-    print('runtime status error:', e)
-PY
-  fi
-}
-
 wait_http() {
-  local name="$1" url="$2" tries="${3:-25}"
+  local name="$1" url="$2" tries="${3:-20}"
   local i
   for i in $(seq 1 "$tries"); do
     if http_ok "$url"; then
@@ -76,7 +78,7 @@ stop_old() {
   pkill -TERM -f "python3.*flask_app.py" 2>/dev/null || true
   pkill -TERM -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
   pkill -TERM -f "node.*Gateway.js" 2>/dev/null || true
-  sleep 2
+  sleep 1
   pkill -KILL -f "python.*flask_app.py" 2>/dev/null || true
   pkill -KILL -f "python3.*flask_app.py" 2>/dev/null || true
   pkill -KILL -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
@@ -92,6 +94,9 @@ stop_old() {
 }
 
 show_ports() {
+  echo ""
+  echo "--- Process check ---"
+  ps -ef 2>/dev/null | grep -E "flask_app.py|whatsapp_multi_session.js|Gateway.js" | grep -v grep || true
   echo ""
   echo "--- Port check ---"
   if command -v ss >/dev/null 2>&1; then
@@ -117,81 +122,150 @@ show_phone_ip() {
   fi
 }
 
-need_cmd python "Python missing hai. Termux me: pkg install python"
-need_cmd npm "Node/npm missing hai. Termux me: pkg install nodejs"
-
-if command -v git >/dev/null 2>&1; then
-  say "⬇️ GitHub se latest update le raha hoon"
-  git pull origin main || warn "⚠️ git pull fail hua. Local files se start continue kar raha hoon."
-else
-  warn "⚠️ git install nahi hai. Skip git pull. Termux me: pkg install git"
-fi
-
-if [ -f requirements.txt ]; then
-  say "🐍 Python requirements check/install"
-  python -m pip install -r requirements.txt || warn "⚠️ pip install fail hua. App start try kar raha hoon."
-fi
-
-if [ -f package.json ]; then
-  say "🟢 Node packages check/install"
-  npm install || warn "⚠️ npm install fail hua. Gateway start try kar raha hoon."
-fi
-
-say "🧪 Active runtime syntax/reference check"
-python runtime_syntax_check.py || fail "Runtime syntax/reference check fail. Purana running app stop nahi kiya gaya."
-npm run check || fail "Gateway JavaScript syntax check failed; deployment stopped."
-python -m pytest -q || fail "Backend tests failed; deployment stopped."
-npx jest --runInBand || fail "Gateway Jest tests failed; deployment stopped."
-
-stop_old
-
-: > flask.log
-: > gateway.log
-
-say "🚀 Flask start: http://127.0.0.1:${PORT}"
-PYTHONUNBUFFERED=1 HOST="$HOST" PORT="$PORT" GATEWAY_URL="http://127.0.0.1:${GATEWAY_PORT}" nohup python flask_app.py > flask.log 2>&1 &
-FLASK_PID=$!
-
-say "🚀 Gateway start: http://127.0.0.1:${GATEWAY_PORT}"
-GATEWAY_PORT="$GATEWAY_PORT" nohup node whatsapp_multi_session.js > gateway.log 2>&1 &
-GATEWAY_PID=$!
-
-if wait_http "Runtime boot status" "http://127.0.0.1:${PORT}/api/runtime_boot/status" 25; then
-  DASHBOARD_OK=1
-elif wait_http "Dashboard" "http://127.0.0.1:${PORT}" 5; then
-  DASHBOARD_OK=1
-else
-  DASHBOARD_OK=0
-fi
-
-sleep 2
-
-if ! wait_http "Gateway health" "http://127.0.0.1:${GATEWAY_PORT}/api/health" 10; then
-  warn "⚠️ Gateway /health response unavailable; inspect gateway.log."
-fi
-
-echo ""
-echo "✅ Titan Nova start command complete"
-echo "Flask PID:   $FLASK_PID"
-echo "Gateway PID: $GATEWAY_PID"
-show_phone_ip
-show_ports
-show_runtime_status
-
-echo ""
-echo "--- Flask log ---"
-tail -n 60 flask.log 2>/dev/null || true
-
-echo ""
-echo "--- Gateway log ---"
-tail -n 25 gateway.log 2>/dev/null || true
-
-echo ""
-echo "Logs dekhne ke liye:"
-echo "  tail -f flask.log"
-echo "  tail -f gateway.log"
-
-if [ "$DASHBOARD_OK" != "1" ]; then
+show_runtime_status() {
   echo ""
-  fail "Flask runtime port ${PORT} response nahi de raha. Upar Flask log ka last error bhejo."
-fi
+  echo "--- Runtime boot status ---"
+  if command -v curl >/dev/null 2>&1; then
+    curl -sS --max-time 8 "http://127.0.0.1:${PORT}/api/runtime_boot/status" 2>&1 || true
+    echo ""
+  else
+    python - <<PY 2>&1 || true
+import urllib.request
+try:
+    print(urllib.request.urlopen('http://127.0.0.1:${PORT}/api/runtime_boot/status', timeout=8).read().decode())
+except Exception as e:
+    print('runtime status error:', e)
+PY
+  fi
+}
+
+pull_latest() {
+  if command -v git >/dev/null 2>&1; then
+    say "⬇️ GitHub update"
+    git pull origin main || warn "⚠️ git pull fail hua. Local files se continue kar raha hoon."
+  else
+    warn "⚠️ git install nahi hai. Termux me: pkg install git"
+  fi
+}
+
+install_deps() {
+  need_cmd python "Python missing hai. Termux me: pkg install python"
+  need_cmd npm "Node/npm missing hai. Termux me: pkg install nodejs"
+  if [ -f requirements.txt ]; then
+    say "🐍 Python requirements install (heavy, sirf install/full mode me)"
+    python -m pip install -r requirements.txt || warn "⚠️ pip install fail hua. App start try kar raha hoon."
+  fi
+  if [ -f package.json ]; then
+    say "🟢 Node packages install (heavy, sirf install/full mode me)"
+    npm install || warn "⚠️ npm install fail hua. Gateway start try kar raha hoon."
+  fi
+}
+
+fast_check() {
+  need_cmd python "Python missing hai. Termux me: pkg install python"
+  need_cmd node "Node missing hai. Termux me: pkg install nodejs"
+  say "🧪 Fast syntax check"
+  python -m py_compile flask_app.py || fail "Flask syntax check fail."
+  node --check whatsapp_multi_session.js || fail "Gateway JavaScript syntax check fail."
+}
+
+full_check() {
+  say "🧪 Full runtime/tests check"
+  python runtime_syntax_check.py || fail "Runtime syntax/reference check fail."
+  npm run check || fail "Gateway JavaScript syntax check failed."
+  python -m pytest -q || fail "Backend tests failed."
+  npx jest --runInBand || fail "Gateway Jest tests failed."
+}
+
+start_runtime() {
+  stop_old
+  : > flask.log
+  : > gateway.log
+
+  say "🚀 Flask start: http://127.0.0.1:${PORT}"
+  PYTHONUNBUFFERED=1 HOST="$HOST" PORT="$PORT" GATEWAY_URL="http://127.0.0.1:${GATEWAY_PORT}" nohup python flask_app.py > flask.log 2>&1 &
+  FLASK_PID=$!
+
+  say "🚀 Gateway start: http://127.0.0.1:${GATEWAY_PORT}"
+  GATEWAY_PORT="$GATEWAY_PORT" nohup node whatsapp_multi_session.js > gateway.log 2>&1 &
+  GATEWAY_PID=$!
+
+  if wait_http "Runtime boot status" "http://127.0.0.1:${PORT}/api/runtime_boot/status" 20; then
+    DASHBOARD_OK=1
+  elif wait_http "Dashboard" "http://127.0.0.1:${PORT}" 5; then
+    DASHBOARD_OK=1
+  else
+    DASHBOARD_OK=0
+  fi
+
+  sleep 1
+  if ! wait_http "Gateway health" "http://127.0.0.1:${GATEWAY_PORT}/api/health" 8; then
+    warn "⚠️ Gateway /health response unavailable; inspect gateway.log."
+  fi
+
+  echo ""
+  echo "✅ Titan Nova command complete"
+  echo "Flask PID:   $FLASK_PID"
+  echo "Gateway PID: $GATEWAY_PID"
+  show_phone_ip
+  show_ports
+  show_runtime_status
+
+  echo ""
+  echo "--- Flask log ---"
+  tail -n 30 flask.log 2>/dev/null || true
+
+  echo ""
+  echo "--- Gateway log ---"
+  tail -n 20 gateway.log 2>/dev/null || true
+
+  echo ""
+  echo "Logs dekhne ke liye:"
+  echo "  tail -f flask.log"
+  echo "  tail -f gateway.log"
+
+  if [ "$DASHBOARD_OK" != "1" ]; then
+    echo ""
+    fail "Flask runtime port ${PORT} response nahi de raha. Upar Flask log ka last error bhejo."
+  fi
+}
+
+case "$MODE" in
+  update|pull)
+    pull_latest
+    fast_check
+    start_runtime
+    ;;
+  restart|start|run)
+    fast_check
+    start_runtime
+    ;;
+  stop)
+    stop_old
+    echo "✅ Titan Nova stopped"
+    ;;
+  status)
+    show_ports
+    show_phone_ip
+    show_runtime_status
+    ;;
+  install)
+    pull_latest
+    install_deps
+    fast_check
+    start_runtime
+    ;;
+  full|deploy)
+    pull_latest
+    install_deps
+    full_check
+    start_runtime
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage
+    fail "Unknown command: $MODE"
+    ;;
+esac
