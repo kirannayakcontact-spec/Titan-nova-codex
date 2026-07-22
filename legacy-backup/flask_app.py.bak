@@ -1527,8 +1527,8 @@ BASE_MARKETS = [
     {"n": "RAJDHANI NIGHT"}, {"n": "MAIN BAZAR"}
 ]
 
-RESULT_SOURCE_NAME = "SattaMatkaDpboss.Mobi"
-RESULT_SOURCE_URL = "https://sattamatkadpboss.mobi/"
+RESULT_SOURCE_NAME = "Dpbosss Net In"
+RESULT_SOURCE_URL = "https://dpbosss.net.in/"
 
 SAFE_UPDATE_VERSION = "2026-06-30-safe-update-guard-v1"
 SAFE_UPDATE_PROTECTED_FEATURES = [
@@ -1540,27 +1540,27 @@ SAFE_UPDATE_PROTECTED_FEATURES = [
     {"key": "wallet_audit", "name": "Wallet Transaction History / Audit", "critical": True},
     {"key": "target_picker", "name": "Advanced Target Picker", "critical": False},
     {"key": "whatsapp_safety_guard", "name": "WhatsApp Safe Messaging Guard", "critical": True},
-    {"key": "result_source", "name": "SattaMatkaDpboss.Mobi Result Source", "critical": True},
+    {"key": "result_source", "name": "Dpbosss Net In Result Source", "critical": True},
     {"key": "strict_open_close", "name": "Strict Open/Close Fresh Result Safety", "critical": True},
 ]
 
 # Ledger/card scrape links now use the same approved source domain.
 # Old .co/.net result sources are intentionally removed to avoid mixed/wrong data.
 CHART_LINKS = [
-    {"n": "SRIDEV DAY", "l": "https://sattamatkadpboss.mobi/record/sridevi-satta-penal-chart.php"},
-    {"n": "TIME BAZAR", "l": "https://sattamatkadpboss.mobi/time-bazar-panel-chart.php"},
-    {"n": "MADHUR DAY", "l": "https://sattamatkadpboss.mobi/madhur-day-panel-chart.php"},
-    {"n": "MILAN DAY", "l": "https://sattamatkadpboss.mobi/record/milan-day-penal-chart.php"},
-    {"n": "RAJDHANI DAY", "l": "https://sattamatkadpboss.mobi/record/rajdhani-day-penal-chart.php"},
-    {"n": "SUPREME DAY", "l": "https://sattamatkadpboss.mobi/supreme-day-panel-chart.php"},
-    {"n": "KALYAN", "l": "https://sattamatkadpboss.mobi/record/kalyan-penal-chart.php"},
-    {"n": "SRIDEVI NIGHT", "l": "https://sattamatkadpboss.mobi/record/sridevi-night-satta-penal-chart.php"},
-    {"n": "MADHUR NIGHT", "l": "https://sattamatkadpboss.mobi/madhur-night-panel-chart.php"},
-    {"n": "SUPREME NIGHT", "l": "https://sattamatkadpboss.mobi/supreme-night-panel-chart.php"},
-    {"n": "MILAN NIGHT", "l": "https://sattamatkadpboss.mobi/record/milan-night-penal-chart.php"},
-    {"n": "KALYAN NIGHT", "l": "https://sattamatkadpboss.mobi/record/kalyan-night-penal-chart.php"},
-    {"n": "RAJDHANI NIGHT", "l": "https://sattamatkadpboss.mobi/record/rajdhani-night-penal-chart.php"},
-    {"n": "MAIN BAZAR", "l": "https://sattamatkadpboss.mobi/main-bazar-panel-chart.php"}
+    {"n": "SRIDEV DAY", "l": "https://dpbosss.net.in/record/sridevi-satta-penal-chart.php"},
+    {"n": "TIME BAZAR", "l": "https://dpbosss.net.in/time-bazar-panel-chart.php"},
+    {"n": "MADHUR DAY", "l": "https://dpbosss.net.in/madhur-day-panel-chart.php"},
+    {"n": "MILAN DAY", "l": "https://dpbosss.net.in/record/milan-day-penal-chart.php"},
+    {"n": "RAJDHANI DAY", "l": "https://dpbosss.net.in/record/rajdhani-day-penal-chart.php"},
+    {"n": "SUPREME DAY", "l": "https://dpbosss.net.in/supreme-day-panel-chart.php"},
+    {"n": "KALYAN", "l": "https://dpbosss.net.in/record/kalyan-penal-chart.php"},
+    {"n": "SRIDEVI NIGHT", "l": "https://dpbosss.net.in/record/sridevi-night-satta-penal-chart.php"},
+    {"n": "MADHUR NIGHT", "l": "https://dpbosss.net.in/madhur-night-panel-chart.php"},
+    {"n": "SUPREME NIGHT", "l": "https://dpbosss.net.in/supreme-night-panel-chart.php"},
+    {"n": "MILAN NIGHT", "l": "https://dpbosss.net.in/record/milan-night-penal-chart.php"},
+    {"n": "KALYAN NIGHT", "l": "https://dpbosss.net.in/record/kalyan-night-penal-chart.php"},
+    {"n": "RAJDHANI NIGHT", "l": "https://dpbosss.net.in/record/rajdhani-night-penal-chart.php"},
+    {"n": "MAIN BAZAR", "l": "https://dpbosss.net.in/main-bazar-panel-chart.php"}
 ]
 
 
@@ -2185,7 +2185,7 @@ def _market_phase3_registry_health(state_obj):
 
 # ==========================================================
 # MARKET MANAGER PHASE 2: WEBSITE MAPPING TOOLS
-# Scan SattaMatkaDpboss live result section, test registry mapping,
+# Scan Dpbosss Net In live result section, test registry mapping,
 # and safely import newly found website market names without deleting history.
 # ==========================================================
 def _market_phase2_decode_entities(text):
@@ -6830,7 +6830,7 @@ FULL_AUDIT_LOCKED_FEATURES = [
     "Ledger Daily Repeat Schedule",
     "Ledger Duplicate Send Lock",
     "Ledger Intel Share Schedule + Auto Rate Compact Format",
-    "SattaMatkaDpboss.Mobi Result Source",
+    "Dpbosss Net In Result Source",
     "Strict Open/Close No-Old Result Safety",
     "Ledger Auto Pass/Fail Live Sync",
     "Withdrawal Approve / Pay Now / Mark Paid",
@@ -14039,8 +14039,8 @@ withdraw status</pre>
                     <div class="mt-3 flex items-center justify-between gap-3 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl p-3">
                         <div class="min-w-0">
                             <p class="text-white font-black text-[11px] uppercase">Auto Scrape</p>
-                            <p class="text-[9px] text-[var(--text-muted)] leading-relaxed">${autoScrapeOn ? 'ON: Gateway SattaMatkaDpboss.Mobi live page se result detect karega.' : 'OFF: Gateway scrape skip karega. Manual Declare active hai.'}</p>
-                            <p class="text-[8px] text-[var(--text-muted)] mt-1 break-all">Source: ${(appState.resultSettings && appState.resultSettings.sourceUrl) || 'https://sattamatkadpboss.mobi/'}</p>
+                            <p class="text-[9px] text-[var(--text-muted)] leading-relaxed">${autoScrapeOn ? 'ON: Gateway Dpbosss Net In live page se result detect karega.' : 'OFF: Gateway scrape skip karega. Manual Declare active hai.'}</p>
+                            <p class="text-[8px] text-[var(--text-muted)] mt-1 break-all">Source: ${(appState.resultSettings && appState.resultSettings.sourceUrl) || 'https://dpbosss.net.in/'}</p>
                         </div>
                         <label class="switch m-0 shrink-0">
                             <input type="checkbox" onchange="saveResultScrapeSetting(this.checked)" ${autoScrapeOn ? 'checked' : ''}>
