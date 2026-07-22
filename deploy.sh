@@ -142,6 +142,11 @@ PY
 pull_latest() {
   if command -v git >/dev/null 2>&1; then
     say "⬇️ GitHub update"
+    if [ -f titanctl.sh ]; then
+      mkdir -p "$HOME/titan_backup" 2>/dev/null || true
+      cp -f titanctl.sh "$HOME/titan_backup/titanctl.sh.$(date +%s).bak" 2>/dev/null || true
+      git checkout -- titanctl.sh >/dev/null 2>&1 || true
+    fi
     git pull origin main || warn "⚠️ git pull fail hua. Local files se continue kar raha hoon."
   else
     warn "⚠️ git install nahi hai. Termux me: pkg install git"
@@ -158,6 +163,29 @@ install_deps() {
   if [ -f package.json ]; then
     say "🟢 Node packages install (heavy, sirf install/full mode me)"
     npm install || warn "⚠️ npm install fail hua. Gateway start try kar raha hoon."
+  fi
+}
+
+ensure_runtime_deps() {
+  need_cmd python "Python missing hai. Termux me: pkg install python"
+  need_cmd npm "Node/npm missing hai. Termux me: pkg install nodejs"
+
+  if ! python - <<'PY' >/dev/null 2>&1
+import importlib
+for name in ('flask', 'requests', 'flask_limiter'):
+    importlib.import_module(name)
+PY
+  then
+    say "🐍 Missing Python runtime deps install (opencv skip)"
+    python -m pip install 'flask>=3.0.0' 'requests>=2.31.0' 'Flask-Limiter>=3.8.0' 'redis>=5.0.0' 'rq>=2.0.0' || warn "⚠️ Python runtime deps install fail hua."
+  fi
+
+  if ! node - <<'NODE' >/dev/null 2>&1
+for (const name of ['axios','express','pino','qrcode-terminal','@whiskeysockets/baileys']) require(name);
+NODE
+  then
+    say "🟢 Missing Node runtime deps install"
+    npm install axios express pino qrcode-terminal @whiskeysockets/baileys || warn "⚠️ Node runtime deps install fail hua."
   fi
 }
 
@@ -233,10 +261,12 @@ start_runtime() {
 case "$MODE" in
   update|pull)
     pull_latest
+    ensure_runtime_deps
     fast_check
     start_runtime
     ;;
   restart|start|run)
+    ensure_runtime_deps
     fast_check
     start_runtime
     ;;
