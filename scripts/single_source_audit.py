@@ -14,12 +14,25 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_PARTS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
-SUFFIXES = {".py", ".js", ".html", ".md", ".txt"}
+SUFFIXES = {".py", ".js", ".html", ".md", ".txt", ".sh", ".json", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".env", ".example", ".bak"}
+
+NEW_RESULT_SOURCE_URL = "https://dpbosss.net.in/"
+# Keep banned names assembled so an old website never appears literally in the current tree.
+FORBIDDEN_RESULT_SOURCE_TOKENS = (
+    "dp" + "bosse",
+    "sattamatka" + "dpboss",
+    "dp" + "boss.net",
+    "dp" + "boss.mobi",
+    "dp" + "boss.boston",
+    "dp" + "boss.services",
+    "dp" + "bossmatka",
+)
 
 ACTIVE_ROOT_FILES = {
     "flask_app.py",
@@ -106,6 +119,68 @@ def iter_files(active_only: bool = False):
         yield p
 
 
+
+def iter_tracked_text_files():
+    """Yield current tracked text/config files; ignore runtime data and Git history."""
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+            timeout=20,
+        )
+        names = [x for x in proc.stdout.decode("utf-8", "ignore").split("\0") if x]
+    except Exception:
+        names = []
+
+    if names:
+        candidates = (ROOT / name for name in names)
+    else:
+        candidates = ROOT.rglob("*")
+
+    for p in candidates:
+        if not p.is_file():
+            continue
+        if any(part in SKIP_PARTS for part in p.parts):
+            continue
+        if p.suffix.lower() not in SUFFIXES:
+            continue
+        yield p
+
+
+def check_result_source_policy():
+    violations = []
+    allowed_seen = []
+    for p in iter_tracked_text_files():
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        low = text.lower()
+        hits = sorted({token for token in FORBIDDEN_RESULT_SOURCE_TOKENS if token in low})
+        if hits:
+            violations.append((rel(p), hits))
+        if NEW_RESULT_SOURCE_URL in low:
+            allowed_seen.append(rel(p))
+
+    required = {"whatsapp_multi_session.js", "termux.env.example"}
+    missing_required = sorted(required.difference(allowed_seen))
+    if violations:
+        print("\n❌ Old result website references found:")
+        for name, hits in violations:
+            print(f"  - {name}: {', '.join(hits)}")
+    if missing_required:
+        print("\n❌ New result website missing from required files:")
+        for name in missing_required:
+            print("  -", name)
+    if violations or missing_required:
+        return False
+
+    print(f"✅ Result website policy clean: old references=0, source={NEW_RESULT_SOURCE_URL}")
+    return True
+
+
 def line_of(text: str, pos: int) -> int:
     return text.count("\n", 0, pos) + 1
 
@@ -147,7 +222,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--active-only", action="store_true", help="scan only active root Termux runtime files")
     parser.add_argument("--show-files", action="store_true", help="print scanned file list")
+    parser.add_argument("--result-source-only", action="store_true", help="enforce the single allowed result website and exit")
     args = parser.parse_args()
+
+    if not check_result_source_policy():
+        return 1
+    if args.result_source_only:
+        return 0
 
     hits, scanned = collect(active_only=args.active_only)
     print("Mode:", "active root runtime only" if args.active_only else "full repository")
