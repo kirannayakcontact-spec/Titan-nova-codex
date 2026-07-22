@@ -6183,7 +6183,7 @@ function phase4WalletWithdrawalDiagnostics(state){
 }
 function phase4ResultSourceDiagnostics(state){
   const rr = state && state.resultRecords && typeof state.resultRecords === "object" ? state.resultRecords : {};
-  const oldTokens = ["dpbosse", "dp" + "boss.net", "dp" + "boss.services", "dp" + "bossmatka"];
+  const oldTokens = ["sattamatkadpboss", "sattamatkadpboss.mobi", "dpbosse", "dp" + "boss.net", "dp" + "boss.services", "dp" + "bossmatka"];
   let primary = 0, old = 0;
   for(const rec of Object.values(rr)){
     if(!rec || typeof rec !== "object") continue;
