@@ -693,18 +693,8 @@ const TITAN_PAYMENT_OUTBOX_POLL_MS = Math.max(Number(process.env.TITAN_PAYMENT_O
 const TITAN_LOAD_FORWARDER_POLL_MS = Math.max(Number(process.env.TITAN_LOAD_FORWARDER_POLL_MS || 3000), 1500);
 const DEFAULT_RESULT_SOURCE_NAME = "Dpbosss Net In";
 const DEFAULT_RESULT_SOURCE_URL = "https://dpbosss.net.in/";
-function normalizeResultSourceUrl(value){
-  const raw = String(value || "").trim();
-  const low = raw.toLowerCase();
-  if(!raw || low.includes("sattamatkadpboss") || low.includes("dpbosse") || low.includes("dpboss.mobi") || low.includes("dpboss.boston") || low.includes("dpboss.services")) return DEFAULT_RESULT_SOURCE_URL;
-  return raw.endsWith("/") ? raw : raw + "/";
-}
-function normalizeResultSourceName(value){
-  const raw = String(value || "").trim();
-  return raw && !/sattamatkadpboss|dpbosse|dpboss\.mobi/i.test(raw) ? raw : DEFAULT_RESULT_SOURCE_NAME;
-}
-const RESULT_SOURCE_NAME = normalizeResultSourceName(process.env.RESULT_SOURCE_NAME);
-const RESULT_SOURCE_URL = normalizeResultSourceUrl(process.env.RESULT_SOURCE_URL);
+const RESULT_SOURCE_NAME = DEFAULT_RESULT_SOURCE_NAME;
+const RESULT_SOURCE_URL = DEFAULT_RESULT_SOURCE_URL;
 const SAFE_UPDATE_VERSION = "2026-06-30-safe-update-guard-v1";
 
 const FULL_AUDIT_PHASE1_FEATURE_FREEZE = true;
@@ -746,10 +736,7 @@ const SAFE_UPDATE_PROTECTED_MARKERS = [
   {key:"runtime_self_healing", markers:["FULL_AUDIT_PHASE3_RUNTIME_SELF_HEALING", "runtime_self_healing", "last_known_good"], critical:true},
   {key:"production_diagnostics", markers:["FULL_AUDIT_PHASE4_PRODUCTION_DIAGNOSTICS", "phase4_production_diagnostics", "/production_diagnostics"], critical:true}
 ];
-const RESULT_SCRAPE_URLS = [...new Set(String(process.env.RESULT_SCRAPE_URLS || RESULT_SOURCE_URL)
-  .split(",")
-  .map(normalizeResultSourceUrl)
-  .filter(Boolean))];
+const RESULT_SCRAPE_URLS = [DEFAULT_RESULT_SOURCE_URL];
 // Wrong-result protection: same market+stage+result must be seen in repeated scrapes before it is saved/sent.
 const RESULT_SCRAPE_CONFIRM_COUNT = Math.max(Number(process.env.RESULT_SCRAPE_CONFIRM_COUNT || 2), 1);
 // If phone/Termux sleeps briefly, still send schedules shortly after the exact minute.
@@ -3489,7 +3476,7 @@ function chooseBetterResult(prev, item){
 function extractResultsFromHtml(html, sourceUrl){
   const lines = htmlToLines(html);
   // Keep every distinct market+stage+result candidate.
-  // DPBOSSE pages can contain old complete results and fresh live results in nearby blocks.
+  // Result pages can contain old complete results and fresh live results in nearby blocks.
   // If we collapse only by market+stage, a stale close can hide the fresh matching close.
   const found = new Map();
   const statuses = [];
@@ -6825,7 +6812,7 @@ function phase4WalletWithdrawalDiagnostics(state){
 }
 function phase4ResultSourceDiagnostics(state){
   const rr = state && state.resultRecords && typeof state.resultRecords === "object" ? state.resultRecords : {};
-  const oldTokens = ["sattamatkadpboss", "sattamatkadpboss.mobi", "dpbosse", "dp" + "boss.net", "dp" + "boss.services", "dp" + "bossmatka"];
+  const oldTokens = [];
   let primary = 0, old = 0;
   for(const rec of Object.values(rr)){
     if(!rec || typeof rec !== "object") continue;
