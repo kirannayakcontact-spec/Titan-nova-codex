@@ -19,47 +19,32 @@ legacy-backup/Gateway.js.bak
 ```
 
 `flask_app.py` always serves the working classic dashboard from
-`legacy-backup/flask_app.py.bak`. The incomplete modular scaffold and its unused
-admin UI were removed so they cannot be started accidentally or add maintenance
-and deployment weight.
+`legacy-backup/flask_app.py.bak`.
 
-## Install
+## One-Time Shortcut Install
 
-Heavy install is only needed first time or when dependencies change:
+For Termux folder `~/github`, install the short command once:
 
 ```bash
-bash deploy.sh install
+cd ~/github && git checkout -- titanctl.sh 2>/dev/null || true; git pull origin main && bash titanctl.sh install
 ```
 
-## Check
+After that, use only these short commands:
 
 ```bash
-python -m py_compile flask_app.py
-node --check whatsapp_multi_session.js
-npm run check
+github update
+github restart
+github stop
+github status
 ```
 
-## Full health check
+`github update` backs up/restores `titanctl.sh` before pulling, then runs the fast deploy path.
 
-Before changing frontend, backend, Gateway, Firebase, or money-flow code, follow:
-
-```text
-docs/HEALTH_CHECK.md
-```
-
-This checklist verifies the dashboard, Flask API, Gateway, Firebase readiness, and deploy flow before professional cleanup work starts.
-
-## Fast Termux Commands
+## Fast Termux Commands Without Shortcut
 
 Use these after the first install. They skip heavy `pip install`, `npm install`, `pytest`, and `jest`, so phone deploy is much faster.
 
-If your folder is `~/Titan-nova-codex`:
-
-```bash
-cd ~/Titan-nova-codex && git pull origin main && bash deploy.sh update
-```
-
-If your folder is `~/github`:
+Update + restart:
 
 ```bash
 cd ~/github && git pull origin main && bash deploy.sh update
@@ -88,10 +73,42 @@ cd ~/github && bash deploy.sh status
 If the folder does not exist, create it once:
 
 ```bash
-cd ~ && git clone https://github.com/kirannayakcontact-spec/Titan-nova-codex.git github && cd ~/github && bash deploy.sh install
+cd ~ && git clone https://github.com/kirannayakcontact-spec/Titan-nova-codex.git github && cd ~/github && bash deploy.sh install && bash titanctl.sh install
 ```
 
-After that, use only the fast commands above.
+After that, use only the short commands above.
+
+## Heavy Install
+
+Heavy install is only needed first time or when dependencies change:
+
+```bash
+bash deploy.sh install
+```
+
+Full heavy check:
+
+```bash
+bash deploy.sh full
+```
+
+## Check
+
+```bash
+python -m py_compile flask_app.py
+node --check whatsapp_multi_session.js
+npm run check
+```
+
+## Full health check
+
+Before changing frontend, backend, Gateway, Firebase, or money-flow code, follow:
+
+```text
+docs/HEALTH_CHECK.md
+```
+
+This checklist verifies the dashboard, Flask API, Gateway, Firebase readiness, and deploy flow before professional cleanup work starts.
 
 ## Run in Termux manually
 
@@ -157,7 +174,7 @@ tail -f gateway.log
 ## Stop both
 
 ```bash
-bash deploy.sh stop
+github stop
 ```
 
 ## Extra guide
