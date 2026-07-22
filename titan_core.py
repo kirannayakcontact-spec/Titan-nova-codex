@@ -6746,7 +6746,7 @@ def _safe_update_code_markers_status():
     root = BASE_DIR
     files = {
         'flask_app.py': os.path.join(root, 'flask_app.py'),
-        'Gateway.js': os.path.join(root, 'Gateway.js')
+        'whatsapp_multi_session.js': os.path.join(root, 'whatsapp_multi_session.js')
     }
     texts = {}
     for name, path in files.items():
