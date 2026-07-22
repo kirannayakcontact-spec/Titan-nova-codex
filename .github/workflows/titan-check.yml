@@ -1,4 +1,4 @@
-name: Titan Nova Safety Check
+name: Titan Nova Production Check
 
 on:
   push:
@@ -7,44 +7,31 @@ on:
     branches: ["main"]
 
 jobs:
-  python-check:
-    name: Python syntax check
+  production-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Compile Flask app
-        run: python -m py_compile flask_app.py
-
-      - name: Run route smoke test
-        run: python titan_smoke_test.py
-
-  node-check:
-    name: Node dependency check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
-      - name: Install Node dependencies
-        run: npm install
+      - name: Install production dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm ci --omit=dev
 
-      - name: Check Gateway syntax
-        run: node --check Gateway.js
+      - name: Enforce the single result website
+        run: python scripts/single_source_audit.py --result-source-only
+
+      - name: Validate complete runtime
+        run: python runtime_syntax_check.py
+
+      - name: Validate gateway modules
+        run: npm run check
