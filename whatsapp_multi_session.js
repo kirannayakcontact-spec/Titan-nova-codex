@@ -696,12 +696,12 @@ const DEFAULT_RESULT_SOURCE_URL = "https://dpbosss.net.in/";
 function normalizeResultSourceUrl(value){
   const raw = String(value || "").trim();
   const low = raw.toLowerCase();
-  if(!raw || low.includes("sattamatkadpboss") || low.includes("dpboss.mobi") || low.includes("dpboss.boston") || low.includes("dpboss.services")) return DEFAULT_RESULT_SOURCE_URL;
+  if(!raw || low.includes("sattamatkadpboss") || low.includes("dpbosse") || low.includes("dpboss.mobi") || low.includes("dpboss.boston") || low.includes("dpboss.services")) return DEFAULT_RESULT_SOURCE_URL;
   return raw.endsWith("/") ? raw : raw + "/";
 }
 function normalizeResultSourceName(value){
   const raw = String(value || "").trim();
-  return raw && !/sattamatkadpboss|dpboss\.mobi/i.test(raw) ? raw : DEFAULT_RESULT_SOURCE_NAME;
+  return raw && !/sattamatkadpboss|dpbosse|dpboss\.mobi/i.test(raw) ? raw : DEFAULT_RESULT_SOURCE_NAME;
 }
 const RESULT_SOURCE_NAME = normalizeResultSourceName(process.env.RESULT_SOURCE_NAME);
 const RESULT_SOURCE_URL = normalizeResultSourceUrl(process.env.RESULT_SOURCE_URL);
