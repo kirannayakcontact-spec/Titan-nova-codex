@@ -14,12 +14,6 @@
   const STATE_DIR = process.env.TITAN_STATE_DIR || process.cwd();
   const LOG_FILE = path.join(STATE_DIR, "titan_codex_gateway_events.jsonl");
 
-  function boolEnv(name, fallback){
-    const raw = process.env[name];
-    if (raw === undefined || raw === null || raw === "") return fallback;
-    return /^(1|true|yes|on)$/i.test(String(raw).trim());
-  }
-
   function event(kind, severity, message, detail){
     const rec = {
       time: new Date().toISOString(),
@@ -49,28 +43,9 @@
   setDefault("TITAN_GATEWAY_STATE_CACHE_TTL_MS", "250");
   setDefault("WHATSAPP_TARGET_SYNC_INTERVAL_MS", "60000");
 
-  if (!process.env.RESULT_SOURCE_NAME) process.env.RESULT_SOURCE_NAME = "dpbosse.net";
-  if (!process.env.RESULT_SOURCE_URL) process.env.RESULT_SOURCE_URL = "https://dpbosse.net/";
-
-  const DPBOSSE_JODI_URLS = [
-    "https://dpbosse.net/jodi/SRIDEVI/2",
-    "https://dpbosse.net/jodi/TIMEBAZAR/11",
-    "https://dpbosse.net/jodi/MADHURDAY/41",
-    "https://dpbosse.net/jodi/MILANDAY/17",
-    "https://dpbosse.net/jodi/RAJDHANIDAY/125",
-    "https://dpbosse.net/jodi/SUPREMEDAY/73",
-    "https://dpbosse.net/jodi/KALYAN/20",
-    "https://dpbosse.net/jodi/SRIDEVINIGHT/21",
-    "https://dpbosse.net/jodi/MADHURNIGHT/63",
-    "https://dpbosse.net/jodi/SUPREMENIGHT/74",
-    "https://dpbosse.net/jodi/MILANNIGHT/65",
-    "https://dpbosse.net/jodi/RAJDHANINIGHT/127",
-    "https://dpbosse.net/jodi/KALYANNIGHT/39",
-    "https://dpbosse.net/jodi/MAINBAZAR/66"
-  ];
-  if (!process.env.RESULT_SCRAPE_URLS && boolEnv("TITAN_USE_DPBOSSE_JODI_URLS", false)) {
-    process.env.RESULT_SCRAPE_URLS = DPBOSSE_JODI_URLS.join(",");
-  }
+  process.env.RESULT_SOURCE_NAME = "Dpbosss Net In";
+  process.env.RESULT_SOURCE_URL = "https://dpbosss.net.in/";
+  process.env.RESULT_SCRAPE_URLS = "https://dpbosss.net.in/";
 
   process.on("unhandledRejection", (reason) => {
     event("unhandled_rejection", "error", (reason && reason.message) || String(reason || "Unhandled promise rejection"), {stack: reason && reason.stack ? String(reason.stack).slice(0, 1500) : ""});
