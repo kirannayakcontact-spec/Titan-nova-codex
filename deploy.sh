@@ -147,7 +147,7 @@ pull_latest() {
       cp -f titanctl.sh "$HOME/titan_backup/titanctl.sh.$(date +%s).bak" 2>/dev/null || true
       git checkout -- titanctl.sh >/dev/null 2>&1 || true
     fi
-    git pull origin main || warn "⚠️ git pull fail hua. Local files se continue kar raha hoon."
+    git pull origin main || fail "GitHub update fail hua. Old local code se start nahi kar raha. Pehle git error fix karo."
   else
     warn "⚠️ git install nahi hai. Termux me: pkg install git"
   fi
