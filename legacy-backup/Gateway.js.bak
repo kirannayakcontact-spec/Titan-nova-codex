@@ -86,8 +86,8 @@ const TITAN_SCHEDULE_POLL_MS = Math.max(Number(process.env.TITAN_SCHEDULE_POLL_M
 const TITAN_RESULT_POLL_MS = Math.max(Number(process.env.TITAN_RESULT_POLL_MS || 2000), 1000);
 const TITAN_PAYMENT_OUTBOX_POLL_MS = Math.max(Number(process.env.TITAN_PAYMENT_OUTBOX_POLL_MS || 2000), 1000);
 const TITAN_LOAD_FORWARDER_POLL_MS = Math.max(Number(process.env.TITAN_LOAD_FORWARDER_POLL_MS || 3000), 1500);
-const RESULT_SOURCE_NAME = process.env.RESULT_SOURCE_NAME || "SattaMatkaDpboss.Mobi";
-const RESULT_SOURCE_URL = process.env.RESULT_SOURCE_URL || "https://sattamatkadpboss.mobi/";
+const RESULT_SOURCE_NAME = process.env.RESULT_SOURCE_NAME || "Dpbosss Net In";
+const RESULT_SOURCE_URL = process.env.RESULT_SOURCE_URL || "https://dpbosss.net.in/";
 const SAFE_UPDATE_VERSION = "2026-06-30-safe-update-guard-v1";
 
 const FULL_AUDIT_PHASE1_FEATURE_FREEZE = true;
@@ -101,7 +101,7 @@ const FULL_AUDIT_LOCKED_FEATURES = [
   "Ledger Daily Repeat Schedule",
   "Ledger Duplicate Send Lock",
   "Ledger Intel Share Schedule + Auto Rate Compact Format",
-  "SattaMatkaDpboss.Mobi Result Source",
+  "Dpbosss Net In Result Source",
   "Strict Open/Close No-Old Result Safety",
   "Ledger Auto Pass/Fail Live Sync",
   "Withdrawal Approve / Pay Now / Mark Paid",
