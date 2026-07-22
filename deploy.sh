@@ -192,7 +192,8 @@ NODE
 fast_check() {
   need_cmd python "Python missing hai. Termux me: pkg install python"
   need_cmd node "Node missing hai. Termux me: pkg install nodejs"
-  say "🧪 Fast syntax check"
+  say "🧪 Result source + syntax check"
+  python scripts/single_source_audit.py --result-source-only || fail "Old result website reference mila; deploy blocked."
   python -m py_compile flask_app.py || fail "Flask syntax check fail."
   node --check whatsapp_multi_session.js || fail "Gateway JavaScript syntax check fail."
 }
