@@ -13,19 +13,36 @@ ROOT = pathlib.Path(__file__).resolve().parent
 
 PYTHON_FILES = [
     "flask_app.py",
+    "titan_core.py",
+    "bot_connection_manager.py",
+    "deposit_finance_native.py",
     "deposit_ocr_guard.py",
     "deposit_screenshot_routes.py",
-    "deposit_finance_native.py",
-    "titan_strict_result_rules_patch.py",
+    "deposit_tasks.py",
+    "finance_deposit_removed.py",
+    "finance_flow_split.py",
+    "ledger_auto_mark_safe.py",
+    "result_toggle_sticky.py",
+    "security_runtime.py",
+    "settlement_toggle_sticky.py",
+    "settlement_toggle_ui_guard.py",
+    "setup_removed.py",
+    "titan_codex_stability_patch.py",
+    "titan_firebase_guard_patch.py",
     "titan_frontend_boot_fix_patch.py",
     "titan_ledger_control_overlay_patch.py",
+    "titan_pwa_fast_patch.py",
+    "titan_realtime_global.py",
+    "titan_strict_result_rules_patch.py",
+    "vip_delete_sticky.py",
 ]
 
 JAVASCRIPT_FILES = [
-    "Gateway.js",
     "whatsapp_multi_session.js",
-    "multi_session_manager.js",
     "gateway_codex_preflight_patch.js",
+    "multi_session_manager.js",
+    "redis_auth_state.js",
+    "static/pwa-fast.js",
 ]
 
 FORBIDDEN_REFERENCES = [
