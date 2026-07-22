@@ -1,5 +1,5 @@
 # ==========================================================
-# TITAN NOVA LEGACY RUNTIME LAUNCHER
+# TITAN NOVA PRODUCTION RUNTIME LAUNCHER
 # Run UI/API: python flask_app.py
 # ==========================================================
 
@@ -15,7 +15,7 @@ os.environ.setdefault("FIREBASE_DB_URL", os.environ.get("FIREBASE_URL"))
 _LAUNCHER_NAME = __name__
 _LAUNCHER_VERSION = "2026-07-10-runtime-cleanup-v8"
 _BASE_DIR = Path(__file__).resolve().parent
-_LEGACY_FILE = _BASE_DIR / "legacy-backup" / "flask_app.py.bak"
+_LEGACY_FILE = _BASE_DIR / "titan_core.py"
 _BOOT_STARTED_AT = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 _PATCH_REPORT = []
 _LEGACY_BOOT_ERROR = None
@@ -51,7 +51,7 @@ def _make_fallback_app(error, tb):
 
 
 if not _LEGACY_FILE.exists():
-    _LEGACY_BOOT_ERROR = FileNotFoundError(f"Missing legacy Titan Nova runtime: {_LEGACY_FILE}")
+    _LEGACY_BOOT_ERROR = FileNotFoundError(f"Missing Titan Nova core runtime: {_LEGACY_FILE}")
     _LEGACY_BOOT_TRACEBACK = traceback.format_exc()
     app = _make_fallback_app(_LEGACY_BOOT_ERROR, _LEGACY_BOOT_TRACEBACK)
 else:
@@ -61,12 +61,12 @@ else:
         exec(compile(code, str(_LEGACY_FILE), "exec"), _legacy_globals, _legacy_globals)
         app = _legacy_globals.get("app")
         if app is None:
-            raise RuntimeError("Titan Nova legacy runtime did not expose Flask app")
+            raise RuntimeError("Titan Nova core runtime did not expose Flask app")
         _LEGACY_LOADED = True
     except Exception as exc:
         _LEGACY_BOOT_ERROR = exc
         _LEGACY_BOOT_TRACEBACK = traceback.format_exc()
-        print("❌ Titan Nova legacy runtime failed to boot:", _short_exc(exc))
+        print("❌ Titan Nova core runtime failed to boot:", _short_exc(exc))
         print(_LEGACY_BOOT_TRACEBACK)
         app = _make_fallback_app(exc, _LEGACY_BOOT_TRACEBACK)
 
