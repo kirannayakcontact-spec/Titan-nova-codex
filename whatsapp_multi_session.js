@@ -3249,7 +3249,7 @@ function inferOpenFromCloseResult(v){
 function isApprovedLiveResultSource(item){
   const src = String(item?.sourceUrl || "").toLowerCase();
   const block = String(item?.block || "").toUpperCase();
-  return (src.includes("dpbosss.net.in") || src.includes("dpbosss")) && (block === "LIVE MATKA RESULT" || block === "LIVE UPDATE");
+  return (src.includes("dpbosss.net.in") || src.includes("dpbosss")) && ["LIVE RESULT", "LIVE MATKA RESULT", "LIVE UPDATE", "MAIN RESULT"].includes(block);
 }
 function formatResultMessage(market, result, stage){
   const clean = cleanResult(result);
@@ -3435,15 +3435,15 @@ function findLiveResultSlices(lines){
         const x = normalizeMarketText(lines[j]);
         if(x.includes("WORLD ME SABSE FAST") || x.includes("PLAY ONLINE MATKA") || x.includes("INDIA S BIGGEST") || x.includes("BOOKING OPEN")){ end = j; break; }
       }
-      slices.push({ start:i+1, end, label:"DPBOSS LIVE RESULT" });
+      slices.push({ start:i+1, end, label:"LIVE RESULT" });
     }
-    if(n.includes("WORLD ME SABSE FAST") || n.includes("LIVE MATKA RESULT")){
+    if(n.includes("WORLD ME SABSE FAST") || n.includes("LIVE MATKA RESULT") || n.includes("DPBOSS MATKA RESULT")){
       let end = Math.min(lines.length, i + 900);
       for(let j=i+1; j<end; j++){
         const x = normalizeMarketText(lines[j]);
         if(x.includes("CONTACT FOR ANY SUPPORT") || x.includes("MEMBER S FORUM") || x.includes("SATTA MATKA JODI CHART") || x.includes("WEEKLY PANEL") || x.includes("OPEN TO CLOSE FREE GAME ZONE") || x.includes("GUESSING") || x.includes("FIX SINGLE")){ end = j; break; }
       }
-      slices.push({ start:i+1, end, label:n.includes("WORLD ME SABSE FAST") ? "DPBOSS MAIN RESULT" : "LIVE MATKA RESULT" });
+      slices.push({ start:i+1, end, label:(n.includes("WORLD ME SABSE FAST") || n.includes("DPBOSS MATKA RESULT")) ? "MAIN RESULT" : "LIVE MATKA RESULT" });
     }
     if(n.includes("LIVE UPDATE")){
       let end = Math.min(lines.length, i + 80);
@@ -3467,7 +3467,7 @@ function findLiveResultSlices(lines){
 function chooseBetterResult(prev, item){
   if(!prev) return item;
   // Prefer the dedicated LIVE MATKA RESULT list over small widgets/fallback blocks.
-  const rank = (x) => (x.block === "LIVE MATKA RESULT" ? 5 : (x.block === "LIVE UPDATE" ? 4 : (x.block === "DPBOSS LIVE RESULT" ? 3 : (x.block === "DPBOSS MAIN RESULT" ? 2 : 1))));
+  const rank = (x) => (x.block === "LIVE RESULT" ? 6 : (x.block === "LIVE MATKA RESULT" ? 5 : (x.block === "LIVE UPDATE" ? 4 : (x.block === "MAIN RESULT" ? 2 : 1))));
   if(rank(item) !== rank(prev)) return rank(item) > rank(prev) ? item : prev;
   // Same stage only: never replace a fresh open result with a full close result here.
   // Fresh lifecycle is enforced later: open 123-4 must exist before close 123-45-678 is accepted.
@@ -3484,7 +3484,7 @@ function extractResultsFromHtml(html, sourceUrl){
   for(const slice of slices){
     for(let i=slice.start; i<slice.end; i++){
       let hit = marketFromLineStart(lines[i]);
-      if(!hit && slice.label === "DPBOSS LIVE RESULT") hit = marketFromLineAnywhere(lines[i]);
+      if(!hit && slice.label === "LIVE RESULT") hit = marketFromLineAnywhere(lines[i]);
       if(!hit) continue;
       if(hit.result && hit.stage){
         const item = { market:hit.market, result:hit.result, stage:hit.stage, status:"result", sourceUrl, rawMarketLine:lines[i], rawResultLine:lines[i], block:slice.label, confidence:"same_line", lineIndex:i };
