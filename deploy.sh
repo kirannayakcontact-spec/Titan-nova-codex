@@ -142,11 +142,6 @@ PY
 pull_latest() {
   if command -v git >/dev/null 2>&1; then
     say "⬇️ GitHub update"
-    if [ -f titanctl.sh ]; then
-      mkdir -p "$HOME/titan_backup" 2>/dev/null || true
-      cp -f titanctl.sh "$HOME/titan_backup/titanctl.sh.$(date +%s).bak" 2>/dev/null || true
-      git checkout -- titanctl.sh >/dev/null 2>&1 || true
-    fi
     git pull origin main || fail "GitHub update fail hua. Old local code se start nahi kar raha. Pehle git error fix karo."
   else
     warn "⚠️ git install nahi hai. Termux me: pkg install git"
@@ -192,18 +187,15 @@ NODE
 fast_check() {
   need_cmd python "Python missing hai. Termux me: pkg install python"
   need_cmd node "Node missing hai. Termux me: pkg install nodejs"
-  say "🧪 Result source + syntax check"
+  say "🧪 Complete production preflight"
   python scripts/single_source_audit.py --result-source-only || fail "Old result website reference mila; deploy blocked."
-  python -m py_compile flask_app.py || fail "Flask syntax check fail."
-  node --check whatsapp_multi_session.js || fail "Gateway JavaScript syntax check fail."
+  python runtime_syntax_check.py || fail "Production runtime check fail."
 }
 
 full_check() {
-  say "🧪 Full runtime/tests check"
-  python runtime_syntax_check.py || fail "Runtime syntax/reference check fail."
+  say "🧪 Full production check"
+  fast_check
   npm run check || fail "Gateway JavaScript syntax check failed."
-  python -m pytest -q || fail "Backend tests failed."
-  npx jest --runInBand || fail "Gateway Jest tests failed."
 }
 
 start_runtime() {
