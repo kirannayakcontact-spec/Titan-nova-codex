@@ -1,8 +1,7 @@
 "use strict";
 
 // Titan Nova Codex Gateway preflight patch.
-// Loaded before the legacy Gateway runtime so it can set safe defaults and crash guards
-// without editing legacy-backup/Gateway.js.bak directly.
+// Loaded before the production WhatsApp runtime to set safe defaults and crash guards.
 
 (function titanCodexGatewayPreflight(){
   if (global.__TITAN_CODEX_GATEWAY_PREFLIGHT_V1__) return;
