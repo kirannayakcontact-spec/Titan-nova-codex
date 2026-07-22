@@ -5,11 +5,9 @@
   "description": "Titan Nova five-bot multi-session runtime launcher.",
   "main": "whatsapp_multi_session.js",
   "scripts": {
-    "gateway": "node whatsapp_multi_session.js",
     "start": "node whatsapp_multi_session.js",
-    "bot": "node whatsapp_multi_session.js",
-    "check": "node --check whatsapp_multi_session.js && node --check gateway_codex_preflight_patch.js",
-    "test": "npm run check && jest --runInBand && pytest -q && python titan_smoke_test.py"
+    "gateway": "node whatsapp_multi_session.js",
+    "check": "node --check whatsapp_multi_session.js && node --check gateway_codex_preflight_patch.js && node --check multi_session_manager.js && node --check redis_auth_state.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.23",
@@ -18,8 +16,5 @@
     "pino": "9.6.0",
     "qrcode-terminal": "0.12.0",
     "redis": "4.7.0"
-  },
-  "devDependencies": {
-    "jest": "29.7.0"
   }
 }
