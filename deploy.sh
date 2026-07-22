@@ -77,12 +77,10 @@ stop_old() {
   pkill -TERM -f "python.*flask_app.py" 2>/dev/null || true
   pkill -TERM -f "python3.*flask_app.py" 2>/dev/null || true
   pkill -TERM -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
-  pkill -TERM -f "node.*Gateway.js" 2>/dev/null || true
   sleep 1
   pkill -KILL -f "python.*flask_app.py" 2>/dev/null || true
   pkill -KILL -f "python3.*flask_app.py" 2>/dev/null || true
   pkill -KILL -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
-  pkill -KILL -f "node.*Gateway.js" 2>/dev/null || true
 
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${PORT}/tcp" 2>/dev/null || true
@@ -96,7 +94,7 @@ stop_old() {
 show_ports() {
   echo ""
   echo "--- Process check ---"
-  ps -ef 2>/dev/null | grep -E "flask_app.py|whatsapp_multi_session.js|Gateway.js" | grep -v grep || true
+  ps -ef 2>/dev/null | grep -E "flask_app.py|whatsapp_multi_session.js" | grep -v grep || true
   echo ""
   echo "--- Port check ---"
   if command -v ss >/dev/null 2>&1; then
