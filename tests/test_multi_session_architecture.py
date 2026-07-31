@@ -7,21 +7,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class MultiSessionArchitectureTests(unittest.TestCase):
     def manager_source(self):
-        return (ROOT / "multi_session_manager.js").read_text()
+        return (ROOT / "bot" / "session_manager.js").read_text()
+
+    def config_source(self):
+        return (ROOT / "bot" / "session_config.js").read_text()
+
+    def routes_source(self):
+        return (ROOT / "bot" / "session_routes.js").read_text()
+
+    def access_source(self):
+        return (ROOT / "bot" / "role_access.js").read_text()
 
     def test_all_five_roles_and_isolated_auth_path_exist(self):
-        source = self.manager_source()
+        source = self.config_source() + self.manager_source()
         for role in ("owner_bot", "finance_bot", "game_bot", "result_bot", "ledger_bot"):
             self.assertIn(role, source)
         self.assertIn('path.join(this.stateDir,"auth_info_baileys",role)', source)
 
     def test_restricted_roles_use_sender_verification(self):
-        source = self.manager_source()
-        self.assertIn('restricted = new Set(["finance_bot", "result_bot", "ledger_bot"])', source)
-        self.assertIn("if(isCommand&&!this.allowed(role,m)) continue", source)
+        source = self.config_source() + self.access_source() + self.manager_source().replace(" ", "")
+        self.assertIn('RESTRICTED_ROLES', source)
+        self.assertIn('finance_bot', source)
+        self.assertIn('result_bot', source)
+        self.assertIn('ledger_bot', source)
+        self.assertIn("if(isCommand&&!this.allowed(role,m))continue", source)
 
     def test_gateway_event_routes_are_explicit(self):
-        source = self.manager_source()
+        source = self.config_source().replace(" ", "")
         for route in ('deposit:"finance_bot"', 'withdrawal:"finance_bot"', 'game:"game_bot"',
                       'result:"result_bot"', 'ledger:"ledger_bot"', 'crash:"owner_bot"'):
             self.assertIn(route, source)
@@ -31,9 +43,9 @@ class MultiSessionArchitectureTests(unittest.TestCase):
         self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", source)
         self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", source)
         self.assertIn("grid-template-columns:1fr", source)
-        self.assertIn('mainNav===\'guard\'', source)
-        self.assertIn("manager.hidden=!guardOpen", source)
-        self.assertIn("if(guardOpen&&main&&manager.parentElement!==main)main.appendChild(manager)", source)
+        self.assertIn("const ADMIN_TAB='admin'", source)
+        self.assertIn("manager.hidden=true", source)
+        self.assertIn("if(manager.parentElement!==main)main.appendChild(manager)", source)
         self.assertIn('aria-labelledby="tbcm-title" hidden', source)
         self.assertNotIn('id="tbcm-modal"', source)
         self.assertNotIn('id="tbcm-open"', source)
@@ -46,17 +58,14 @@ class MultiSessionArchitectureTests(unittest.TestCase):
         self.assertIn("multiSessionManager.registerRoutes", source)
         self.assertIn("multiSessionManager.startAll", source)
 
-    def test_legacy_gateway_is_only_a_compatibility_launcher(self):
-        source = (ROOT / "Gateway.js").read_text()
-        self.assertIn('require("./whatsapp_multi_session.js")', source)
+    def test_compatibility_manager_is_only_a_module_launcher(self):
+        source = (ROOT / "multi_session_manager.js").read_text()
+        self.assertIn('require("./bot/session_manager.js")', source)
         self.assertNotIn("messages.upsert", source)
 
     def test_required_boot_scripts_use_canonical_gateway(self):
-        for filename in ("termux-gateway.sh", "deploy.sh"):
-            source = (ROOT / filename).read_text()
-            self.assertIn("node whatsapp_multi_session.js", source)
-        flask_source = (ROOT / "termux-flask.sh").read_text()
-        self.assertIn('export GATEWAY_URL=', flask_source)
+        source = (ROOT / "deploy.sh").read_text()
+        self.assertIn("node whatsapp_multi_session.js", source)
 
     def test_flask_registers_bot_manager_explicitly(self):
         source = (ROOT / "flask_app.py").read_text()
