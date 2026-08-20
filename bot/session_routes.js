@@ -10,13 +10,20 @@ function registerBotRoutes(manager, app, auth){
     catch (e) { res.status(400).json({status:"error", message:e.message}); }
   });
   app.post("/api/bots/send", guard, async (req, res) => {
+    const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    const event = String(body.eventType || "").trim();
+    const role = EVENT_ROUTES[event];
+    if (!role) return res.status(400).json({status:"error", message:"A valid eventType is required"});
+    if (!String(body.to || "").trim()) return res.status(400).json({status:"error", message:"A recipient is required"});
+    if (!String(body.text ?? "").trim()) return res.status(400).json({status:"error", message:"Message text is required"});
     try {
-      const event = String(req.body.eventType || "");
-      const role = EVENT_ROUTES[event];
-      if (!role) return res.status(400).json({status:"error", message:"A valid eventType is required"});
-      await manager.send(role, req.body.to, req.body.text);
+      await manager.send(role, body.to, body.text);
       res.json({status:"success", role, eventType:event});
-    } catch (e) { res.status(503).json({status:"error", message:e.message}); }
+    } catch (e) {
+      const message = String(e?.message || e);
+      const clientError = /required|valid whatsapp recipient|exceeds 4096|unknown bot role/i.test(message);
+      res.status(clientError ? 400 : 503).json({status:"error", message});
+    }
   });
 }
 

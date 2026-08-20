@@ -50,18 +50,33 @@ fi
 
 echo ""
 echo "--- HTTP check ---"
+PROBE_TOKEN="${TITAN_ADMIN_TOKEN:-${TITAN_GATEWAY_TOKEN:-}}"
 if command -v curl >/dev/null 2>&1; then
   echo "Dashboard headers:"
-  curl -I --max-time 8 "http://127.0.0.1:${PORT}" 2>&1 || true
+  if [ -n "$PROBE_TOKEN" ]; then
+    curl -I --max-time 8 -H "Authorization: Bearer ${PROBE_TOKEN}" "http://127.0.0.1:${PORT}" 2>&1 || true
+  else
+    curl -I --max-time 8 "http://127.0.0.1:${PORT}" 2>&1 || true
+  fi
   echo ""
   echo "Gateway headers:"
-  curl -I --max-time 8 "http://127.0.0.1:${GATEWAY_PORT}" 2>&1 || true
+  if [ -n "$PROBE_TOKEN" ]; then
+    curl -I --max-time 8 -H "Authorization: Bearer ${PROBE_TOKEN}" "http://127.0.0.1:${GATEWAY_PORT}" 2>&1 || true
+  else
+    curl -I --max-time 8 "http://127.0.0.1:${GATEWAY_PORT}" 2>&1 || true
+  fi
 else
-  python - <<PY 2>&1 || true
+  TITAN_PROBE_TOKEN="$PROBE_TOKEN" python - <<PY 2>&1 || true
+import os
 import urllib.request
+headers = {}
+token = os.environ.get("TITAN_PROBE_TOKEN", "")
+if token:
+    headers["Authorization"] = f"Bearer {token}"
 for name, url in [('Dashboard', 'http://127.0.0.1:${PORT}'), ('Gateway', 'http://127.0.0.1:${GATEWAY_PORT}')]:
     try:
-        r = urllib.request.urlopen(url, timeout=8)
+        request = urllib.request.Request(url, headers=headers)
+        r = urllib.request.urlopen(request, timeout=8)
         print(name, 'OK', r.status)
     except Exception as e:
         print(name, 'ERROR', e)

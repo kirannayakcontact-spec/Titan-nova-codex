@@ -22,7 +22,7 @@ class TitanMultiSessionManager {
     this.ownerStatus = options.ownerStatus || (() => ({connected:false, qr:"", user:null}));
     this.ownerSend = options.ownerSend;
     this.starting = new Set();
-    for (const role of ROLES) this.sessions.set(role, {role, connected:false, qr:"", qrAt:"", user:null, socket:null, lastEvent:"idle", lastError:""});
+    for (const role of ROLES) this.sessions.set(role, {role, connected:false, qr:"", qrAt:"", user:null, socket:null, reconnectTimer:null, reconnectAttempt:0, lastEvent:"idle", lastError:""});
   }
   log(role, level, message){
     const icon = level === "error" ? "❌" : level === "warn" ? "⚠️" : "●";
@@ -56,7 +56,10 @@ class TitanMultiSessionManager {
   onConnection(role, socket, {connection,lastDisconnect,qr}){
     const rec = this.sessions.get(role); if (rec.socket !== socket) return;
     if (qr) { rec.qr = qr; rec.qrAt = new Date().toISOString(); rec.lastEvent = "qr"; qrcode.generate(qr,{small:true}); this.log(role,"info","QR ready"); }
-    if (connection === "open") { rec.connected = true; rec.reconnectAttempt = 0; rec.qr = ""; rec.user = socket.user || null; rec.lastEvent = "open"; this.log(role,"info","connected"); }
+    if (connection === "open") {
+      if (rec.reconnectTimer) { clearTimeout(rec.reconnectTimer); rec.reconnectTimer = null; }
+      rec.connected = true; rec.reconnectAttempt = 0; rec.qr = ""; rec.user = socket.user || null; rec.lastEvent = "open"; this.log(role,"info","connected");
+    }
     if (connection === "close") {
       rec.connected = false; rec.socket = null; rec.lastEvent = "close";
       const code = lastDisconnect?.error?.output?.statusCode; const loggedOut = code === DisconnectReason.loggedOut;
@@ -64,7 +67,11 @@ class TitanMultiSessionManager {
       if (!loggedOut) {
         const attempt = Math.min(8, Number(rec.reconnectAttempt || 0) + 1); rec.reconnectAttempt = attempt;
         const delay = Math.min(60000, 1000 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 500);
-        setTimeout(() => this.start(role).catch(e => this.log(role,"error",e.message)), delay);
+        if (rec.reconnectTimer) clearTimeout(rec.reconnectTimer);
+        rec.reconnectTimer = setTimeout(() => {
+          rec.reconnectTimer = null;
+          this.start(role).catch(e => this.log(role,"error",e.message));
+        }, delay);
       }
     }
   }
@@ -79,21 +86,32 @@ class TitanMultiSessionManager {
   }
   async reset(role){
     if (!ROLES.includes(role) || role === "owner_bot") throw new Error("Use the legacy owner reset endpoint for owner_bot");
-    const rec = this.sessions.get(role); try { rec.socket?.end(new Error("admin reset")); } catch (_) {}
+    const rec = this.sessions.get(role);
+    if (rec.reconnectTimer) { clearTimeout(rec.reconnectTimer); rec.reconnectTimer = null; }
+    const oldSocket = rec.socket;
+    // Clear the reference before closing so the old socket's close event cannot
+    // schedule a second reconnect while the explicit reset is being queued.
+    rec.socket = null;
+    try { oldSocket?.end(new Error("admin reset")); } catch (_) {}
     fs.rmSync(path.join(this.stateDir,"auth_info_baileys",role),{recursive:true,force:true});
-    Object.assign(rec,{connected:false,qr:"",user:null,socket:null,lastEvent:"reset",lastError:""});
+    Object.assign(rec,{connected:false,qr:"",qrAt:"",user:null,reconnectAttempt:0,lastEvent:"reset",lastError:""});
     setTimeout(() => this.start(role).catch(e => this.log(role,"error",e.message)), 500); return this.snapshot().find(x => x.role === role);
   }
   async send(role,to,text){
-    if (!ROLES.includes(role)) throw new Error("Unknown bot role"); const rec = this.sessions.get(role);
+    if (!ROLES.includes(role)) throw new Error("Unknown bot role");
+    const body = String(text ?? "").trim();
+    if (!body) throw new Error("Message text is required");
+    if (body.length > 4096) throw new Error("Message text exceeds 4096 characters");
+    const rec = this.sessions.get(role);
     if (role === "owner_bot") {
       if (typeof this.ownerSend !== "function") throw new Error("owner_bot sender unavailable");
       this.log(role,"info","sending isolated critical owner event");
-      return this.ownerSend(to,text);
+      return this.ownerSend(to,body);
     }
     if (!rec.connected || !rec.socket) throw new Error(`${role} is disconnected`);
     const jid = normalizeJid(to);
-    this.log(role,"info",`sending isolated event to ${jid}`); return rec.socket.sendMessage(jid,{text:String(text || "")});
+    if (!/^[^@]+@(s\.whatsapp\.net|g\.us|broadcast)$/.test(jid)) throw new Error("A valid WhatsApp recipient is required");
+    this.log(role,"info",`sending isolated event to ${jid}`); return rec.socket.sendMessage(jid,{text:body});
   }
   registerRoutes(app,auth){ registerBotRoutes(this, app, auth); }
 }

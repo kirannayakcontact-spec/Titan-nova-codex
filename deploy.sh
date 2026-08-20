@@ -45,14 +45,26 @@ need_cmd() {
 
 http_ok() {
   local url="$1"
+  local token="${TITAN_ADMIN_TOKEN:-${TITAN_GATEWAY_TOKEN:-}}"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-time 4 "$url" >/dev/null 2>&1
+    if [ -n "$token" ]; then
+      curl -fsS --max-time 4 -H "Authorization: Bearer ${token}" "$url" >/dev/null 2>&1
+    else
+      curl -fsS --max-time 4 "$url" >/dev/null 2>&1
+    fi
     return $?
   fi
-  python - "$url" <<'PY' >/dev/null 2>&1
-import sys, urllib.request
+  TITAN_PROBE_TOKEN="$token" python - "$url" <<'PY' >/dev/null 2>&1
+import os
+import sys
+import urllib.request
+headers = {}
+token = os.environ.get("TITAN_PROBE_TOKEN", "")
+if token:
+    headers["Authorization"] = f"Bearer {token}"
 try:
-    urllib.request.urlopen(sys.argv[1], timeout=4).read(1)
+    request = urllib.request.Request(sys.argv[1], headers=headers)
+    urllib.request.urlopen(request, timeout=4).read(1)
     raise SystemExit(0)
 except Exception:
     raise SystemExit(1)
@@ -123,14 +135,25 @@ show_phone_ip() {
 show_runtime_status() {
   echo ""
   echo "--- Runtime boot status ---"
+  local token="${TITAN_ADMIN_TOKEN:-${TITAN_GATEWAY_TOKEN:-}}"
   if command -v curl >/dev/null 2>&1; then
-    curl -sS --max-time 8 "http://127.0.0.1:${PORT}/api/runtime_boot/status" 2>&1 || true
+    if [ -n "$token" ]; then
+      curl -sS --max-time 8 -H "Authorization: Bearer ${token}" "http://127.0.0.1:${PORT}/api/runtime_boot/status" 2>&1 || true
+    else
+      curl -sS --max-time 8 "http://127.0.0.1:${PORT}/api/runtime_boot/status" 2>&1 || true
+    fi
     echo ""
   else
-    python - <<PY 2>&1 || true
+    TITAN_PROBE_TOKEN="$token" python - <<PY 2>&1 || true
+import os
 import urllib.request
+headers = {}
+token = os.environ.get("TITAN_PROBE_TOKEN", "")
+if token:
+    headers["Authorization"] = f"Bearer {token}"
 try:
-    print(urllib.request.urlopen('http://127.0.0.1:${PORT}/api/runtime_boot/status', timeout=8).read().decode())
+    request = urllib.request.Request('http://127.0.0.1:${PORT}/api/runtime_boot/status', headers=headers)
+    print(urllib.request.urlopen(request, timeout=8).read().decode())
 except Exception as e:
     print('runtime status error:', e)
 PY

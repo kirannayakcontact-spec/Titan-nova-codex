@@ -1,57 +1,66 @@
-# Titan Nova Root Audit Report
+# Titan Nova Codex Repository Audit
 
 ## Scope and conclusion
 
-This audit covered the selected repository’s root structure, runtime preflight, dependency installation path, JavaScript and Python syntax, unit tests, and a bounded Flask startup smoke test. The repository is currently a **Termux/Flask/Node.js runtime**, not an Android native project: no Gradle build files, Android manifest, `gradlew`, or Android `app/` module were present at the audited root.
+This audit covered the active Flask/Termux runtime, canonical Node.js WhatsApp gateway, multi-session bot modules, deployment helpers, security middleware integration, dependency-backed startup, and automated regression checks. The repository is a **Termux/Flask/Node.js runtime**, not a native Android project; no Gradle build files, Android manifest, `gradlew`, or Android `app/` module are present at the repository root.
 
-The root foundation is now clean with respect to stale deleted-module references. The project’s existing runtime checks and available tests pass after the corrections. Android app development should therefore be treated as a separate client project that consumes this runtime’s APIs, rather than as a continuation of an existing native Android module.
+The repository’s syntax and existing architecture checks were already passing. The audit found one reproducible operational bug in authenticated deployment readiness probes and two runtime-hardening issues in multi-session messaging. All three issues were fixed, and focused regression coverage was added.
 
 ## Findings and fixes
 
-| Area | Finding | Action taken | Result |
-|---|---|---|---|
-| Runtime preflight | `runtime_syntax_check.py` required the deleted files `finance_deposit_removed.py` and `setup_removed.py`. | Removed both stale entries from the active Python file list. | Preflight now evaluates files that actually exist. |
-| Active-runtime audit | `scripts/single_source_audit.py` included the same two deleted files in `ACTIVE_ROOT_FILES`. | Removed both stale entries. | Active-only audit scope matches the repository. |
-| Flask launcher | `flask_app.py` registered the nonexistent `finance_deposit_removed` module. The registration was marked UI-heavy and therefore skipped, but it still left a dead reference in the launcher. | Removed the obsolete registration line. | Launcher no longer advertises a deleted module. |
-| Finance bridge | `deposit_finance_native.py` attempted to import the deleted `setup_removed` module and silently swallowed all exceptions. | Removed the dead import block. | The active bridge no longer depends on a deleted component. |
-| Dependency environment | The first local Flask smoke test failed because `flask_limiter` was not installed in the sandbox, although it is declared by `requirements.txt`. | Installed the declared Python requirements for verification; no dependency-file change was necessary. | Flask booted successfully afterward. |
+| Severity | Area | Finding | Fix | Result |
+|---|---|---|---|---|
+| High | Deployment readiness | `deploy.sh` used unauthenticated `curl -f` probes for `/api/runtime_boot/status` and `/`. When `TITAN_ADMIN_TOKEN` was configured, Flask correctly returned `401`, causing a healthy dashboard to be reported as unavailable. | `http_ok()` and `show_runtime_status()` now send `Authorization: Bearer` using `TITAN_ADMIN_TOKEN` with `TITAN_GATEWAY_TOKEN` as fallback. | Authenticated readiness checks can recognize a healthy secured Flask runtime. |
+| Medium | Diagnostics | `termux_diagnose.sh` probed dashboard and gateway endpoints without configured tokens, producing misleading `401` output during secured deployments. | Dashboard and gateway probes now reuse the configured probe token in both `curl` and Python fallback paths. | Diagnostics reflect the actual deployment authentication configuration. |
+| Medium | Session reset | A manual reset called `socket.end()` and also scheduled a new start. The old socket’s `connection.update` close event could independently schedule another reconnect, creating a double-start race. | Reconnect timers are tracked and cancelled; reset clears the socket reference before closing the old socket, preventing its close event from scheduling a second start. | Reset schedules exactly one replacement session. |
+| Medium | Bot send API | Outbound bot sends accepted blank or oversized text and malformed recipients until the underlying socket rejected them. | Manager and route layers now validate recipient presence, text presence, maximum text length of 4096 characters, and supported WhatsApp JID domains. | Invalid client input returns `400`; disconnected sessions remain `503`. |
+| Low | Regression coverage | The Node package had syntax checks but no executable session-manager regression command. | Added `npm test`, focused JavaScript tests, and CI execution alongside the existing Python tests. | Reset race, message validation, recipient normalization, and route status mapping are covered. |
 
 ## Verification results
 
 | Check | Result |
 |---|---:|
-| Android project detection at repository root | No native Android module detected |
+| `bash -n deploy.sh` | Passed |
+| `bash -n termux_diagnose.sh` | Passed |
+| `npm run check` | Passed |
+| `npm test` | Passed |
+| `python3 -m unittest discover -s tests -v` | Passed; 8 tests |
 | `python3 -m compileall -q .` | Passed |
 | `python3 runtime_syntax_check.py` | Passed |
 | `python3 scripts/single_source_audit.py --result-source-only` | Passed |
-| `npm run check` | Passed |
-| `python3 -m unittest discover -s tests -v` | Passed; 8 tests |
-| `bash -n deploy.sh` | Passed |
 | `git diff --check` | Passed |
-| Bounded Flask startup smoke test | Passed after installing declared requirements; process was intentionally terminated by the 8-second timeout |
+| Authenticated Flask `/api/plain_health` smoke test | Passed; HTTP 200 |
+| Authenticated Flask `/api/runtime_boot/status` smoke test | Passed; HTTP 200 |
 
-The smoke test still reports configuration warnings when `TITAN_ADMIN_TOKEN` and `TITAN_GATEWAY_TOKEN` are absent. These are deployment configuration items, not code failures. They should be supplied through the runtime environment before any exposed or production deployment.
-
-## Recommended next step for Android
-
-The next implementation phase should create a dedicated Android client module or repository. The current root can serve as the backend/runtime source, while the Android client should define its own package name, Gradle configuration, API base URL, authentication flow, secure token storage, dashboard screens, and build verification. The native project should not be mixed into this Termux runtime until the client-backend boundary is explicitly defined.
+The Flask smoke test was run with `TITAN_ADMIN_TOKEN` and `TITAN_GATEWAY_TOKEN` configured and with the declared Python requirements installed. The server was intentionally stopped after the health checks. A full WhatsApp login was not attempted because it requires an external WhatsApp account and QR/pairing interaction.
 
 ## Changed files
 
-The foundational cleanup changed four files: `deposit_finance_native.py`, `flask_app.py`, `runtime_syntax_check.py`, and `scripts/single_source_audit.py`. The changes are limited to removing obsolete references and do not alter business logic or API behavior.
+The current audit changes are limited to deployment probe authentication, diagnostic probe authentication, multi-session lifecycle/input hardening, CI coverage, package scripts, and the audit report:
+
+- `.github/workflows/titan-check.yml`
+- `AUDIT_REPORT.md`
+- `bot/session_manager.js`
+- `bot/session_routes.js`
+- `deploy.sh`
+- `package.json`
+- `termux_diagnose.sh`
+- `tests/test_session_manager.js`
+
+The earlier repository cleanup that removed stale deleted-module references remains intact and continues to pass the active runtime checks.
+
+## Operational notes
+
+Production deployments should provide `TITAN_ADMIN_TOKEN`, `TITAN_GATEWAY_TOKEN`, Firebase configuration, and the WhatsApp allowlist variables through the runtime environment. The gateway’s `/api/health` endpoint remains available for process-level uptime checks; protected control and data endpoints require the configured token.
 
 ## References
 
 [1]: https://github.com/kirannayakcontact-spec/Titan-nova-codex "Titan Nova Codex repository"
 [2]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/README.md "Titan Nova Codex README"
 [3]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/requirements.txt "Titan Nova Codex Python requirements"
-[4]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/package.json "Titan Nova Codex Node package metadata"
+[4]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/package.json "Titan Nova Codex package metadata"
 
 Author: **Manus AI**
-
 Date: **2026-08-20**
 
-The repository audit and root cleanup were performed against the selected GitHub repository [1]. The runtime usage and architecture assumptions were taken from the project README [2], Python dependency declarations from `requirements.txt` [3], and Node scripts/dependencies from `package.json` [4].
-
-> **Important:** This audit did not create or claim to create an Android APK. The audited repository does not currently contain a native Android build target.
-
+The audit was performed against the selected repository [1]. Runtime usage assumptions were taken from the project README [2], Python dependency declarations from `requirements.txt` [3], and Node scripts/dependencies from `package.json` [4].

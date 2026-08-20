@@ -35,3 +35,8 @@ jobs:
 
       - name: Validate gateway modules
         run: npm run check
+
+      - name: Run regression tests
+        run: |
+          python -m unittest discover -s tests -v
+          npm test

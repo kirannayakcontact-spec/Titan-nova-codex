@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node whatsapp_multi_session.js",
     "gateway": "node whatsapp_multi_session.js",
-    "check": "node --check whatsapp_multi_session.js && node --check gateway_codex_preflight_patch.js && node --check multi_session_manager.js && node --check redis_auth_state.js && for f in bot/*.js; do node --check \"$f\"; done"
+    "check": "node --check whatsapp_multi_session.js && node --check gateway_codex_preflight_patch.js && node --check multi_session_manager.js && node --check redis_auth_state.js && for f in bot/*.js; do node --check \"$f\"; done",
+    "test": "node tests/test_session_manager.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.23",
