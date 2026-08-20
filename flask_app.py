@@ -122,7 +122,6 @@ def _register_core_controller(label, func_name, ui_heavy=False):
         print(f"⚠️ {label} failed to load:", exc)
 
 
-_register_patch("Finance Deposit removal guard", "finance_deposit_removed", "register_finance_deposit_removed", ui_heavy=True)
 _register_patch("Titan runtime safety bridge", "deposit_finance_native", "register_deposit_finance_runtime", ui_heavy=True)
 _register_patch("Titan global realtime/local UI guard", "titan_realtime_global", "register_titan_realtime_global", ui_heavy=True)
 _register_patch("Result tab sticky toggle guard", "result_toggle_sticky", "register_result_toggle_sticky", ui_heavy=True)

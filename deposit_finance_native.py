@@ -14,11 +14,6 @@ def register_deposit_finance_native(app):
 def register_deposit_finance_runtime(app):
     app._titan_deposit_finance_force_disabled = True
     try:
-        from setup_removed import register_setup_removed
-        register_setup_removed(app)
-    except Exception:
-        pass
-    try:
         import importlib
         mod = importlib.import_module("vip_" + "delete" + "_sticky")
         getattr(mod, "register_vip_" + "delete" + "_sticky")(app)
