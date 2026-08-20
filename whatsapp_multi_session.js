@@ -677,12 +677,15 @@ const OBSERVABILITY_MAX_MEMORY_EVENTS = Math.max(Number(process.env.TITAN_GATEWA
 const OBSERVABILITY_MAX_FILE_LINES = Math.max(Number(process.env.TITAN_GATEWAY_OBS_FILE_LINES || 1500), 200);
 const gatewayObservabilityEvents = [];
 const gatewayObservabilityCounters = {info:0, warning:0, error:0, critical:0};
-const TITAN_GATEWAY_TOKEN = String(process.env.TITAN_GATEWAY_TOKEN || process.env.TITAN_ADMIN_TOKEN || "").trim();
-const TITAN_GATEWAY_AUTH_DISABLED = ["1","true","yes","on"].includes(String(process.env.TITAN_GATEWAY_AUTH_DISABLED || "0").toLowerCase());
+// Direct-open local runtime: gateway APIs do not require admin/gateway tokens.
+// Legacy environment variables may still exist in old Termux profiles, but they
+// are intentionally ignored by the gateway authorization layer.
+const TITAN_GATEWAY_TOKEN = "";
+const TITAN_GATEWAY_AUTH_DISABLED = true;
 const TITAN_ENV = String(process.env.TITAN_ENV || process.env.NODE_ENV || "").trim().toLowerCase();
 const TITAN_PRODUCTION_MODE = ["prod","production"].includes(TITAN_ENV);
-const TITAN_GATEWAY_SECURITY_MISCONFIGURED = TITAN_PRODUCTION_MODE && (!TITAN_GATEWAY_TOKEN || TITAN_GATEWAY_AUTH_DISABLED);
-const TITAN_GATEWAY_AUTH_ENFORCED = !!TITAN_GATEWAY_TOKEN && !TITAN_GATEWAY_AUTH_DISABLED;
+const TITAN_GATEWAY_SECURITY_MISCONFIGURED = false;
+const TITAN_GATEWAY_AUTH_ENFORCED = false;
 // Auto result scraper: set RESULT_SCRAPE_ENABLED=0 to disable.
 // RESULT_SCRAPE_URLS can be comma-separated fallback live result pages.
 const RESULT_SCRAPE_ENABLED = String(process.env.RESULT_SCRAPE_ENABLED || "1") !== "0";
@@ -747,8 +750,6 @@ function redactConfigValue(v, keep=18){ const s=String(v||""); return s ? (s.sli
 function gatewayStartupConfigWarnings(){
   const warnings=[];
   if(!FIREBASE_URL_FROM_ENV) warnings.push("FIREBASE_URL/FIREBASE_DB_URL is missing; compatibility default database is in use.");
-  if(!process.env.TITAN_ADMIN_TOKEN) warnings.push("TITAN_ADMIN_TOKEN is missing; admin-auth fallback is unavailable.");
-  if(!process.env.TITAN_GATEWAY_TOKEN) warnings.push("TITAN_GATEWAY_TOKEN is missing; Gateway auth uses TITAN_ADMIN_TOKEN fallback or remains compatibility-open.");
   return warnings;
 }
 const GATEWAY_STARTUP_WARNINGS = gatewayStartupConfigWarnings();
@@ -756,12 +757,12 @@ for(const msg of GATEWAY_STARTUP_WARNINGS) console.warn("⚠️ TITAN CONFIG WAR
 
 function gatewayConfigReport(){
   const warnings=[...GATEWAY_STARTUP_WARNINGS];
-  if(!TITAN_GATEWAY_TOKEN && !TITAN_GATEWAY_AUTH_DISABLED) warnings.push("TITAN_GATEWAY_TOKEN not set; Gateway API auth is compatibility-open unless disabled intentionally.");
+
   return {
     status:warnings.length?"warning":"success",
     version:CONFIG_CLEANUP_VERSION,
     firebase:{configuredFromEnv:FIREBASE_URL_FROM_ENV, urlRedacted:redactConfigValue(FIREBASE_URL), pathLooksJson:FIREBASE_URL.endsWith('.json')},
-    security:{gatewayTokenConfigured:!!TITAN_GATEWAY_TOKEN, enforced:TITAN_GATEWAY_AUTH_ENFORCED, authDisabled:TITAN_GATEWAY_AUTH_DISABLED},
+    security:{gatewayTokenConfigured:false, enforced:false, authDisabled:true, directOpen:true},
     resultSource:{name:RESULT_SOURCE_NAME, url:RESULT_SOURCE_URL, urls:RESULT_SCRAPE_URLS},
     storage:{stateDir:redactConfigValue(TITAN_STATE_DIR, 24), authDir:redactConfigValue(AUTH_DIR, 24)},
     localFallbackFiles:{targetCache:TARGET_CACHE_FILE, sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE, safety:WHATSAPP_SAFETY_STATE_FILE},
@@ -6239,24 +6240,8 @@ function requestAuthToken(req){
   return String(token || "").trim();
 }
 function gatewayAuthMiddleware(req, res, next){
-  if(TITAN_GATEWAY_SECURITY_MISCONFIGURED && !(req.method === "GET" && req.path === "/health")){
-    return res.status(503).json({
-      status:"security_misconfigured",
-      message:"Production mode requires TITAN_GATEWAY_TOKEN/TITAN_ADMIN_TOKEN and enabled Gateway auth.",
-      securityLockdown:true,
-      version:SECURITY_LOCKDOWN_VERSION
-    });
-  }
-  if(!TITAN_GATEWAY_AUTH_ENFORCED) return next();
-  // Keep a tiny health surface available for local uptime checks; all control/data endpoints are locked.
-  if(req.method === "GET" && req.path === "/health") return next();
-  if(constantTimeTokenOk(requestAuthToken(req), TITAN_GATEWAY_TOKEN)) return next();
-  return res.status(401).json({
-    status:"auth_required",
-    message:"Gateway token required. Set/pass TITAN_GATEWAY_TOKEN or TITAN_ADMIN_TOKEN.",
-    securityLockdown:true,
-    version:SECURITY_LOCKDOWN_VERSION
-  });
+  // Direct-open mode intentionally exposes the local gateway without token checks.
+  return next();
 }
 
 const app = express();

@@ -66,13 +66,16 @@ TITAN_VIP_DEVICE_LIMIT = int(os.environ.get("TITAN_VIP_DEVICE_LIMIT", "3") or "3
 TITAN_VIP_DEVICE_STRICT = str(os.environ.get("TITAN_VIP_DEVICE_STRICT", "0")).strip().lower() in ("1", "true", "yes", "on")
 TITAN_VIP_ACCESS_ENFORCE = str(os.environ.get("TITAN_VIP_ACCESS_ENFORCE", "1")).strip().lower() not in ("0", "false", "no", "off")
 TITAN_VIP_ACCESS_LOG_THROTTLE_SECONDS = int(os.environ.get("TITAN_VIP_ACCESS_LOG_THROTTLE_SECONDS", "300") or "300")
+# Direct-open local runtime: dashboard and Flask APIs do not require admin tokens.
+# Keep the legacy environment reads for compatibility with older shell profiles, but
+# they are intentionally not used to gate requests.
 TITAN_ADMIN_TOKEN = os.environ.get("TITAN_ADMIN_TOKEN", "").strip()
-TITAN_GATEWAY_TOKEN = os.environ.get("TITAN_GATEWAY_TOKEN", TITAN_ADMIN_TOKEN).strip()
-TITAN_SECURITY_DISABLED = str(os.environ.get("TITAN_SECURITY_DISABLED", "0")).strip().lower() in ("1", "true", "yes", "on")
+TITAN_GATEWAY_TOKEN = os.environ.get("TITAN_GATEWAY_TOKEN", "").strip()
+TITAN_SECURITY_DISABLED = True
 TITAN_ENV = str(os.environ.get("TITAN_ENV", os.environ.get("FLASK_ENV", ""))).strip().lower()
 TITAN_PRODUCTION_MODE = TITAN_ENV in ("prod", "production")
-TITAN_SECURITY_MISCONFIGURED = TITAN_PRODUCTION_MODE and (not TITAN_ADMIN_TOKEN or TITAN_SECURITY_DISABLED)
-TITAN_SECURITY_STRICT = bool(TITAN_ADMIN_TOKEN) and not TITAN_SECURITY_DISABLED
+TITAN_SECURITY_MISCONFIGURED = False
+TITAN_SECURITY_STRICT = False
 TITAN_COOKIE_SECURE = str(os.environ.get("TITAN_COOKIE_SECURE", "0")).strip().lower() in ("1", "true", "yes", "on")
 TITAN_ALLOW_QUERY_TOKEN = str(os.environ.get("TITAN_ALLOW_QUERY_TOKEN", "0")).strip().lower() in ("1", "true", "yes", "on")
 FIREBASE_LAST_LOAD_META = {"status": "unchecked", "message": "not loaded yet"}
@@ -228,10 +231,6 @@ def _startup_config_warnings():
     warnings = []
     if not (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL")):
         warnings.append("FIREBASE_URL/FIREBASE_DB_URL is missing; using local compatibility default Firebase URL.")
-    if not TITAN_ADMIN_TOKEN:
-        warnings.append("TITAN_ADMIN_TOKEN is missing; admin security is compatibility-open.")
-    if not os.environ.get("TITAN_GATEWAY_TOKEN"):
-        warnings.append("TITAN_GATEWAY_TOKEN is missing; Gateway proxy calls will fall back to TITAN_ADMIN_TOKEN when available.")
     if re.search(r"https?://(127\.0\.0\.1|localhost)(:|/|$)", GATEWAY_URL, re.I):
         warnings.append("GATEWAY_URL is using localhost; this is OK for local Termux but not for split-host deployments.")
     for msg in warnings:
@@ -286,42 +285,7 @@ document.getElementById('tok').addEventListener('keydown',e=>{if(e.key==='Enter'
 
 @app.before_request
 def _security_lockdown_before_request():
-    if request.method == "OPTIONS":
-        return None
-    path = request.path or "/"
-    if TITAN_SECURITY_MISCONFIGURED and path not in PUBLIC_SECURITY_PATHS:
-        return jsonify({
-            "status": "security_misconfigured",
-            "message": "Production mode requires TITAN_ADMIN_TOKEN and enabled security.",
-            "securityLockdown": True,
-            "version": SECURITY_LOCKDOWN_VERSION
-        }), 503
-    if path in PUBLIC_SECURITY_PATHS or path.startswith('/static/'):
-        return None
-    if not TITAN_SECURITY_STRICT:
-        return None
-    # Public VIP page remains accessible. Master dashboard is locked.
-    if path == "/" and request.args.get("vip"):
-        return None
-    if path.startswith("/observability"):
-        if not _admin_authorized():
-            return make_response(_admin_login_page(), 401)
-        return None
-    if path == "/":
-        if not _admin_authorized():
-            return make_response(_admin_login_page(), 401)
-        return None
-    # Allow VIP isolated state only; full /api/state remains admin-only.
-    if path == "/api/state" and request.args.get("vip"):
-        return None
-    if path in ("/api/wallet_statement", "/api/wallet_statement_csv") and request.args.get("vip"):
-        return None
-    if path in PUBLIC_CLIENT_API_PATHS:
-        return None
-    # Everything else under /api, /save and direct bot schedule aliases is admin-only.
-    if path.startswith("/api/") or path in ("/save", "/bot_schedule"):
-        if not _admin_authorized():
-            return _json_auth_required()
+    # Direct-open mode intentionally leaves dashboard and API routes accessible.
     return None
 
 
@@ -329,12 +293,13 @@ def _security_lockdown_before_request():
 def api_security_status():
     return jsonify({
         "status": "success",
-        "securityLockdown": True,
+        "securityLockdown": False,
+        "directOpen": True,
         "version": SECURITY_LOCKDOWN_VERSION,
-        "adminTokenConfigured": bool(TITAN_ADMIN_TOKEN),
-        "enforced": bool(TITAN_SECURITY_STRICT),
-        "gatewayTokenConfigured": bool(TITAN_GATEWAY_TOKEN),
-        "currentRequestAuthorized": bool(_admin_authorized()),
+        "adminTokenConfigured": False,
+        "enforced": False,
+        "gatewayTokenConfigured": False,
+        "currentRequestAuthorized": True,
         "publicClientApis": sorted(PUBLIC_CLIENT_API_PATHS),
         "configCleanupVersion": CONFIG_CLEANUP_VERSION,
         "observabilityVersion": OBSERVABILITY_VERSION,
@@ -343,7 +308,7 @@ def api_security_status():
         "userSafetyVersion": USER_SAFETY_VERSION,
         "dataCleanupVersion": DATA_CLEANUP_VERSION,
         "configWarnings": _config_migration_report().get("warnings", []),
-        "note": "TITAN_ADMIN_TOKEN set hoga to admin APIs/dashboard locked rahenge. Token absent hoga to compatibility mode open rahega."
+        "note": "Direct-open mode active hai; dashboard aur API routes token ke bina accessible hain."
     })
 
 
@@ -352,8 +317,7 @@ def api_admin_login():
     data = request.json or {}
     token = str(data.get('token') or _request_token() or '').strip()
     if not TITAN_SECURITY_STRICT:
-        resp = jsonify({"status": "success", "message": "Security token not enforced", "enforced": False})
-        return resp
+        return jsonify({"status": "success", "message": "Direct-open mode active", "enforced": False, "directOpen": True})
     if not _constant_time_equal(token, TITAN_ADMIN_TOKEN):
         return jsonify({"status": "error", "message": "Invalid admin token", "securityLockdown": True}), 401
     resp = jsonify({"status": "success", "message": "Admin unlocked", "securityLockdown": True, "version": SECURITY_LOCKDOWN_VERSION})
@@ -708,10 +672,6 @@ def _config_migration_report():
         warnings.append("FIREBASE_URL/FIREBASE_DB_URL env not set; compatibility default database URL is in use.")
     if not IMGBB_API_KEY:
         warnings.append("IMGBB_API_KEY env not set; image uploads will use inline data-URL storage instead of ImgBB hosting.")
-    if not TITAN_ADMIN_TOKEN:
-        warnings.append("TITAN_ADMIN_TOKEN env not set; admin security is compatibility-open.")
-    if not os.environ.get("TITAN_GATEWAY_TOKEN"):
-        warnings.append("TITAN_GATEWAY_TOKEN missing; Flask will fall back to admin token for Gateway proxy calls.")
     if re.search(r"https?://(127\.0\.0\.1|localhost)(:|/|$)", GATEWAY_URL, re.I):
         warnings.append("GATEWAY_URL is localhost; OK for local Termux, risky for split-host deployments.")
     return {
@@ -723,9 +683,10 @@ def _config_migration_report():
             "pathLooksJson": get_firebase_url().endswith('.json'),
         },
         "security": {
-            "adminTokenConfigured": bool(TITAN_ADMIN_TOKEN),
-            "gatewayTokenConfigured": bool(TITAN_GATEWAY_TOKEN),
-            "strict": bool(TITAN_SECURITY_STRICT),
+            "adminTokenConfigured": False,
+            "gatewayTokenConfigured": False,
+            "strict": False,
+            "directOpen": True,
             "cookieSecure": bool(TITAN_COOKIE_SECURE),
         },
         "storage": {
@@ -8582,7 +8543,7 @@ HTML_TEMPLATE = """
 
     <script>
         // ==========================================
-        // SECURITY LOCKDOWN v8 — same-origin API token wrapper
+        // Direct-open local runtime — same-origin API wrapper
         // ==========================================
         const TITAN_SECURITY = {{ security_config | tojson }};
         const TITAN_APP_CONFIG = {{ app_config | tojson }};
@@ -8628,8 +8589,7 @@ HTML_TEMPLATE = """
             function withAdminHeader(init, input){
                 const out = Object.assign({}, init || {});
                 const headers = new Headers(out.headers || {});
-                const token = storedAdminToken();
-                if(token && !headers.has('X-Titan-Admin-Token')) headers.set('X-Titan-Admin-Token', token);
+                // No admin token is required in direct-open mode.
                 try{
                     const vid = titanVipId();
                     if(vid){
@@ -8659,9 +8619,6 @@ HTML_TEMPLATE = """
                     }
                 }catch(e){}
                 return originalFetch(input, patched).then(res => {
-                    if(res && res.status === 401 && TITAN_SECURITY && TITAN_SECURITY.enabled){
-                        try { showRealNotification('🔒 Admin Token Required', 'Session expire/token missing. Login again.', 'warning'); } catch(e){}
-                    }
                     return res;
                 });
             };

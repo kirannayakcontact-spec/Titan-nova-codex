@@ -2,65 +2,67 @@
 
 ## Scope and conclusion
 
-This audit covered the active Flask/Termux runtime, canonical Node.js WhatsApp gateway, multi-session bot modules, deployment helpers, security middleware integration, dependency-backed startup, and automated regression checks. The repository is a **Termux/Flask/Node.js runtime**, not a native Android project; no Gradle build files, Android manifest, `gradlew`, or Android `app/` module are present at the repository root.
+This audit covered the active Flask/Termux runtime, canonical Node.js WhatsApp gateway, multi-session bot modules, deployment helpers, security middleware integration, and automated regression checks. The repository is a **Termux/Flask/Node.js runtime**, not a native Android project; no Gradle build files, Android manifest, `gradlew`, or Android `app/` module are present at the repository root.
 
-The repository’s syntax and existing architecture checks were already passing. The audit found one reproducible operational bug in authenticated deployment readiness probes and two runtime-hardening issues in multi-session messaging. All three issues were fixed, and focused regression coverage was added.
+The application now runs in **direct-open local mode** as requested. Flask dashboard/API routes and Node gateway routes no longer enforce admin or gateway tokens. This mode is intended for trusted localhost or private LAN use only; exposing the app to the public internet without authentication is unsafe.
 
 ## Findings and fixes
 
 | Severity | Area | Finding | Fix | Result |
 |---|---|---|---|---|
-| High | Deployment readiness | `deploy.sh` used unauthenticated `curl -f` probes for `/api/runtime_boot/status` and `/`. When `TITAN_ADMIN_TOKEN` was configured, Flask correctly returned `401`, causing a healthy dashboard to be reported as unavailable. | `http_ok()` and `show_runtime_status()` now send `Authorization: Bearer` using `TITAN_ADMIN_TOKEN` with `TITAN_GATEWAY_TOKEN` as fallback. | Authenticated readiness checks can recognize a healthy secured Flask runtime. |
-| Medium | Diagnostics | `termux_diagnose.sh` probed dashboard and gateway endpoints without configured tokens, producing misleading `401` output during secured deployments. | Dashboard and gateway probes now reuse the configured probe token in both `curl` and Python fallback paths. | Diagnostics reflect the actual deployment authentication configuration. |
-| Medium | Session reset | A manual reset called `socket.end()` and also scheduled a new start. The old socket’s `connection.update` close event could independently schedule another reconnect, creating a double-start race. | Reconnect timers are tracked and cancelled; reset clears the socket reference before closing the old socket, preventing its close event from scheduling a second start. | Reset schedules exactly one replacement session. |
-| Medium | Bot send API | Outbound bot sends accepted blank or oversized text and malformed recipients until the underlying socket rejected them. | Manager and route layers now validate recipient presence, text presence, maximum text length of 4096 characters, and supported WhatsApp JID domains. | Invalid client input returns `400`; disconnected sessions remain `503`. |
-| Low | Regression coverage | The Node package had syntax checks but no executable session-manager regression command. | Added `npm test`, focused JavaScript tests, and CI execution alongside the existing Python tests. | Reset race, message validation, recipient normalization, and route status mapping are covered. |
+| High | Flask access control | The dashboard and most Flask APIs could require `TITAN_ADMIN_TOKEN`, causing a login page or `401` response when the token was absent. | Replaced the global Flask security gate with an explicit direct-open request path; admin decorators now resolve as open because strict enforcement is disabled. | Dashboard and Flask APIs open without a token. |
+| High | Node gateway access control | Gateway middleware could require `TITAN_GATEWAY_TOKEN` or fall into production security lockdown. | Gateway authorization middleware now always passes requests in direct-open mode; token enforcement and production misconfiguration lockdown are disabled. | Gateway routes open without a token. |
+| Medium | Client token UX | Browser fetch wrapper injected stored admin tokens and displayed “Admin Token Required” notifications on `401`. | Removed token injection from the central dashboard wrapper and removed token-expiry notification behavior. | Browser no longer presents a token-login dependency. |
+| Medium | Deployment readiness | `deploy.sh` used unauthenticated probes that could report a secured runtime as unavailable. | Probe authentication remains optional and harmless; direct-open mode now responds without headers. | Existing deployment commands work without token variables. |
+| Medium | Session reset | Manual bot reset could trigger two reconnect starts because both the explicit reset and the old socket close event scheduled reconnects. | Reconnect timers are tracked and cancelled; reset clears the socket reference before closing the old socket. | Reset schedules exactly one replacement session. |
+| Medium | Bot send API | Outbound bot sends accepted blank or oversized text and malformed recipients until the socket rejected them. | Added recipient, text, length, and supported WhatsApp JID validation. | Invalid client input returns `400`; disconnected sessions remain `503`. |
+| Low | Regression coverage | Direct-open behavior did not have dedicated tests. | Added Flask tests for token-free health, security status, and dashboard access, while retaining Node session tests. | Direct-open behavior is regression-tested. |
 
 ## Verification results
 
 | Check | Result |
 |---|---:|
-| `bash -n deploy.sh` | Passed |
-| `bash -n termux_diagnose.sh` | Passed |
 | `npm run check` | Passed |
 | `npm test` | Passed |
-| `python3 -m unittest discover -s tests -v` | Passed; 8 tests |
+| `python3 -m unittest discover -s tests -v` | Passed; 11 tests |
 | `python3 -m compileall -q .` | Passed |
 | `python3 runtime_syntax_check.py` | Passed |
 | `python3 scripts/single_source_audit.py --result-source-only` | Passed |
+| `bash -n deploy.sh termux_diagnose.sh` | Passed |
 | `git diff --check` | Passed |
-| Authenticated Flask `/api/plain_health` smoke test | Passed; HTTP 200 |
-| Authenticated Flask `/api/runtime_boot/status` smoke test | Passed; HTTP 200 |
+| Flask `/api/plain_health` without token | Passed; HTTP 200 |
+| Flask `/api/security_status` without token | Passed; reports `directOpen: true` |
+| Flask `/` without token | Passed; no `401` login gate |
 
-The Flask smoke test was run with `TITAN_ADMIN_TOKEN` and `TITAN_GATEWAY_TOKEN` configured and with the declared Python requirements installed. The server was intentionally stopped after the health checks. A full WhatsApp login was not attempted because it requires an external WhatsApp account and QR/pairing interaction.
+The Flask direct-open smoke test was run with old token variables deliberately present and `TITAN_ENV=production`; the application still returned successful token-free responses. A full WhatsApp QR/login flow was not attempted because it requires an external WhatsApp account and pairing interaction.
 
 ## Changed files
 
-The current audit changes are limited to deployment probe authentication, diagnostic probe authentication, multi-session lifecycle/input hardening, CI coverage, package scripts, and the audit report:
+The direct-open update changes these files:
 
-- `.github/workflows/titan-check.yml`
 - `AUDIT_REPORT.md`
-- `bot/session_manager.js`
-- `bot/session_routes.js`
-- `deploy.sh`
-- `package.json`
-- `termux_diagnose.sh`
-- `tests/test_session_manager.js`
+- `titan_core.py`
+- `whatsapp_multi_session.js`
+- `termux.env.example`
+- `tests/test_direct_open.py`
 
-The earlier repository cleanup that removed stale deleted-module references remains intact and continues to pass the active runtime checks.
+Earlier repository fixes remain intact, including authenticated-probe support in deployment helpers, multi-session reset hardening, outbound message validation, CI coverage, and `npm test`.
+
+## Security warning
+
+> **Direct-open mode removes application-level token protection.** Keep `HOST` bound to `127.0.0.1` when possible, do not expose port `5000` or `3000` to the public internet, and use a VPN or reverse proxy with authentication if remote access is required.
 
 ## Operational notes
 
-Production deployments should provide `TITAN_ADMIN_TOKEN`, `TITAN_GATEWAY_TOKEN`, Firebase configuration, and the WhatsApp allowlist variables through the runtime environment. The gateway’s `/api/health` endpoint remains available for process-level uptime checks; protected control and data endpoints require the configured token.
+The Termux environment template now states that no admin or gateway token is required. Firebase configuration and WhatsApp role allowlists remain separate runtime settings. The gateway’s `/api/health` endpoint remains available for process-level checks, and all gateway control/data routes are intentionally open in this mode.
 
 ## References
 
 [1]: https://github.com/kirannayakcontact-spec/Titan-nova-codex "Titan Nova Codex repository"
 [2]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/README.md "Titan Nova Codex README"
-[3]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/requirements.txt "Titan Nova Codex Python requirements"
-[4]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/package.json "Titan Nova Codex package metadata"
+[3]: https://github.com/kirannayakcontact-spec/Titan-nova-codex/blob/main/termux.env.example "Titan Nova Termux environment template"
 
 Author: **Manus AI**
 Date: **2026-08-20**
 
-The audit was performed against the selected repository [1]. Runtime usage assumptions were taken from the project README [2], Python dependency declarations from `requirements.txt` [3], and Node scripts/dependencies from `package.json` [4].
+The audit was performed against the selected repository [1]. Runtime instructions were taken from the project README [2] and Termux environment template [3].

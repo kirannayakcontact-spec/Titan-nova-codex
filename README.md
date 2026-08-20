@@ -30,6 +30,10 @@ GATEWAY_PORT=3000 node whatsapp_multi_session.js
 
 Dashboard: http://127.0.0.1:5000
 
+## Access mode
+
+The local runtime is configured for **direct-open mode**. No `TITAN_ADMIN_TOKEN` or `TITAN_GATEWAY_TOKEN` is required. Keep Flask and gateway bound to `127.0.0.1` unless the private network is trusted; direct-open mode must not be exposed to the public internet without an external authentication layer.
+
 ## Update and restart
 
 ```bash
@@ -48,6 +52,7 @@ cd ~/github && python scripts/single_source_audit.py --result-source-only && pyt
 - `titan_core.py` — dashboard, API and business logic core.
 - `whatsapp_multi_session.js` — WhatsApp sessions, schedules and result automation.
 - `deploy.sh` — update, dependency repair, checks and background restart.
+- `termux.env.example` — direct-open local environment template and Firebase/WhatsApp settings.
 - Result website is locked to `https://dpbosss.net.in/`.
 
 Runtime data, WhatsApp auth, logs and generated cache files are intentionally not stored in Git.
