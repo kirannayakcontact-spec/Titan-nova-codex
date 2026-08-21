@@ -84,15 +84,44 @@ wait_http() {
   return 1
 }
 
+kill_matching() {
+  local signal="$1"
+  local pattern="$2"
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -"$signal" -f "$pattern" 2>/dev/null || true
+    return
+  fi
+  # Android/Termux installations may not include psmisc/pkill. Use the
+  # portable ps/kill fallback without killing this deploy shell itself.
+  local pid
+  for pid in $(ps -A -o pid=,args= 2>/dev/null | awk -v p="$pattern" 'index($0,p) && $1 != 1 {print $1}'); do
+    kill -"$signal" "$pid" 2>/dev/null || true
+  done
+}
+
+kill_port_fallback() {
+  local port="$1"
+  local pid
+  if command -v ss >/dev/null 2>&1; then
+    for pid in $(ss -ltnp 2>/dev/null | awk -v p=":${port}" 'index($0,p) {while(match($0,/pid=[0-9]+/)){x=substr($0,RSTART+4,RLENGTH-4); print x; $0=substr($0,RSTART+RLENGTH)}}'); do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+  elif command -v netstat >/dev/null 2>&1; then
+    for pid in $(netstat -ltnp 2>/dev/null | awk -v p=":${port}" 'index($0,p) { split($NF,a,"/"); if (a[1] ~ /^[0-9]+$/) print a[1] }'); do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+  fi
+}
+
 stop_old() {
   say "🛑 Old Flask/Gateway stop"
-  pkill -TERM -f "python.*flask_app.py" 2>/dev/null || true
-  pkill -TERM -f "python3.*flask_app.py" 2>/dev/null || true
-  pkill -TERM -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
+  kill_matching TERM "python.*flask_app.py"
+  kill_matching TERM "python3.*flask_app.py"
+  kill_matching TERM "node.*whatsapp_multi_session.js"
   sleep 1
-  pkill -KILL -f "python.*flask_app.py" 2>/dev/null || true
-  pkill -KILL -f "python3.*flask_app.py" 2>/dev/null || true
-  pkill -KILL -f "node.*whatsapp_multi_session.js" 2>/dev/null || true
+  kill_matching KILL "python.*flask_app.py"
+  kill_matching KILL "python3.*flask_app.py"
+  kill_matching KILL "node.*whatsapp_multi_session.js"
 
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${PORT}/tcp" 2>/dev/null || true
@@ -100,6 +129,9 @@ stop_old() {
   elif command -v lsof >/dev/null 2>&1; then
     lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
     lsof -ti tcp:"$GATEWAY_PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+  else
+    kill_port_fallback "$PORT"
+    kill_port_fallback "$GATEWAY_PORT"
   fi
 }
 

@@ -337,16 +337,16 @@ async function handleDepositImage(sock, baileys, msg){
     if(!chatJid || chatJid === "status@broadcast") return;
     const senderJid = (msg.key && (msg.key.participant || msg.key.remoteJid)) || "";
     const imageMessage = imageMessageOf(msg.message);
-    if(!imageMessage) return; // text-only "Deposit" can never create a proof
+    if(!imageMessage) return false; // text-only "Deposit" can never create a proof
 
     const caption = textOfMessage(msg.message);
     const mid = (msg.key && msg.key.id) || crypto.createHash("sha1").update(JSON.stringify(msg.key || {}) + caption).digest("hex");
-    if(hasSeen(mid)) return;
+    if(hasSeen(mid)) return false;
     remember(mid);
 
     const stream = await baileys.downloadContentFromMessage(imageMessage, "image");
     const image = await streamToBuffer(stream);
-    if(!image.length) return;
+    if(!image.length) return true;
 
     const amount = parseAmount(caption);
     const phone = senderPhone(senderJid || chatJid);
@@ -371,60 +371,41 @@ async function handleDepositImage(sock, baileys, msg){
       const ex = data.extracted || {};
       await sendReply(sock, chatJid,
         `✅ Payment screenshot verified.\nAmount: ₹${ex.amount || amount || "-"}\nUTR: ${ex.utr || "-"}\nReceiver UPI: ${ex.receiver_upi || "-"}\nProof ID: ${data.proof_id || "-"}\nConfidence: ${Math.round(Number(data.confidence || 0) * 100)}%\nStatus: ${data.wallet_credited ? "Wallet auto-credited" : "Admin review pending"}.`, msg);
-      return;
+      return true;
     }
 
     if(status === "DUPLICATE_UTR" || status === "DUPLICATE_IMAGE"){
       await sendReply(sock, chatJid, "❌ Ye payment screenshot/UTR pehle submit ho chuka hai. Naya proof ID nahi bana.", msg);
-      return;
+      return true;
     }
     if(status === "RECEIVER_MISMATCH"){
       await sendReply(sock, chatJid, `❌ Payment galat UPI receiver ko hua hai.\n${data.reason || "Receiver UPI match nahi hua."}\nKoi proof ID nahi bana.`, msg);
-      return;
+      return true;
     }
     if(status === "AMOUNT_MISMATCH"){
       await sendReply(sock, chatJid, `❌ Screenshot amount match nahi hua.\n${data.reason || "Amount mismatch."}\nKoi proof ID nahi bana.`, msg);
-      return;
+      return true;
     }
 
     await sendReply(sock, chatJid,
       `❌ Valid payment screenshot verify nahi hua.\n${data.reason || "Amount, success status, UTR ya receiver UPI clear nahi mila."}\nPayment app ka successful transaction screenshot dobara bhejo. Koi proof ID nahi bana.`, msg);
+    return true;
   }catch(e){
     console.warn("Deposit OCR bridge failed:", e && e.message ? e.message : e);
     try{
       const chatJid = msg && msg.key && msg.key.remoteJid;
       await sendReply(sock, chatJid, "⚠️ Screenshot OCR check fail hua. Koi payment ID nahi bana. Clear successful payment screenshot dobara bhejo.", msg);
     }catch(_e){}
+    return true;
   }
 }
 
-try{
-  if(ENABLED){
-    const baileys = require("@whiskeysockets/baileys");
-    const original = baileys && baileys.default;
-    if(original && !original.__titanDepositOcrWrapped){
-      function wrappedMakeWASocket(...args){
-        const sock = original(...args);
-        try{
-          const oldOn = sock && sock.ev && sock.ev.on ? sock.ev.on.bind(sock.ev) : null;
-          if(oldOn && !sock.__titanDepositOcrAttached){
-            sock.__titanDepositOcrAttached = true;
-            oldOn("messages.upsert", async (upsert) => {
-              try{
-                const messages = Array.isArray(upsert && upsert.messages) ? upsert.messages : [];
-                for(const msg of messages) await handleDepositImage(sock, baileys, msg);
-              }catch(e){ console.warn("Deposit OCR upsert hook failed:", e && e.message ? e.message : e); }
-            });
-          }
-        }catch(e){ console.warn("Deposit OCR socket attach failed:", e && e.message ? e.message : e); }
-        return sock;
-      }
-      wrappedMakeWASocket.__titanDepositOcrWrapped = true;
-      baileys.default = wrappedMakeWASocket;
-      console.log(`✅ Strict image-only Deposit OCR loaded: ${FEATURE_VERSION}`);
-    }
-  }
-}catch(err){ console.warn("⚠️ Deposit OCR WhatsApp bridge failed to load:", err && err.message ? err.message : err); }
+// Baileys exposes an immutable ESM namespace in current releases. Do not mutate
+// `baileys.default`; register a callback and let the canonical gateway dispatch it.
+if(ENABLED){
+  global.__TITAN_DEPOSIT_OCR_HANDLER__ = handleDepositImage;
+  console.log(`✅ Strict image-only Deposit OCR loaded: ${FEATURE_VERSION}`);
+}
 
 })();
 // END CONSOLIDATED gateway_deposit_ocr_patch.js
@@ -550,41 +531,10 @@ if (!global.__TITAN_WITHDRAWAL_RUNTIME_V1__) {
     }
   }
 
-  const Module = require("module");
-  const oldLoad = Module._load;
-  Module._load = function patchedLoad(req, parent, isMain) {
-    const mod = oldLoad.apply(this, arguments);
-    try {
-      if (req === "@whiskeysockets/baileys" && mod && !mod.__titanWithdrawalRuntimeWrapped) {
-        const original = mod.default;
-        if (typeof original === "function") {
-          mod.default = function wrappedSocket() {
-            const sock = original.apply(this, arguments);
-            if (sock?.ev?.on && !sock.ev.__titanWithdrawalRuntimeWrapped) {
-              const originalOn = sock.ev.on.bind(sock.ev);
-              sock.ev.on = function(event, handler) {
-                if (event === "messages.upsert" && typeof handler === "function") {
-                  return originalOn(event, async upsert => {
-                    const rest = [];
-                    for (const m of (Array.isArray(upsert?.messages) ? upsert.messages : [])) {
-                      if (!(await processOne(sock, mod, m))) rest.push(m);
-                    }
-                    if (rest.length) return handler({ ...upsert, messages: rest });
-                  });
-                }
-                return originalOn(event, handler);
-              };
-              sock.ev.__titanWithdrawalRuntimeWrapped = true;
-            }
-            return sock;
-          };
-        }
-        mod.__titanWithdrawalRuntimeWrapped = true;
-        console.log("✅ Gateway withdrawal-only runtime active");
-      }
-    } catch (e) { console.log("Withdrawal hook error:", e.message); }
-    return mod;
-  };
+  // Current Baileys versions expose an immutable module namespace. Register the
+  // handler with the canonical gateway instead of assigning to `module.default`.
+  global.__TITAN_WITHDRAWAL_HANDLER__ = processOne;
+  console.log("✅ Gateway withdrawal-only runtime active");
 }
 
 module.exports = { enabled: true, feature: "gateway_withdrawal_runtime_v1" };
@@ -6243,6 +6193,11 @@ async function startWhatsApp(){
         if(!m?.message || m.key?.fromMe) continue;
         if(!rememberIncomingMessage(m)) continue;
         await withRoleSocket(socketInstance, async () => {
+          const baileysRuntime = { downloadContentFromMessage };
+          const depositHook = global.__TITAN_DEPOSIT_OCR_HANDLER__;
+          if(typeof depositHook === "function" && await depositHook(socketInstance, baileysRuntime, m)) return;
+          const withdrawalHook = global.__TITAN_WITHDRAWAL_HANDLER__;
+          if(typeof withdrawalHook === "function" && await withdrawalHook(socketInstance, baileysRuntime, m)) return;
           const complianceHandled = await handleWhatsappComplianceCommandMessage(m);
           if(complianceHandled) return;
           // owner_bot is deliberately isolated from public game, money, result,
@@ -6565,7 +6520,7 @@ app.get("/status", async (req,res)=>{
     configCleanup:gatewayConfigReport(), paymentOutbox:true, loadForwarder:true, spamGuard:true, whatsappSafetyGuard:true, durability:{version:GATEWAY_DURABILITY_VERSION, firebaseLocks:true, owner:GATEWAY_LOCK_OWNER, localFallbackFiles:{sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE}}, counts, health:gatewayHealth
   });
 });
-app.get("/health", async (req,res)=>{
+app.get(["/health", "/api/health"], async (req,res)=>{
   try {
     const state = await fetchFirebaseState();
     const lf = state.loadForwarder || {};

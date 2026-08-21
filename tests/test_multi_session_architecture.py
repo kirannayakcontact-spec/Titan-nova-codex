@@ -9,6 +9,9 @@ class MultiSessionArchitectureTests(unittest.TestCase):
     def manager_source(self):
         return (ROOT / "bot" / "session_manager.js").read_text()
 
+    def gateway_source(self):
+        return (ROOT / "whatsapp_multi_session.js").read_text()
+
     def config_source(self):
         return (ROOT / "bot" / "session_config.js").read_text()
 
@@ -63,6 +66,20 @@ class MultiSessionArchitectureTests(unittest.TestCase):
         source = (ROOT / "multi_session_manager.js").read_text()
         self.assertIn('require("./bot/session_manager.js")', source)
         self.assertNotIn("messages.upsert", source)
+
+    def test_baileys_hooks_use_canonical_callbacks(self):
+        source = self.gateway_source()
+        self.assertNotIn("baileys.default =", source)
+        self.assertNotIn("mod.default =", source)
+        self.assertIn("__TITAN_DEPOSIT_OCR_HANDLER__", source)
+        self.assertIn("__TITAN_WITHDRAWAL_HANDLER__", source)
+
+    def test_gateway_has_process_lock_and_deploy_port_cleanup(self):
+        source = self.gateway_source()
+        deploy = (ROOT / "deploy.sh").read_text()
+        self.assertIn("GATEWAY_LOCK_FILE", source)
+        self.assertIn("kill_port_fallback", deploy)
+        self.assertIn("GATEWAY_PORT", deploy)
 
     def test_required_boot_scripts_use_canonical_gateway(self):
         source = (ROOT / "deploy.sh").read_text()
