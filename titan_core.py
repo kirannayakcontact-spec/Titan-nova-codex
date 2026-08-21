@@ -31,6 +31,8 @@ import time
 import hashlib
 import traceback
 import base64
+import copy
+import threading
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("TITAN_FLASK_SECRET", os.environ.get("TITAN_ADMIN_TOKEN", secrets.token_hex(24)))
@@ -424,6 +426,13 @@ TITAN_STATE_DIR = os.environ.get("TITAN_STATE_DIR", BASE_DIR).strip() or BASE_DI
 # Local-first storage: set TITAN_STORAGE_MODE=firebase only when Firebase is intentionally used.
 TITAN_STORAGE_MODE = str(os.environ.get("TITAN_STORAGE_MODE", "sqlite")).strip().lower() or "sqlite"
 TITAN_SQLITE_PATH = os.path.abspath(os.environ.get("TITAN_SQLITE_PATH", os.path.join(TITAN_STATE_DIR, "titan_nova.sqlite3")))
+# Short-lived cache avoids reparsing the complete JSON state on every dashboard poll.
+# All writes still invalidate/update the cache and are serialized by the lock.
+TITAN_SQLITE_CACHE_TTL_MS = max(int(os.environ.get("TITAN_SQLITE_CACHE_TTL_MS", "250") or "250"), 0)
+_SQLITE_STATE_LOCK = threading.RLock()
+_SQLITE_STATE_CACHE = None
+_SQLITE_STATE_CACHE_AT = 0.0
+_SQLITE_STATE_CACHE_UPDATED_AT = ""
 STATE_BACKUP_DIR = os.path.join(TITAN_STATE_DIR, "titan_state_backups")
 LAST_KNOWN_GOOD_FILE = os.path.join(STATE_BACKUP_DIR, "last_known_good.json")
 MAX_STATE_BACKUPS = int(os.environ.get("TITAN_MAX_STATE_BACKUPS", "30"))
@@ -663,7 +672,12 @@ def _sqlite_connect():
     return conn
 
 def _sqlite_load_state():
-    global FIREBASE_LAST_LOAD_META
+    global FIREBASE_LAST_LOAD_META, _SQLITE_STATE_CACHE, _SQLITE_STATE_CACHE_AT, _SQLITE_STATE_CACHE_UPDATED_AT
+    now_mono = time.monotonic()
+    with _SQLITE_STATE_LOCK:
+        if (_SQLITE_STATE_CACHE is not None and TITAN_SQLITE_CACHE_TTL_MS > 0 and
+                (now_mono - _SQLITE_STATE_CACHE_AT) * 1000 <= TITAN_SQLITE_CACHE_TTL_MS):
+            return copy.deepcopy(_SQLITE_STATE_CACHE)
     try:
         with _sqlite_connect() as conn:
             row = conn.execute("SELECT state_json, updated_at FROM app_state WHERE id = 1").fetchone()
@@ -673,6 +687,10 @@ def _sqlite_load_state():
         state = json.loads(row["state_json"])
         if not isinstance(state, dict):
             raise ValueError("SQLite state row is not a JSON object")
+        with _SQLITE_STATE_LOCK:
+            _SQLITE_STATE_CACHE = copy.deepcopy(state)
+            _SQLITE_STATE_CACHE_AT = time.monotonic()
+            _SQLITE_STATE_CACHE_UPDATED_AT = str(row["updated_at"] or "")
         FIREBASE_LAST_LOAD_META = {"status": "success", "storage": "sqlite", "message": "loaded", "updatedAt": row["updated_at"], "path": TITAN_SQLITE_PATH}
         try:
             _rt_cache_set(state, "sqlite_get")
@@ -685,15 +703,20 @@ def _sqlite_load_state():
         return None
 
 def _sqlite_save_state(state, backup_label="sqlite_save"):
+    global _SQLITE_STATE_CACHE, _SQLITE_STATE_CACHE_AT, _SQLITE_STATE_CACHE_UPDATED_AT
     if not isinstance(state, dict):
         return False
     payload = json.dumps(state, ensure_ascii=False, default=str, separators=(",", ":"))
     stamp = _now_iso_local() if "_now_iso_local" in globals() else datetime.datetime.now().isoformat(timespec="seconds")
     try:
-        with _sqlite_connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("INSERT INTO app_state(id, state_json, updated_at) VALUES(1, ?, ?) ON CONFLICT(id) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at", (payload, stamp))
-            conn.commit()
+        with _SQLITE_STATE_LOCK:
+            with _sqlite_connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("INSERT INTO app_state(id, state_json, updated_at) VALUES(1, ?, ?) ON CONFLICT(id) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at", (payload, stamp))
+                conn.commit()
+            _SQLITE_STATE_CACHE = copy.deepcopy(state)
+            _SQLITE_STATE_CACHE_AT = time.monotonic()
+            _SQLITE_STATE_CACHE_UPDATED_AT = stamp
         FIREBASE_LAST_LOAD_META.update({"status": "success", "storage": "sqlite", "updatedAt": stamp, "path": TITAN_SQLITE_PATH})
         try:
             _rt_cache_set(state, "sqlite_save")
@@ -745,14 +768,17 @@ def _sqlite_child_get(parts):
     return _sqlite_get_path(state, parts)
 
 def _sqlite_child_write(parts, value, mode="put"):
-    state = _sqlite_load_state() or {}
-    if mode == "delete":
-        _sqlite_delete_path(state, parts)
-    else:
-        _sqlite_set_path(state, parts, value, merge=(mode == "patch"))
-    if not _sqlite_save_state(state, "child_" + mode):
-        raise RuntimeError("SQLite state write failed")
-    return True
+    # Serialize the full read-modify-write cycle, not only the final SQL commit.
+    # This prevents simultaneous WhatsApp payment/withdrawal updates from overwriting each other.
+    with _SQLITE_STATE_LOCK:
+        state = _sqlite_load_state() or {}
+        if mode == "delete":
+            _sqlite_delete_path(state, parts)
+        else:
+            _sqlite_set_path(state, parts, value, merge=(mode == "patch"))
+        if not _sqlite_save_state(state, "child_" + mode):
+            raise RuntimeError("SQLite state write failed")
+        return True
 
 def get_firebase_url():
     url = FIREBASE_DB_URL.strip().rstrip('/')
@@ -9857,6 +9883,9 @@ HTML_TEMPLATE = """
         // ==========================================
         if (!IS_MASTER) {
             setInterval(async () => {
+                // The shared realtime engine already owns state polling. Keep this
+                // legacy notification loop only as a fallback for older pages.
+                if (window.__TitanRealtime) return;
                 try {
                     let res = await fetch('/api/state?live_sync=1&_fast=1&_=' + Date.now(), {cache:'no-store'});
                     if(!res.ok) return;

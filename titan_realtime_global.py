@@ -435,7 +435,8 @@ REALTIME_SCRIPT = r'''
   if(window.__TITAN_GLOBAL_REALTIME_SMOOTH_V8__) return;
   window.__TITAN_GLOBAL_REALTIME_SMOOTH_V8__ = true;
   const VERSION='2026-07-09-ledger-delete-intent-guard-v8';
-  const POLL_MS=Math.max(900,Number(localStorage.getItem('TITAN_REALTIME_POLL_MS')||1800));
+  const POLL_MS=Math.max(1400,Number(localStorage.getItem('TITAN_REALTIME_POLL_MS')||2400));
+  const HIDDEN_POLL_MS=Math.max(POLL_MS*4,10000);
   const WRITE_REFRESH_DELAYS=[180,720], RENDER_DEBOUNCE_MS=160, INPUT_HOLD_MS=1800, SCROLL_HOLD_MS=900, TAB_HOLD_MS=9500;
   const LOCAL_UI_STORE='titan.local.ui.toggles.v1';
   const LEDGER_ROOT_KEYS=['ledger','ledgers','ledgerEntries','entries','entryBook','entryBooks','dailyLedger','marketLedger','ledgerCards','cardLedger','entryLedger'];
@@ -479,7 +480,10 @@ REALTIME_SCRIPT = r'''
   try{const XHR=window.XMLHttpRequest;const oldOpen=XHR.prototype.open;const oldSend=XHR.prototype.send;XHR.prototype.open=function(method,url){this.__titanRtMethod=String(method||'GET').toUpperCase();this.__titanRtUrl=String(url||'');return oldOpen.apply(this,arguments)};XHR.prototype.send=function(body){try{if(body&&this.__titanRtMethod!=='GET'&&String(body).trim().startsWith('{')){let data=JSON.parse(String(body));data=attachLedgerDeleteIntent(data);body=JSON.stringify(scrubLocalOnly(data,0))}}catch(e){}const write=this.__titanRtMethod!=='GET'&&(/\/api\//.test(this.__titanRtUrl)||/\/save(\?|$)/.test(this.__titanRtUrl)||/\/bot_schedule(\?|$)/.test(this.__titanRtUrl));if(write){markWrite('xhr_'+this.__titanRtMethod,1200);this.addEventListener('loadend',()=>scheduleAfterWrite('xhr_done_'+this.__titanRtMethod))}return oldSend.call(this,body)}}catch(e){}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(()=>fetchState('visible',true),220)});window.addEventListener('focus',()=>setTimeout(()=>fetchState('focus',true),220));document.addEventListener('titan:force-sync',()=>fetchState('event',true));document.addEventListener('titan:apply-local-ui',applyLocalControls);
   window.__TitanRealtime={version:VERSION,refresh:(r)=>fetchState(r||'manual',true),markWrite,applyLocalControls,scrubLocalOnly,pause:(ms)=>{pausedUntil=now()+Number(ms||1000)},pauseEntries:(ms)=>{protectedHoldNav='entries';protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)},pauseForward:(ms)=>{protectedHoldNav='forward';protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)},pauseFinance:(ms)=>{protectedHoldNav='finance';protectedHoldUntil=now()+Number(ms||TAB_HOLD_MS)},status:()=>({lastAppliedAt,syncBusy,writeLockUntil,interactionUntil,protectedHoldUntil,protectedHoldNav,pollMs:POLL_MS,localOnlyUiToggles:true,fullRootStaleOverwriteGuard:true,ledgerDeleteIntentGuard:true})};
-  setInterval(()=>fetchState('poll',false),POLL_MS);setInterval(applyLocalControls,1500);setTimeout(()=>fetchState('boot',true),850);setTimeout(applyLocalControls,900);console.log('✅ Titan Global Realtime Smooth active',VERSION,'ledger-delete-intent');
+  let pollTimer=null;
+  function schedulePoll(){clearTimeout(pollTimer);pollTimer=setTimeout(async()=>{await fetchState('poll',false);schedulePoll()},document.hidden?HIDDEN_POLL_MS:POLL_MS)}
+  document.addEventListener('visibilitychange',()=>{schedulePoll()});
+  schedulePoll();setInterval(applyLocalControls,1500);setTimeout(()=>fetchState('boot',true),850);setTimeout(applyLocalControls,900);console.log('✅ Titan Global Realtime Smooth active',VERSION,'ledger-delete-intent','poll',POLL_MS,'hidden',HIDDEN_POLL_MS);
 })();
 </script>
 '''

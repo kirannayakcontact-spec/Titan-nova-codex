@@ -41,6 +41,11 @@ class SQLiteStorageTests(unittest.TestCase):
         self.assertIn("pendingWithdrawals", SOURCE)
         self.assertIn("'activity': _payment_activity_items(state, 200)", SOURCE)
 
+    def test_sqlite_cache_and_write_lock_are_enabled(self):
+        self.assertIn("TITAN_SQLITE_CACHE_TTL_MS", SOURCE)
+        self.assertIn("_SQLITE_STATE_LOCK = threading.RLock()", SOURCE)
+        self.assertIn("Serialize the full read-modify-write cycle", SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

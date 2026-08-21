@@ -94,6 +94,13 @@ class MultiSessionArchitectureTests(unittest.TestCase):
         self.assertIn('/api/internal/state', core)
         self.assertIn("'storage': 'sqlite'", core)
 
+    def test_realtime_polling_is_visibility_aware_and_deduplicated(self):
+        source = (ROOT / "titan_realtime_global.py").read_text()
+        core = (ROOT / "titan_core.py").read_text()
+        self.assertIn("HIDDEN_POLL_MS", source)
+        self.assertIn("function schedulePoll()", source)
+        self.assertIn("if (window.__TitanRealtime) return;", core)
+
     def test_required_boot_scripts_use_canonical_gateway(self):
         source = (ROOT / "deploy.sh").read_text()
         self.assertIn("node whatsapp_multi_session.js", source)

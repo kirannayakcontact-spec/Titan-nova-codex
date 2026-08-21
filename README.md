@@ -68,3 +68,7 @@ Users do not need to open the dashboard. They message the linked WhatsApp bot wi
 For withdrawals, the user sends `withdraw 500 upi user@upi`, `withdraw 500 qr` with a QR image, or `withdraw 500 bank Name / A-C / IFSC`. The bot checks the user profile, available wallet, active-request limit, and amount limits, then places a wallet hold and creates a pending withdrawal. The admin uses the dashboard Finance/Withdrawals area to **Approve**, pay externally, and then **Mark Paid** with the transaction ID; the bot sends approval and completion replies back to the user. Reject actions include the reason in the WhatsApp reply.
 
 The admin dashboard can read the unified activity feed at `/api/payment_activity`, which includes WhatsApp proofs, withdrawals, approvals, rejections, wallet holds, payments, and outbox status. Keep Flask and the gateway bound to `127.0.0.1` because the direct-open dashboard has no HTTP token layer.
+
+## Performance tuning
+
+SQLite reads use a short-lived 250 ms in-memory cache and a serialized read-modify-write lock for payment and wallet child updates. The dashboard polls quickly while visible and backs off to a 10-second minimum interval when the browser is hidden. To change the server cache window, set `TITAN_SQLITE_CACHE_TTL_MS`; keep the default for normal Termux use and set it to `0` only while debugging stale-state behaviour.
