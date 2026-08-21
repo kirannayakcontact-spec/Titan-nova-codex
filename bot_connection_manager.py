@@ -78,7 +78,7 @@ BOT_MANAGER_UI = r'''
 </style>
 <script id="titan-bot-connection-manager-script">
 (function(){
- const roles=['owner_bot','finance_bot','game_bot','result_bot','ledger_bot'];
+ const roles=['owner_bot','finance_bot','game_bot','result_bot'];
  const ADMIN_TAB='admin';
  const label=r=>r.replace(/_bot$/,'').replace(/_/g,' ');
  const manager=document.getElementById('titan-bot-connection-manager');

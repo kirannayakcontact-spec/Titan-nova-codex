@@ -7738,7 +7738,7 @@ HTML_TEMPLATE = """
         // ==========================================
 
         // ── PWA / SERVICE WORKER ──
-        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js?v=2026.08.21.2').then(reg=>reg.update()).catch(()=>{}); }
         let deferredPrompt;
 
         window.addEventListener('beforeinstallprompt', (e) => {
@@ -12403,7 +12403,7 @@ withdraw status</pre>
             container.innerHTML = '';
 
             // Bookie dashboard: supported admin tabs only.
-            else if(mainNav === 'clients' && IS_MASTER) { container.innerHTML = renderClients(); }
+            if(mainNav === 'clients' && IS_MASTER) { container.innerHTML = renderClients(); }
             else if(mainNav === 'finance' && IS_MASTER) { container.innerHTML = renderFinanceTab(); }
             else if(mainNav === 'wallets' && IS_MASTER) { financeSubTab = 'wallets'; mainNav = 'finance'; container.innerHTML = renderFinanceTab(); }
             else if(mainNav === 'withdrawals' && IS_MASTER) { financeSubTab = 'withdrawals'; mainNav = 'finance'; container.innerHTML = renderFinanceTab(); }

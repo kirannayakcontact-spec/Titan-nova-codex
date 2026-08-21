@@ -134,7 +134,7 @@ _register_core_controller("Titan Setup control", "register_titan_setup_control",
 _register_core_controller("Titan Result control", "register_titan_result_control", ui_heavy=False)
 _register_patch("Titan strict result rules", "titan_strict_result_rules_patch", "register_titan_strict_result_rules", ui_heavy=False)
 _register_patch("Titan frontend boot/render guard", "titan_frontend_boot_fix_patch", "register_titan_frontend_boot_fix", ui_heavy=False)
-_register_patch("Titan Ledger control", "titan_ledger_control_overlay_patch", "register_titan_ledger_control_overlay", ui_heavy=False)
+# Legacy Ledger control overlay removed; it must not inject UI into the bookie dashboard.
 # This integration is part of the supported dashboard, not an optional patch.
 # Import it explicitly so packaging errors fail during startup rather than
 # silently leaving the Admin Dashboard endpoints unavailable (404).

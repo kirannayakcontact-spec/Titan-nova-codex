@@ -9,7 +9,7 @@ from __future__ import annotations
 from flask import Response
 
 
-PWA_VERSION = "2026.07.22.1"
+PWA_VERSION = "2026.08.21.2"
 
 SERVICE_WORKER = f"""'use strict';
 const VERSION = 'titan-pwa-{PWA_VERSION}';
@@ -50,17 +50,13 @@ self.addEventListener('fetch', event => {{
     return;
   }}
 
-  // Navigations use stale-while-revalidate: render the last safe shell now and
-  // refresh it in the background. API and financial writes are never included.
+  // Navigations are network-first so a dashboard deployment cannot be hidden
+  // behind a stale cached HTML shell. Cache is only a temporary offline fallback.
   if (request.mode === 'navigate' && url.origin === self.location.origin) {{
-    event.respondWith(caches.open(PAGE_CACHE).then(async cache => {{
-      const cached = await cache.match(request);
-      const network = fetch(request).then(response => {{
-        if (response.ok) cache.put(request, response.clone());
-        return response;
-      }});
-      return cached || network;
-    }}));
+    event.respondWith(fetch(request).then(response => {{
+      if (response.ok) caches.open(PAGE_CACHE).then(cache => cache.put(request, response.clone()));
+      return response;
+    }}).catch(() => caches.match(request)));
   }}
 }});
 """

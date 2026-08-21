@@ -28,7 +28,6 @@ PYTHON_FILES = [
     "titan_codex_stability_patch.py",
     "titan_firebase_guard_patch.py",
     "titan_frontend_boot_fix_patch.py",
-    "titan_ledger_control_overlay_patch.py",
     "titan_pwa_fast_patch.py",
     "titan_realtime_global.py",
     "titan_strict_result_rules_patch.py",
@@ -92,7 +91,6 @@ def check_launcher_references() -> None:
         if re.search(rf"\b{re.escape(forbidden)}\b", combined):
             fail(f"Obsolete runtime reference remains: {forbidden}")
     required = [
-        "titan_ledger_control_overlay_patch",
         "BEGIN CONSOLIDATED gateway_deposit_ocr_patch.js",
         "BEGIN CONSOLIDATED gateway_withdrawal_runtime_patch.js",
         "OWNER_CODE_LOGIN_V1",
