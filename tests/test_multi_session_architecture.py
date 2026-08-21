@@ -81,6 +81,19 @@ class MultiSessionArchitectureTests(unittest.TestCase):
         self.assertIn("kill_port_fallback", deploy)
         self.assertIn("GATEWAY_PORT", deploy)
 
+    def test_sqlite_is_the_canonical_gateway_payment_store(self):
+        gateway = self.gateway_source()
+        core = (ROOT / "titan_core.py").read_text()
+        self.assertIn('TITAN_STORAGE_MODE', gateway)
+        self.assertIn('TITAN_SQLITE_MODE', gateway)
+        self.assertIn('/api/internal/state', gateway)
+        self.assertIn('/api/internal/state/child', gateway)
+        self.assertIn('TITAN_SKIP_WHATSAPP_START', gateway)
+        self.assertIn('handleIncomingDepositScreenshotMessage', gateway)
+        self.assertIn('handleIncomingWithdrawalMessage', gateway)
+        self.assertIn('/api/internal/state', core)
+        self.assertIn("'storage': 'sqlite'", core)
+
     def test_required_boot_scripts_use_canonical_gateway(self):
         source = (ROOT / "deploy.sh").read_text()
         self.assertIn("node whatsapp_multi_session.js", source)

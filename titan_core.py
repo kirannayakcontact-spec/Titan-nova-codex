@@ -3652,6 +3652,48 @@ def get_state_api():
         return jsonify(isolated_state)
     return jsonify(state)
 
+def _internal_sqlite_bridge_allowed():
+    return request.remote_addr in (None, '', '127.0.0.1', '::1')
+
+@app.route('/api/internal/state', methods=['GET', 'POST'])
+def api_internal_state_bridge():
+    """Local-only bridge used by the Node WhatsApp gateway in SQLite mode."""
+    if not _internal_sqlite_bridge_allowed():
+        return jsonify({'status': 'error', 'message': 'SQLite gateway bridge is localhost-only'}), 403
+    if not _sqlite_enabled():
+        return jsonify({'status': 'error', 'message': 'SQLite gateway bridge is disabled in Firebase mode'}), 409
+    if request.method == 'GET':
+        return jsonify(migrate_and_get_state())
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'status': 'error', 'message': 'State object required'}), 400
+    _ensure_foundation_state(payload)
+    if not _sqlite_save_state(payload, 'gateway_internal_state_sync'):
+        return jsonify({'status': 'error', 'message': 'SQLite state save failed'}), 500
+    return jsonify({'status': 'success', 'storage': 'sqlite'})
+
+@app.route('/api/internal/state/child', methods=['GET', 'POST'])
+def api_internal_state_child_bridge():
+    """Child-path bridge for bot idempotency, payment outbox and narrow writes."""
+    if not _internal_sqlite_bridge_allowed():
+        return jsonify({'status': 'error', 'message': 'SQLite gateway bridge is localhost-only'}), 403
+    if not _sqlite_enabled():
+        return jsonify({'status': 'error', 'message': 'SQLite gateway bridge is disabled in Firebase mode'}), 409
+    raw_parts = request.args.getlist('part') if request.method == 'GET' else []
+    if request.method == 'GET' and not raw_parts:
+        raw_parts = [x for x in str(request.args.get('parts') or '').split('/') if x]
+    parts = [str(x).strip() for x in raw_parts if str(x).strip()]
+    if request.method == 'GET':
+        return jsonify({'status': 'success', 'value': _sqlite_child_get(parts), 'storage': 'sqlite'})
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload.get('parts'), list):
+        return jsonify({'status': 'error', 'message': 'parts array required'}), 400
+    mode = str(payload.get('mode') or 'put').lower()
+    if mode not in ('put', 'patch', 'delete'):
+        return jsonify({'status': 'error', 'message': 'mode must be put, patch or delete'}), 400
+    if not _sqlite_child_write(payload.get('parts') or [], payload.get('value'), mode):
+        return jsonify({'status': 'error', 'message': 'SQLite child write failed'}), 500
+    return jsonify({'status': 'success', 'storage': 'sqlite'})
 
 @app.route('/api/realtime_sync_status')
 def api_realtime_sync_status():
@@ -5104,6 +5146,42 @@ def api_payment_settings():
     _firebase_put_top_level_children(state, {'paymentSettings': settings})
     return jsonify({'status': 'success', 'paymentSettings': settings})
 
+def _payment_activity_items(state, limit=200):
+    rows = []
+    for event in (state.get('auditLog', []) if isinstance(state.get('auditLog', []), list) else []):
+        if not isinstance(event, dict):
+            continue
+        action = str(event.get('action') or '').lower()
+        if any(token in action for token in ('payment', 'deposit', 'withdrawal', 'wallet_hold', 'wallet_credit')):
+            rows.append({
+                'id': event.get('id') or '',
+                'time': event.get('time') or event.get('createdAt') or '',
+                'type': 'audit',
+                'action': event.get('action') or '',
+                'detail': event.get('detail') or {},
+            })
+    for payment in (state.get('payments', []) if isinstance(state.get('payments', []), list) else []):
+        if isinstance(payment, dict):
+            rows.append({'id': payment.get('id') or '', 'time': payment.get('updatedAt') or payment.get('createdAt') or payment.get('time') or '', 'type': 'deposit', 'status': payment.get('status') or payment.get('paymentStatus') or 'pending', 'amount': payment.get('amount') or 0, 'userId': payment.get('userId') or '', 'utr': payment.get('utr') or ''})
+    for withdrawal in (state.get('withdrawals', []) if isinstance(state.get('withdrawals', []), list) else []):
+        if isinstance(withdrawal, dict):
+            rows.append({'id': withdrawal.get('id') or '', 'time': withdrawal.get('updatedAt') or withdrawal.get('createdAt') or withdrawal.get('time') or '', 'type': 'withdrawal', 'status': withdrawal.get('status') or 'pending', 'amount': withdrawal.get('amount') or 0, 'userId': withdrawal.get('userId') or '', 'transactionId': withdrawal.get('transactionId') or ''})
+    rows.sort(key=lambda item: str(item.get('time') or ''), reverse=True)
+    return rows[:max(1, min(int(limit or 200), 500))]
+
+@app.route('/api/payment_activity')
+def api_payment_activity():
+    state = migrate_and_get_state()
+    items = _payment_activity_items(state, request.args.get('limit', 200))
+    return jsonify({
+        'status': 'success',
+        'storage': TITAN_STORAGE_MODE,
+        'activity': items,
+        'count': len(items),
+        'pendingDeposits': sum(1 for p in (state.get('payments', []) or []) if isinstance(p, dict) and str(p.get('status') or '').lower() in ('pending', 'needs_review', 'pending_admin_approval')),
+        'pendingWithdrawals': sum(1 for w in (state.get('withdrawals', []) or []) if isinstance(w, dict) and str(w.get('status') or '').lower() in ('pending', 'approved')),
+    })
+
 @app.route('/api/payments')
 def api_payments():
     state = migrate_and_get_state()
@@ -5113,7 +5191,8 @@ def api_payments():
         'payments': payments,
         'paymentSettings': state.get('paymentSettings', _default_payment_settings()),
         'wallets': state.get('wallets', {}),
-        'paymentOutbox': state.get('paymentOutbox', [])[-50:]
+        'paymentOutbox': state.get('paymentOutbox', [])[-50:],
+        'activity': _payment_activity_items(state, 200)
     })
 
 

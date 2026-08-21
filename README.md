@@ -59,4 +59,12 @@ Runtime data, WhatsApp auth, logs, generated cache files, and the local SQLite d
 
 ## Storage mode
 
-The runtime now defaults to **local SQLite**. The full application state is stored transactionally in `titan_nova.sqlite3` under `TITAN_STATE_DIR`; Firebase is not contacted in SQLite mode, and the dashboard no longer reports Firebase/Auth Sync warnings. Set `TITAN_STORAGE_MODE=firebase` and provide `FIREBASE_URL` only if remote Firebase storage is intentionally required. To use an existing local database at a custom location, set `TITAN_SQLITE_PATH` to its absolute path before starting Flask.
+The runtime now defaults to **local SQLite**. The full application state is stored transactionally in `titan_nova.sqlite3` under `TITAN_STATE_DIR`; Firebase is not contacted in SQLite mode, and the dashboard no longer reports Firebase/Auth Sync warnings. The WhatsApp gateway reads and writes the same local state through the localhost-only Flask bridge. Set `TITAN_STORAGE_MODE=firebase` and provide `FIREBASE_URL` only if remote Firebase storage is intentionally required. To use an existing local database at a custom location, set `TITAN_SQLITE_PATH` to its absolute path before starting Flask.
+
+## WhatsApp-only payment workflow
+
+Users do not need to open the dashboard. They message the linked WhatsApp bot with `deposit 500` or `deposit`, receive the configured UPI/QR instructions, and send the payment screenshot or a message containing the UTR. The bot deduplicates the proof, records the amount/UTR/OCR risk flags in SQLite, replies to the user, and sends an admin notification through the payment outbox.
+
+For withdrawals, the user sends `withdraw 500 upi user@upi`, `withdraw 500 qr` with a QR image, or `withdraw 500 bank Name / A-C / IFSC`. The bot checks the user profile, available wallet, active-request limit, and amount limits, then places a wallet hold and creates a pending withdrawal. The admin uses the dashboard Finance/Withdrawals area to **Approve**, pay externally, and then **Mark Paid** with the transaction ID; the bot sends approval and completion replies back to the user. Reject actions include the reason in the WhatsApp reply.
+
+The admin dashboard can read the unified activity feed at `/api/payment_activity`, which includes WhatsApp proofs, withdrawals, approvals, rejections, wallet holds, payments, and outbox status. Keep Flask and the gateway bound to `127.0.0.1` because the direct-open dashboard has no HTTP token layer.

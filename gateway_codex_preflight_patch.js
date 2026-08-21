@@ -33,8 +33,12 @@
     if (!process.env[name]) process.env[name] = value;
   }
 
-  setDefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json");
-  setDefault("FIREBASE_DB_URL", process.env.FIREBASE_URL);
+  setDefault("TITAN_STORAGE_MODE", "sqlite");
+  setDefault("TITAN_BACKEND_URL", process.env.FLASK_URL || process.env.BACKEND_URL || "http://127.0.0.1:5000");
+  if (!["sqlite", "local", "local_sqlite"].includes(String(process.env.TITAN_STORAGE_MODE || "").toLowerCase())) {
+    setDefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json");
+    setDefault("FIREBASE_DB_URL", process.env.FIREBASE_URL);
+  }
   setDefault("APP_TZ", "Asia/Kolkata");
 
   setDefault("RESULT_SCRAPE_CONFIRM_COUNT", "2");
@@ -55,7 +59,8 @@
   });
 
   event("preflight_loaded", "info", `Gateway preflight loaded ${VERSION}`, {
-    firebaseConfigured: !!process.env.FIREBASE_URL,
+    storageMode: process.env.TITAN_STORAGE_MODE,
+    firebaseConfigured: !!process.env.FIREBASE_URL && !["sqlite", "local", "local_sqlite"].includes(String(process.env.TITAN_STORAGE_MODE || "").toLowerCase()),
     resultSource: process.env.RESULT_SOURCE_URL,
     appTz: process.env.APP_TZ,
     logFile: LOG_FILE

@@ -5,6 +5,8 @@
 // Canonical entry point: node whatsapp_multi_session.js
 // ============================================================
 
+process.env.TITAN_STORAGE_MODE = String(process.env.TITAN_STORAGE_MODE || "sqlite").trim().toLowerCase();
+process.env.TITAN_BACKEND_URL = process.env.TITAN_BACKEND_URL || process.env.FLASK_URL || process.env.BACKEND_URL || "http://127.0.0.1:5000";
 process.env.FIREBASE_URL = process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json";
 process.env.FIREBASE_DB_URL = process.env.FIREBASE_DB_URL || process.env.FIREBASE_URL;
 
@@ -402,9 +404,11 @@ async function handleDepositImage(sock, baileys, msg){
 
 // Baileys exposes an immutable ESM namespace in current releases. Do not mutate
 // `baileys.default`; register a callback and let the canonical gateway dispatch it.
-if(ENABLED){
+if(ENABLED && !["sqlite", "local", "local_sqlite"].includes(String(process.env.TITAN_STORAGE_MODE || "").toLowerCase())){
   global.__TITAN_DEPOSIT_OCR_HANDLER__ = handleDepositImage;
   console.log(`✅ Strict image-only Deposit OCR loaded: ${FEATURE_VERSION}`);
+}else if(ENABLED){
+  console.log("⏭️ Legacy Deposit OCR bridge skipped; canonical SQLite payment flow is active");
 }
 
 })();
@@ -533,8 +537,12 @@ if (!global.__TITAN_WITHDRAWAL_RUNTIME_V1__) {
 
   // Current Baileys versions expose an immutable module namespace. Register the
   // handler with the canonical gateway instead of assigning to `module.default`.
-  global.__TITAN_WITHDRAWAL_HANDLER__ = processOne;
-  console.log("✅ Gateway withdrawal-only runtime active");
+  if(!["sqlite", "local", "local_sqlite"].includes(String(process.env.TITAN_STORAGE_MODE || "").toLowerCase())){
+    global.__TITAN_WITHDRAWAL_HANDLER__ = processOne;
+    console.log("✅ Gateway withdrawal-only runtime active");
+  }else{
+    console.log("⏭️ Legacy withdrawal bridge skipped; canonical SQLite payment flow is active");
+  }
 }
 
 module.exports = { enabled: true, feature: "gateway_withdrawal_runtime_v1" };
@@ -582,6 +590,9 @@ const TITAN_ALLOW_QUERY_TOKEN = ["1","true","yes","on"].includes(String(process.
 const DEFAULT_FIREBASE_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/titan_master_data.json";
 const FIREBASE_URL = (process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || DEFAULT_FIREBASE_URL).replace(/\/$/, "");
 const FIREBASE_URL_FROM_ENV = !!(process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL);
+const TITAN_STORAGE_MODE = String(process.env.TITAN_STORAGE_MODE || "sqlite").trim().toLowerCase();
+const TITAN_SQLITE_MODE = ["sqlite", "local", "local_sqlite"].includes(TITAN_STORAGE_MODE);
+const TITAN_BACKEND_URL = String(process.env.TITAN_BACKEND_URL || "http://127.0.0.1:5000").replace(/\/$/, "");
 const TITAN_STATE_DIR = process.env.TITAN_STATE_DIR || process.cwd();
 try { fs.mkdirSync(TITAN_STATE_DIR, {recursive:true}); } catch(e) {}
 const AUTH_DIR = process.env.WHATSAPP_AUTH_DIR || path.join(TITAN_STATE_DIR, "auth_info_baileys");
@@ -732,7 +743,7 @@ const WHATSAPP_TARGET_SYNC_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_TA
 function redactConfigValue(v, keep=18){ const s=String(v||""); return s ? (s.slice(0,keep) + "…" + s.length + "chars") : ""; }
 function gatewayStartupConfigWarnings(){
   const warnings=[];
-  if(!FIREBASE_URL_FROM_ENV) warnings.push("FIREBASE_URL/FIREBASE_DB_URL is missing; compatibility default database is in use.");
+  if(!TITAN_SQLITE_MODE && !FIREBASE_URL_FROM_ENV) warnings.push("FIREBASE_URL/FIREBASE_DB_URL is missing; compatibility default database is in use.");
   return warnings;
 }
 const GATEWAY_STARTUP_WARNINGS = gatewayStartupConfigWarnings();
@@ -747,7 +758,7 @@ function gatewayConfigReport(){
     firebase:{configuredFromEnv:FIREBASE_URL_FROM_ENV, urlRedacted:redactConfigValue(FIREBASE_URL), pathLooksJson:FIREBASE_URL.endsWith('.json')},
     security:{gatewayTokenConfigured:false, enforced:false, authDisabled:true, directOpen:true},
     resultSource:{name:RESULT_SOURCE_NAME, url:RESULT_SOURCE_URL, urls:RESULT_SCRAPE_URLS},
-    storage:{stateDir:redactConfigValue(TITAN_STATE_DIR, 24), authDir:redactConfigValue(AUTH_DIR, 24)},
+    storage:{mode:TITAN_STORAGE_MODE, label:TITAN_SQLITE_MODE ? "SQLite local database" : "Firebase Realtime Database", backendUrl:redactConfigValue(TITAN_BACKEND_URL, 24), stateDir:redactConfigValue(TITAN_STATE_DIR, 24), authDir:redactConfigValue(AUTH_DIR, 24)},
     localFallbackFiles:{targetCache:TARGET_CACHE_FILE, sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE, safety:WHATSAPP_SAFETY_STATE_FILE},
     warnings
   };
@@ -5062,6 +5073,14 @@ let realtimeStateCacheAt = 0;
 const TITAN_GATEWAY_STATE_CACHE_TTL_MS = Math.max(Number(process.env.TITAN_GATEWAY_STATE_CACHE_TTL_MS || 250), 0);
 function realtimeClone(obj){ try{ return JSON.parse(JSON.stringify(obj || {})); }catch(e){ return obj || {}; } }
 function firebaseNoCacheHeaders(extra={}){ return Object.assign({"Cache-Control":"no-cache", "Pragma":"no-cache"}, extra || {}); }
+function localStateUrl(path=""){
+  const suffix = String(path || "").replace(/^\//, "");
+  return `${TITAN_BACKEND_URL}/api/internal/state${suffix ? "/" + suffix : ""}`;
+}
+function localChildUrl(parts){
+  const clean = (Array.isArray(parts) ? parts : []).map(x => String(x || "").trim()).filter(Boolean);
+  return `${TITAN_BACKEND_URL}/api/internal/state/child?parts=${encodeURIComponent(clean.join("/"))}`;
+}
 function realtimeCacheGet(){
   if(!realtimeStateCache || !TITAN_GATEWAY_STATE_CACHE_TTL_MS) return null;
   if(Date.now() - realtimeStateCacheAt <= TITAN_GATEWAY_STATE_CACHE_TTL_MS) return realtimeClone(realtimeStateCache);
@@ -5093,24 +5112,26 @@ async function fetchFirebaseState(opts={}){
   try{
     if(!opts.force){ const cached = realtimeCacheGet(); if(cached) return cached; }
     const started = Date.now();
-    const res = await axios.get(firebaseDataUrl(), { timeout: 8000, headers:firebaseNoCacheHeaders() });
-    if(res.status >= 400) gatewayObsEvent("firebase_fetch_non_200", "warning", `Firebase GET HTTP ${res.status}`, {ms:Date.now()-started, realtimeSync:REALTIME_SYNC_VERSION});
+    const url = TITAN_SQLITE_MODE ? localStateUrl() : firebaseDataUrl();
+    const res = await axios.get(url, { timeout: 8000, headers:firebaseNoCacheHeaders() });
+    if(res.status >= 400) gatewayObsEvent(TITAN_SQLITE_MODE ? "sqlite_bridge_fetch_non_200" : "firebase_fetch_non_200", "warning", `${TITAN_SQLITE_MODE ? "SQLite bridge" : "Firebase"} GET HTTP ${res.status}`, {ms:Date.now()-started, realtimeSync:REALTIME_SYNC_VERSION});
     const st = res.data || {};
     if(st && typeof st === "object") realtimeCacheSet(st);
     return st;
   }catch(e){
-    gatewayObsError("firebase_fetch_error", e);
+    gatewayObsError(TITAN_SQLITE_MODE ? "sqlite_bridge_fetch_error" : "firebase_fetch_error", e);
     throw e;
   }
 }
 async function fetchFirebaseStateWithEtag(){
   try{
     const started = Date.now();
-    const res = await axios.get(firebaseDataUrl(), { timeout: 15000, headers:firebaseNoCacheHeaders({"X-Firebase-ETag":"true"}) });
-    if(res.status >= 400) gatewayObsEvent("firebase_etag_non_200", "warning", `Firebase ETag GET HTTP ${res.status}`, {ms:Date.now()-started});
-    return {data:res.data || {}, etag:res.headers?.etag || res.headers?.ETag || "*"};
+    const url = TITAN_SQLITE_MODE ? localStateUrl() : firebaseDataUrl();
+    const res = await axios.get(url, { timeout: 15000, headers:firebaseNoCacheHeaders({"X-Firebase-ETag":"true"}) });
+    if(res.status >= 400) gatewayObsEvent(TITAN_SQLITE_MODE ? "sqlite_bridge_etag_non_200" : "firebase_etag_non_200", "warning", `${TITAN_SQLITE_MODE ? "SQLite bridge" : "Firebase"} state GET HTTP ${res.status}`, {ms:Date.now()-started});
+    return {data:res.data || {}, etag:TITAN_SQLITE_MODE ? "sqlite" : (res.headers?.etag || res.headers?.ETag || "*")};
   }catch(e){
-    gatewayObsError("firebase_etag_get_error", e);
+    gatewayObsError(TITAN_SQLITE_MODE ? "sqlite_bridge_etag_get_error" : "firebase_etag_get_error", e);
     throw e;
   }
 }
@@ -5202,6 +5223,11 @@ function gatewayDataLossGuard(candidate, latest){
 }
 
 async function saveFirebaseState(state){
+  if(TITAN_SQLITE_MODE){
+    const res = await axios.post(localStateUrl(), state || {}, { timeout: 12000, headers:{"Content-Type":"application/json"} });
+    realtimeCacheSet(state || {});
+    return res.data;
+  }
   let lastErr = null;
   for(let attempt=0; attempt<6; attempt++){
     try {
@@ -5329,6 +5355,11 @@ async function saveGatewaySettlementNarrow(state, date, settlement){
 
 async function patchFirebaseState(patch){
   try {
+    if(TITAN_SQLITE_MODE){
+      const current = await fetchFirebaseState({force:true});
+      const merged = Object.assign({}, current || {}, patch || {});
+      return await saveFirebaseState(merged);
+    }
     const res = await axios.patch(firebaseDataUrl(), patch || {}, { timeout: 8000 });
     realtimeCacheClear();
     return res.data;
@@ -5362,16 +5393,30 @@ function durablePath(kind, key){
   return ['gatewayDurability', String(kind || 'lock'), durableHash(key)];
 }
 async function fetchFirebaseChildWithEtag(parts){
+  if(TITAN_SQLITE_MODE){
+    const res = await axios.get(localChildUrl(parts), { timeout: 15000, headers:firebaseNoCacheHeaders() });
+    return { data:res.data?.value ?? null, etag:"sqlite" };
+  }
   const res = await axios.get(firebaseChildUrl(parts), { timeout: 15000, headers:{'X-Firebase-ETag':'true'} });
   return { data:res.data || null, etag:res.headers?.etag || res.headers?.ETag || '*' };
 }
 async function putFirebaseChild(parts, data, etag='*'){
+  if(TITAN_SQLITE_MODE){
+    const res = await axios.post(`${TITAN_BACKEND_URL}/api/internal/state/child`, {parts, value:data, mode:"put"}, { timeout:12000, headers:{"Content-Type":"application/json"} });
+    realtimeCacheApplyChild(parts, data || {}, "put");
+    return res.data;
+  }
   const headers = etag ? {'if-match':etag} : {};
   const res = await axios.put(firebaseChildUrl(parts), data || {}, { timeout:8000, headers });
   realtimeCacheApplyChild(parts, data || {}, "put");
   return res.data;
 }
 async function patchFirebaseChild(parts, data){
+  if(TITAN_SQLITE_MODE){
+    const res = await axios.post(`${TITAN_BACKEND_URL}/api/internal/state/child`, {parts, value:data, mode:"patch"}, { timeout:12000, headers:{"Content-Type":"application/json"} });
+    realtimeCacheApplyChild(parts, data || {}, "patch");
+    return res.data;
+  }
   const res = await axios.patch(firebaseChildUrl(parts), data || {}, { timeout:8000 });
   realtimeCacheApplyChild(parts, Object.assign({}, data || {}), "patch");
   return res.data;
@@ -6194,10 +6239,15 @@ async function startWhatsApp(){
         if(!rememberIncomingMessage(m)) continue;
         await withRoleSocket(socketInstance, async () => {
           const baileysRuntime = { downloadContentFromMessage };
-          const depositHook = global.__TITAN_DEPOSIT_OCR_HANDLER__;
-          if(typeof depositHook === "function" && await depositHook(socketInstance, baileysRuntime, m)) return;
-          const withdrawalHook = global.__TITAN_WITHDRAWAL_HANDLER__;
-          if(typeof withdrawalHook === "function" && await withdrawalHook(socketInstance, baileysRuntime, m)) return;
+          if(TITAN_SQLITE_MODE){
+            if(await handleIncomingDepositScreenshotMessage(m)) return;
+            if(await handleIncomingWithdrawalMessage(m)) return;
+          }else{
+            const depositHook = global.__TITAN_DEPOSIT_OCR_HANDLER__;
+            if(typeof depositHook === "function" && await depositHook(socketInstance, baileysRuntime, m)) return;
+            const withdrawalHook = global.__TITAN_WITHDRAWAL_HANDLER__;
+            if(typeof withdrawalHook === "function" && await withdrawalHook(socketInstance, baileysRuntime, m)) return;
+          }
           const complianceHandled = await handleWhatsappComplianceCommandMessage(m);
           if(complianceHandled) return;
           // owner_bot is deliberately isolated from public game, money, result,
@@ -7051,9 +7101,14 @@ function managedTimeout(name, fn, delayMs){
 
 try { acquireGatewayLock(); }
 catch (e) { console.error(`❌ Titan Gateway lock failed: ${e.message}`); process.exit(1); }
-app.listen(PORT, HOST, () => { console.log(`🚀 Titan Gateway running: http://${HOST}:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {host:HOST, port:PORT, timezone:APP_TZ}); });
-startWhatsApp().catch(e => console.error("WA start error", e));
-multiSessionManager.startAll().catch(e => console.error("Multi-session start error", e));
+const TITAN_SKIP_WHATSAPP_START = ["1", "true", "yes", "on"].includes(String(process.env.TITAN_SKIP_WHATSAPP_START || "0").toLowerCase());
+app.listen(PORT, HOST, () => { console.log(`🚀 Titan Gateway running: http://${HOST}:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {host:HOST, port:PORT, timezone:APP_TZ, storageMode:TITAN_STORAGE_MODE}); });
+if(TITAN_SKIP_WHATSAPP_START){
+  console.log("⏭️ WhatsApp session startup skipped by TITAN_SKIP_WHATSAPP_START");
+}else{
+  startWhatsApp().catch(e => console.error("WA start error", e));
+  multiSessionManager.startAll().catch(e => console.error("Multi-session start error", e));
+}
 managedInterval("whatsapp_target_sync", async () => { if(connected) await syncTargets({periodic:true}); }, WHATSAPP_TARGET_SYNC_INTERVAL_MS);
 managedInterval("schedule_tick", scheduleTick, TITAN_SCHEDULE_POLL_MS);
 managedInterval("result_tick", resultTick, TITAN_RESULT_POLL_MS);

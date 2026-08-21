@@ -35,6 +35,12 @@ class SQLiteStorageTests(unittest.TestCase):
         self.assertIn("sqlite3.connect(TITAN_SQLITE_PATH", SOURCE)
         self.assertRegex(SOURCE, r"storageLabel.*SQLite local database")
 
+    def test_payment_activity_feed_is_available_for_admin_dashboard(self):
+        self.assertIn("@app.route('/api/payment_activity')", SOURCE)
+        self.assertIn("pendingDeposits", SOURCE)
+        self.assertIn("pendingWithdrawals", SOURCE)
+        self.assertIn("'activity': _payment_activity_items(state, 200)", SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()
