@@ -21,10 +21,11 @@ class MultiSessionArchitectureTests(unittest.TestCase):
     def access_source(self):
         return (ROOT / "bot" / "role_access.js").read_text()
 
-    def test_all_five_roles_and_isolated_auth_path_exist(self):
+    def test_active_four_roles_and_isolated_auth_path_exist(self):
         source = self.config_source() + self.manager_source()
-        for role in ("owner_bot", "finance_bot", "game_bot", "result_bot", "ledger_bot"):
+        for role in ("owner_bot", "finance_bot", "game_bot", "result_bot"):
             self.assertIn(role, source)
+        self.assertNotIn("ledger_bot", source)
         self.assertIn('path.join(this.stateDir,"auth_info_baileys",role)', source)
 
     def test_restricted_roles_use_sender_verification(self):
@@ -32,14 +33,14 @@ class MultiSessionArchitectureTests(unittest.TestCase):
         self.assertIn('RESTRICTED_ROLES', source)
         self.assertIn('finance_bot', source)
         self.assertIn('result_bot', source)
-        self.assertIn('ledger_bot', source)
+        self.assertNotIn('ledger_bot', source)
         self.assertIn("this.allowed(role,m)", source)
         self.assertIn("this.rememberMessage(role,m)", source)
 
     def test_gateway_event_routes_are_explicit(self):
         source = self.config_source().replace(" ", "")
         for route in ('deposit:"finance_bot"', 'withdrawal:"finance_bot"', 'game:"game_bot"',
-                      'result:"result_bot"', 'ledger:"ledger_bot"', 'crash:"owner_bot"'):
+                      'result:"result_bot"', 'crash:"owner_bot"'):
             self.assertIn(route, source)
 
     def test_dashboard_is_guard_tab_only_and_responsive(self):

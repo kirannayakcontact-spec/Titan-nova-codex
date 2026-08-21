@@ -87,7 +87,7 @@ class TitanMultiSessionManager {
         reconnectAttempt:Number(s.reconnectAttempt || 0),
         processedCount:Number(s.processedCount || 0), duplicateCount:Number(s.duplicateCount || 0),
         handlerErrors:Number(s.handlerErrors || 0), lastHandlerError:s.lastHandlerError || "",
-        commandRestricted: role !== "owner_bot" && ["finance_bot","result_bot","ledger_bot"].includes(role),
+        commandRestricted: role !== "owner_bot" && ["finance_bot","result_bot"].includes(role),
         adminsConfigured: role === "owner_bot" || configuredAdmins(role).length > 0,
         authDir:role === "owner_bot" ? "legacy-compatible" : path.join(this.stateDir,"auth_info_baileys",role)
       };
