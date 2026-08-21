@@ -4,6 +4,7 @@ const os = require("os");
 const path = require("path");
 const { TitanMultiSessionManager } = require("../bot/session_manager.js");
 const { registerBotRoutes } = require("../bot/session_routes.js");
+const { allowed } = require("../bot/role_access.js");
 
 async function expectReject(promise, pattern) {
   await assert.rejects(promise, pattern);
@@ -31,6 +32,43 @@ async function testManagerValidationAndRouting() {
   });
   await expectReject(manager.send("finance_bot", "not-a-recipient", "hello"), /valid WhatsApp recipient/);
   await expectReject(manager.send("finance_bot", "9999999999", "x".repeat(4097)), /exceeds 4096/);
+}
+
+async function testRoleAuthorizationAndSafeSendCallback() {
+  process.env.WHATSAPP_FINANCE_BOT_ADMINS = "919999999999";
+  assert.strictEqual(allowed("finance_bot", {
+    key: { participant: "12345@lid", participantPn: "919999999999@s.whatsapp.net", remoteJid: "group@g.us" },
+  }), true);
+  const sent = [];
+  const manager = new TitanMultiSessionManager({
+    stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "titan-safe-send-test-")),
+    sendForRole: async (role, to, text, meta) => { sent.push({role, to, text, meta}); return {ok:true, id:"safe-1"}; },
+  });
+  await manager.send("finance_bot", "9999999999", "safe message");
+  assert.deepStrictEqual(sent[0], { role:"finance_bot", to:"9999999999", text:"safe message", meta:{type:"bot_api"} });
+  delete process.env.WHATSAPP_FINANCE_BOT_ADMINS;
+}
+
+async function testDedupeAndContext() {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "titan-dedupe-test-"));
+  let calls = 0;
+  let receivedContext;
+  const manager = new TitanMultiSessionManager({
+    stateDir,
+    handlers: { game_bot: async (message, context) => { calls += 1; receivedContext = context; } },
+  });
+  const rec = manager.sessions.get("game_bot");
+  rec.socket = { sendMessage: async () => ({ key: { id: "sent" } }) };
+  const message = {
+    key: { id: "msg-1", remoteJid: "919999999999@s.whatsapp.net" },
+    message: { ephemeralMessage: { message: { extendedTextMessage: { text: "/status" } } } },
+  };
+  await manager.onMessages("game_bot", { messages: [message] });
+  await manager.onMessages("game_bot", { messages: [message] });
+  assert.strictEqual(calls, 1);
+  assert.strictEqual(receivedContext.text, "/status");
+  assert.strictEqual(receivedContext.role, "game_bot");
+  assert.strictEqual(receivedContext.sender, "919999999999");
 }
 
 async function testResetDoesNotDoubleStart() {
@@ -71,6 +109,8 @@ async function testRouteValidation() {
 
 (async () => {
   await testManagerValidationAndRouting();
+  await testRoleAuthorizationAndSafeSendCallback();
+  await testDedupeAndContext();
   await testResetDoesNotDoubleStart();
   await testRouteValidation();
   console.log("Session manager regression tests passed");

@@ -1,7 +1,7 @@
 "use strict";
 
 const { RESTRICTED_ROLES } = require("./session_config.js");
-const { digits, senderNumber } = require("./message_utils.js");
+const { digits, senderCandidates } = require("./message_utils.js");
 
 const restricted = new Set(RESTRICTED_ROLES);
 
@@ -14,7 +14,8 @@ function configuredAdmins(role){
 
 function allowed(role, m){
   if (!restricted.has(role)) return true;
-  return configuredAdmins(role).includes(senderNumber(m));
+  const admins = new Set(configuredAdmins(role));
+  return senderCandidates(m).some(candidate => admins.has(digits(candidate)));
 }
 
 module.exports = { allowed, configuredAdmins, restricted };

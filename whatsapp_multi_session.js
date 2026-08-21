@@ -297,14 +297,21 @@ const seen = new Map();
 
 function remember(key){ const now = Date.now(); seen.set(key, now); for(const [k,t] of seen.entries()) if(now - t > 30 * 60 * 1000) seen.delete(k); }
 function hasSeen(key){ return seen.has(key); }
+function unwrapGatewayMessage(message){
+  let current = message?.message || message || {};
+  for(let i=0;i<4;i++){
+    const wrapped = current?.ephemeralMessage?.message || current?.viewOnceMessage?.message || current?.viewOnceMessageV2?.message || current?.documentWithCaptionMessage?.message;
+    if(!wrapped || wrapped === current) break;
+    current = wrapped;
+  }
+  return current || {};
+}
 function textOfMessage(message){
-  const m = message || {};
-  const img = m.imageMessage || (m.viewOnceMessage && m.viewOnceMessage.message && m.viewOnceMessage.message.imageMessage) || (m.viewOnceMessageV2 && m.viewOnceMessageV2.message && m.viewOnceMessageV2.message.imageMessage);
-  return String((img && img.caption) || m.conversation || (m.extendedTextMessage && m.extendedTextMessage.text) || "");
+  const m = unwrapGatewayMessage(message);
+  return String(m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || m.conversation || m.extendedTextMessage?.text || m.buttonsResponseMessage?.selectedButtonId || m.listResponseMessage?.singleSelectReply?.selectedRowId || "");
 }
 function imageMessageOf(message){
-  const m = message || {};
-  return m.imageMessage || (m.viewOnceMessage && m.viewOnceMessage.message && m.viewOnceMessage.message.imageMessage) || (m.viewOnceMessageV2 && m.viewOnceMessageV2.message && m.viewOnceMessageV2.message.imageMessage) || null;
+  return unwrapGatewayMessage(message).imageMessage || null;
 }
 function parseAmount(text){
   const s = String(text || "").replace(/,/g, "");
@@ -628,6 +635,32 @@ const FIREBASE_URL_FROM_ENV = !!(process.env.FIREBASE_URL || process.env.FIREBAS
 const TITAN_STATE_DIR = process.env.TITAN_STATE_DIR || process.cwd();
 try { fs.mkdirSync(TITAN_STATE_DIR, {recursive:true}); } catch(e) {}
 const AUTH_DIR = process.env.WHATSAPP_AUTH_DIR || path.join(TITAN_STATE_DIR, "auth_info_baileys");
+const GATEWAY_LOCK_FILE = path.join(TITAN_STATE_DIR, "titan_gateway.pid");
+let gatewayLockOwned = false;
+function acquireGatewayLock(){
+  if(String(process.env.TITAN_DISABLE_PROCESS_LOCK || "0") === "1") return;
+  const writeLock = () => {
+    const fd = fs.openSync(GATEWAY_LOCK_FILE, "wx", 0o600);
+    fs.writeFileSync(fd, JSON.stringify({pid:process.pid, startedAt:new Date().toISOString()}));
+    fs.closeSync(fd);
+    gatewayLockOwned = true;
+  };
+  try { writeLock(); }
+  catch (error) {
+    if(error.code !== "EEXIST") throw error;
+    let pid = 0;
+    try { pid = Number(JSON.parse(fs.readFileSync(GATEWAY_LOCK_FILE, "utf8")).pid || 0); } catch (_) {}
+    let alive = false;
+    if(pid > 0 && pid !== process.pid){ try { process.kill(pid, 0); alive = true; } catch (_) {} }
+    if(alive) throw new Error(`Another Titan gateway process is running (pid ${pid})`);
+    try { fs.rmSync(GATEWAY_LOCK_FILE, {force:true}); } catch (_) {}
+    writeLock();
+  }
+  const release = () => { if(gatewayLockOwned){ gatewayLockOwned = false; try { fs.rmSync(GATEWAY_LOCK_FILE, {force:true}); } catch (_) {} } };
+  process.once("exit", release);
+  process.once("SIGINT", () => { release(); process.exit(0); });
+  process.once("SIGTERM", () => { release(); process.exit(0); });
+}
 const { usePersistentAuthState } = require("./redis_auth_state.js");
 const TARGET_CACHE_FILE = path.join(TITAN_STATE_DIR, "whatsapp_targets_cache.json");
 const SENT_LOG_FILE = path.join(TITAN_STATE_DIR, "titan_schedule_sent_log.json");
@@ -2049,8 +2082,13 @@ async function saveAcceptedEntryToFirebase(parsed, meta){
 }
 
 function getMessageText(m){
-  const msg = m?.message || {};
-  return msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || msg.documentMessage?.caption || "";
+  let msg = m?.message || {};
+  for(let i=0;i<4;i++){
+    const wrapped = msg?.ephemeralMessage?.message || msg?.viewOnceMessage?.message || msg?.viewOnceMessageV2?.message || msg?.documentWithCaptionMessage?.message;
+    if(!wrapped || wrapped === msg) break;
+    msg = wrapped;
+  }
+  return msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || msg.documentMessage?.caption || msg.buttonsResponseMessage?.selectedButtonId || msg.listResponseMessage?.singleSelectReply?.selectedRowId || "";
 }
 
 // ============================================================
@@ -3616,14 +3654,15 @@ function normalizeTarget(raw){
   return digits + "@s.whatsapp.net";
 }
 
-async function resolveTarget(rawTarget){
+async function resolveTarget(rawTarget, socketOverride=null){
+  const activeSocket = socketOverride || sock;
   let jid = normalizeTarget(rawTarget);
   if(!jid) return "";
   if(jid.startsWith("invite:")){
-    if(!sock || !connected) return "";
+    if(!activeSocket || (socketOverride ? !activeSocket : !connected)) return "";
     const code = jid.slice(7);
     try {
-      const info = await sock.groupGetInviteInfo(code);
+      const info = await activeSocket.groupGetInviteInfo(code);
       if(info?.id) return String(info.id).includes("@g.us") ? String(info.id) : String(info.id) + "@g.us";
     } catch(e) {
       console.log("Group invite resolve failed:", e.message || e);
@@ -3633,12 +3672,13 @@ async function resolveTarget(rawTarget){
   return jid;
 }
 
-async function isValidTarget(jid){
+async function isValidTarget(jid, socketOverride=null){
   if(!jid) return false;
   if(jid.endsWith("@g.us")) return true;
-  if(!sock || !connected) return false;
+  const activeSocket = socketOverride || sock;
+  if(!activeSocket || (socketOverride ? false : !connected)) return false;
   try {
-    const res = await sock.onWhatsApp(jid.replace("@s.whatsapp.net", ""));
+    const res = await activeSocket.onWhatsApp(jid.replace("@s.whatsapp.net", ""));
     return Array.isArray(res) && res[0] && !!res[0].exists;
   } catch { return true; }
 }
@@ -4064,8 +4104,10 @@ async function waReliabilityRetry(eventId){
 
 // PHASE2_SEND_SINGLE_SOURCE: all scheduled/result/outbox/broadcast sends must call sendText().
 // sendText resolves targets, validates WhatsApp, applies Safe Messaging Guard, serializes queue, then records outcome.
-async function sendText(rawTarget, text, meta = {}){
-  const jid = await resolveTarget(rawTarget);
+async function sendText(rawTarget, text, meta = {}, socketOverride = null){
+  const activeSocket = socketOverride || sock;
+  const activeConnected = socketOverride ? !!socketOverride : connected;
+  const jid = await resolveTarget(rawTarget, socketOverride);
   if(!jid){
     gatewayHealth.lastSendAt = nowIso();
     gatewayHealth.lastSendOk = false;
@@ -4075,7 +4117,7 @@ async function sendText(rawTarget, text, meta = {}){
     waReliabilityRecord("blocked", rawTarget, rawTarget, text, meta, {reason:"invalid_target", error:"invalid/unresolved target", retryable:false});
     return {ok:false, rawTarget, target:rawTarget, error:"invalid/unresolved target"};
   }
-  if(!sock || !connected){
+  if(!activeSocket || !activeConnected){
     gatewayHealth.lastSendAt = nowIso();
     gatewayHealth.lastSendOk = false;
     gatewayHealth.lastSendTarget = jid;
@@ -4084,7 +4126,7 @@ async function sendText(rawTarget, text, meta = {}){
     waReliabilityRecord("failed", rawTarget, jid, text, meta, {reason:"not_connected", error:"WhatsApp not connected", retryable:true});
     return {ok:false, rawTarget, target:jid, error:"WhatsApp not connected"};
   }
-  const okTarget = await isValidTarget(jid);
+  const okTarget = await isValidTarget(jid, socketOverride);
   if(!okTarget){
     gatewayHealth.lastSendAt = nowIso();
     gatewayHealth.lastSendOk = false;
@@ -4110,7 +4152,7 @@ async function sendText(rawTarget, text, meta = {}){
     const waitMs = safeDelayMs(pre.settings);
     if(waitMs > 0) await guardSleep(waitMs);
     try {
-      const r = await sock.sendMessage(jid, { text: String(text || "") });
+      const r = await activeSocket.sendMessage(jid, { text: String(text || "") });
       const out = {ok:true, rawTarget, target:jid, id:r?.key?.id || "sent", meta};
       gatewayHealth.lastSendAt = nowIso();
       gatewayHealth.lastSendOk = true;
@@ -6200,13 +6242,15 @@ async function startWhatsApp(){
         } catch(e) {}
         if(!m?.message || m.key?.fromMe) continue;
         if(!rememberIncomingMessage(m)) continue;
-        const complianceHandled = await handleWhatsappComplianceCommandMessage(m);
-        if(complianceHandled) continue;
-        // owner_bot is deliberately isolated from public game, money, result,
-        // and ledger traffic. Preserve only the legacy master/control command
-        // handler; #declare is accepted exclusively on result_bot.
-        const ownerText=getMessageText(m);
-        if(!/^#declare\b/i.test(ownerText)) await handleBotCommandMessage(m);
+        await withRoleSocket(socketInstance, async () => {
+          const complianceHandled = await handleWhatsappComplianceCommandMessage(m);
+          if(complianceHandled) return;
+          // owner_bot is deliberately isolated from public game, money, result,
+          // and ledger traffic. Preserve only the legacy master/control command
+          // handler; #declare is accepted exclusively on result_bot.
+          const ownerText=getMessageText(m);
+          if(!/^#declare\b/i.test(ownerText)) await handleBotCommandMessage(m);
+        });
       }
       saveProcessedMessageCache();
     });
@@ -6251,16 +6295,26 @@ app.use(gatewayAuthMiddleware);
 // Additive multi-session architecture. The stable legacy socket remains the
 // owner_bot; four isolated sessions reuse the existing validated handlers.
 const { TitanMultiSessionManager } = require("./multi_session_manager.js");
-async function withRoleSocket(roleSocket, handler){
-  const previousSocket=sock, previousConnected=connected;
-  sock=roleSocket; connected=!!roleSocket;
-  try { return await handler(); }
-  finally { sock=previousSocket; connected=previousConnected; }
+let gatewayHandlerChain = Promise.resolve();
+function withRoleSocket(roleSocket, handler){
+  const run = gatewayHandlerChain.then(async () => {
+    const previousSocket=sock, previousConnected=connected;
+    sock=roleSocket; connected=!!roleSocket;
+    try { return await handler(); }
+    finally { sock=previousSocket; connected=previousConnected; }
+  });
+  gatewayHandlerChain = run.catch(() => {});
+  return run;
 }
 const multiSessionManager = new TitanMultiSessionManager({
   stateDir:TITAN_STATE_DIR,
   ownerStatus:()=>({connected,user:sock?.user||null,qr:lastQR,qrAt:lastQRAt,lastEvent:gatewayHealth.lastWhatsAppEvent}),
   ownerSend:(to,text)=>sendText(to,text,{type:"critical_owner_event"}),
+  sendForRole:(role,to,text,meta={})=>{
+    const roleSocket = multiSessionManager.sessions.get(role)?.socket;
+    if(!roleSocket) return Promise.resolve({ok:false,error:`${role} is disconnected`});
+    return sendText(to,text,{...meta,role},roleSocket);
+  },
   handlers:{
     finance_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleIncomingDepositScreenshotMessage(m))return true;return handleIncomingWithdrawalMessage(m);}),
     game_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleSmartUserCommandMessage(m))return true;if(await handleSpamGuardMessage(m))return true;return handleIncomingEntryMessage(m);}),
@@ -6840,7 +6894,8 @@ app.get("/deploy_safety_status", async (req,res)=>{
   const env = {
     firebaseUrlConfigured: !!FIREBASE_URL,
     firebaseUrlLooksValid: /^https:\/\/.+\.json$/.test(String(FIREBASE_URL || "")),
-    gatewayTokenConfigured: !!GATEWAY_TOKEN,
+      gatewayTokenConfigured: false,
+      directOpen: true,
     authDir: AUTH_DIR,
     stateDir: TITAN_STATE_DIR,
     timezone: APP_TZ
@@ -7039,6 +7094,8 @@ function managedTimeout(name, fn, delayMs){
     .catch(e => gatewayObsError(`${name}_timeout_error`, e, {name, delayMs})), delayMs);
 }
 
+try { acquireGatewayLock(); }
+catch (e) { console.error(`❌ Titan Gateway lock failed: ${e.message}`); process.exit(1); }
 app.listen(PORT, HOST, () => { console.log(`🚀 Titan Gateway running: http://${HOST}:${PORT}`); gatewayObsEvent("gateway_started", "info", "Gateway HTTP server started", {host:HOST, port:PORT, timezone:APP_TZ}); });
 startWhatsApp().catch(e => console.error("WA start error", e));
 multiSessionManager.startAll().catch(e => console.error("Multi-session start error", e));

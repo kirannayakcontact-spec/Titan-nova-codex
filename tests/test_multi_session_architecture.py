@@ -30,7 +30,8 @@ class MultiSessionArchitectureTests(unittest.TestCase):
         self.assertIn('finance_bot', source)
         self.assertIn('result_bot', source)
         self.assertIn('ledger_bot', source)
-        self.assertIn("if(isCommand&&!this.allowed(role,m))continue", source)
+        self.assertIn("this.allowed(role,m)", source)
+        self.assertIn("this.rememberMessage(role,m)", source)
 
     def test_gateway_event_routes_are_explicit(self):
         source = self.config_source().replace(" ", "")
