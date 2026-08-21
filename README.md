@@ -1,6 +1,6 @@
 # Titan Nova Codex
 
-Production Termux runtime for the Titan Nova dashboard and five-session WhatsApp gateway.
+Production Termux runtime for the Titan Nova **bookie-only** dashboard and five-session WhatsApp gateway.
 
 ## Install once
 
@@ -25,7 +25,7 @@ HOST=0.0.0.0 PORT=5000 GATEWAY_URL=http://127.0.0.1:3000 python flask_app.py
 
 ```bash
 cd ~/github
-GATEWAY_PORT=3000 node whatsapp_multi_session.js
+TITAN_BOOKIE_ONLY_MODE=1 RESULT_SCRAPE_ENABLED=0 GATEWAY_PORT=3000 node whatsapp_multi_session.js
 ```
 
 Dashboard: http://127.0.0.1:5000
@@ -50,10 +50,10 @@ cd ~/github && python scripts/single_source_audit.py --result-source-only && pyt
 
 - `flask_app.py` — Flask launcher and production integrations.
 - `titan_core.py` — dashboard, API and business logic core.
-- `whatsapp_multi_session.js` — WhatsApp sessions, schedules and result automation.
+- `whatsapp_multi_session.js` — WhatsApp sessions, bookie game-format replies, payments and manual result publishing.
 - `deploy.sh` — update, dependency repair, checks and background restart.
 - `termux.env.example` — direct-open local environment template, SQLite storage, and WhatsApp settings.
-- Result website is locked to `https://dpbosss.net.in/`.
+- Automatic result scraping, schedule sending, ledger cards, ledger, guessing/entries and digits are disabled in Bookie-only mode. Results are published manually from the admin Results tab and sent to configured WhatsApp targets.
 
 Runtime data, WhatsApp auth, logs, generated cache files, and the local SQLite database are intentionally not stored in Git.
 
@@ -68,6 +68,12 @@ Users do not need to open the dashboard. They message the linked WhatsApp bot wi
 For withdrawals, the user sends `withdraw 500 upi user@upi`, `withdraw 500 qr` with a QR image, or `withdraw 500 bank Name / A-C / IFSC`. The bot checks the user profile, available wallet, active-request limit, and amount limits, then places a wallet hold and creates a pending withdrawal. The admin uses the dashboard Finance/Withdrawals area to **Approve**, pay externally, and then **Mark Paid** with the transaction ID; the bot sends approval and completion replies back to the user. Reject actions include the reason in the WhatsApp reply.
 
 The admin dashboard can read the unified activity feed at `/api/payment_activity`, which includes WhatsApp proofs, withdrawals, approvals, rejections, wallet holds, payments, and outbox status. Keep Flask and the gateway bound to `127.0.0.1` because the direct-open dashboard has no HTTP token layer.
+
+## Bookie-only mode
+
+The product keeps only the bookie workflow: users interact through WhatsApp, the bot replies to game-format/status requests, handles deposit and withdrawal messages, and sends manually declared results. The admin uses Finance for payments/wallets/withdrawals, Results for manual open/close declarations, Activity for operational records, Bots for WhatsApp status, and Users for profile approvals.
+
+The following modules are intentionally disabled and their API routes return `410`: ledger, ledger cards, schedule, guessing/entries, digits, load-forwarder and website scraping. Existing SQLite data is preserved; disabling these features does not delete old records. To re-enable the legacy surface temporarily, set `TITAN_BOOKIE_ONLY_MODE=0` before starting both Flask and the gateway.
 
 ## Performance tuning
 

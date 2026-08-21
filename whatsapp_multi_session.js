@@ -6,6 +6,7 @@
 // ============================================================
 
 process.env.TITAN_STORAGE_MODE = String(process.env.TITAN_STORAGE_MODE || "sqlite").trim().toLowerCase();
+process.env.TITAN_BOOKIE_ONLY_MODE = String(process.env.TITAN_BOOKIE_ONLY_MODE || "1").trim().toLowerCase();
 process.env.TITAN_BACKEND_URL = process.env.TITAN_BACKEND_URL || process.env.FLASK_URL || process.env.BACKEND_URL || "http://127.0.0.1:5000";
 process.env.FIREBASE_URL = process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json";
 process.env.FIREBASE_DB_URL = process.env.FIREBASE_DB_URL || process.env.FIREBASE_URL;
@@ -591,6 +592,7 @@ const DEFAULT_FIREBASE_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/ti
 const FIREBASE_URL = (process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || DEFAULT_FIREBASE_URL).replace(/\/$/, "");
 const FIREBASE_URL_FROM_ENV = !!(process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL);
 const TITAN_STORAGE_MODE = String(process.env.TITAN_STORAGE_MODE || "sqlite").trim().toLowerCase();
+const TITAN_BOOKIE_ONLY_MODE = ["1", "true", "yes", "on"].includes(String(process.env.TITAN_BOOKIE_ONLY_MODE || "1").trim().toLowerCase());
 const TITAN_SQLITE_MODE = ["sqlite", "local", "local_sqlite"].includes(TITAN_STORAGE_MODE);
 const TITAN_BACKEND_URL = String(process.env.TITAN_BACKEND_URL || "http://127.0.0.1:5000").replace(/\/$/, "");
 const TITAN_STATE_DIR = process.env.TITAN_STATE_DIR || process.cwd();
@@ -682,7 +684,7 @@ const TITAN_GATEWAY_SECURITY_MISCONFIGURED = false;
 const TITAN_GATEWAY_AUTH_ENFORCED = false;
 // Auto result scraper: set RESULT_SCRAPE_ENABLED=0 to disable.
 // RESULT_SCRAPE_URLS can be comma-separated fallback live result pages.
-const RESULT_SCRAPE_ENABLED = String(process.env.RESULT_SCRAPE_ENABLED || "1") !== "0";
+const RESULT_SCRAPE_ENABLED = !TITAN_BOOKIE_ONLY_MODE && String(process.env.RESULT_SCRAPE_ENABLED || "1") !== "0";
 const RESULT_SCRAPE_INTERVAL_MS = Math.max(Number(process.env.RESULT_SCRAPE_INTERVAL_MS || 5000), 2000);
 const TITAN_SCHEDULE_POLL_MS = Math.max(Number(process.env.TITAN_SCHEDULE_POLL_MS || 2000), 1000);
 const TITAN_RESULT_POLL_MS = Math.max(Number(process.env.TITAN_RESULT_POLL_MS || 2000), 1000);
@@ -757,7 +759,8 @@ function gatewayConfigReport(){
     version:CONFIG_CLEANUP_VERSION,
     firebase:{configuredFromEnv:FIREBASE_URL_FROM_ENV, urlRedacted:redactConfigValue(FIREBASE_URL), pathLooksJson:FIREBASE_URL.endsWith('.json')},
     security:{gatewayTokenConfigured:false, enforced:false, authDisabled:true, directOpen:true},
-    resultSource:{name:RESULT_SOURCE_NAME, url:RESULT_SOURCE_URL, urls:RESULT_SCRAPE_URLS},
+    product:{mode:TITAN_BOOKIE_ONLY_MODE ? "bookie_only" : "full", active:["whatsapp_game_format", "payments", "results", "admin_activity", "whatsapp_gateway"], disabled:TITAN_BOOKIE_ONLY_MODE ? ["ledger", "ledger_cards", "schedule", "guessing", "digits", "entries", "load_forwarder", "scraping"] : []},
+    resultSource:{name:RESULT_SOURCE_NAME, url:RESULT_SOURCE_URL, urls:TITAN_BOOKIE_ONLY_MODE ? [] : RESULT_SCRAPE_URLS},
     storage:{mode:TITAN_STORAGE_MODE, label:TITAN_SQLITE_MODE ? "SQLite local database" : "Firebase Realtime Database", backendUrl:redactConfigValue(TITAN_BACKEND_URL, 24), stateDir:redactConfigValue(TITAN_STATE_DIR, 24), authDir:redactConfigValue(AUTH_DIR, 24)},
     localFallbackFiles:{targetCache:TARGET_CACHE_FILE, sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE, safety:WHATSAPP_SAFETY_STATE_FILE},
     warnings
@@ -2113,19 +2116,16 @@ function botCommandName(text){
   return "";
 }
 function botHelpText(){
-  return `🤖 *TITAN BOT HELP*
+  return `🤖 *TITAN BOOKIE BOT HELP*
 ━━━━━━━━━━━━━━━━━━━━
-*Entry format:*
-MARKET: KALYAN OPEN
-TYPE: ANK
-DIGITS: 1,2,3
-PAR DIGIT: 100
-TOTAL: 300
+*Game / result information:*
+market result
+result status
+/format
 
-*Smart commands:*
+*User commands:*
 balance / wallet status
 profile
-history / entries
 payment status
 deposit / pay 500
 withdraw status
@@ -2138,7 +2138,7 @@ withdraw 500 bank Name / A-C / IFSC
 
 *Bot:*
 /status
-/format
+/help
 ━━━━━━━━━━━━━━━━━━━━`;
 }
 function botStatusText(){
@@ -2154,21 +2154,18 @@ function botStatusText(){
 🧩 *Version:* ${WHATSAPP_BOT_UPGRADE_VERSION}`;
 }
 function entryFormatText(){
-  return `🧾 *ENTRY FORMAT*
+  return `🏆 *BOOKIE RESULT FORMAT*
 ━━━━━━━━━━━━━━━━━━━━
-MARKET: KALYAN OPEN
-TYPE: ANK
-DIGITS: 1,2,3
-PAR DIGIT: 100
-TOTAL: 300
-
-*TYPE allowed:* ANK, JODI, PENEL
-*JODI example:*
 MARKET: KALYAN
-TYPE: JODI
-DIGITS: 05,45,99
-PAR DIGIT: 10
-TOTAL: 30`;
+STAGE: OPEN
+RESULT: 123-4
+
+*Close result example:*
+MARKET: KALYAN
+STAGE: CLOSE
+RESULT: 123-45-678
+
+Betting digits/entry format is disabled. Payment aur result updates ke liye bot se contact karein.`;
 }
 async function handleBotCommandMessage(m){
   try{
@@ -2573,7 +2570,7 @@ function withdrawalRejectedText(reason){
   return `❌ *WITHDRAWAL REJECTED*\n━━━━━━━━━━━━━━━━━━━━\n📝 *Reason:* ${reason}\n━━━━━━━━━━━━━━━━━━━━\nFormats:\nwithdraw 500 upi user@upi\nwithdraw 500 qr  (QR image caption)\nwithdraw 500 bank Name / A-C / IFSC`;
 }
 function walletBalanceText(profile, wallet){
-  return `💳 *WALLET BALANCE*\n━━━━━━━━━━━━━━━━━━━━\n👤 *User:* ${profile?.name || wallet?.userId || "-"}\n💰 *Balance:* ${money(wallet?.balance || 0)}\n🔒 *Withdrawal Hold:* ${money(walletHoldAmount(wallet))}\n✅ *Withdrawable:* ${money(withdrawAvailable(wallet))}\n🎮 *Entry Available:* ${money(entryAvailable(wallet))}`;
+  return `💳 *WALLET BALANCE*\n━━━━━━━━━━━━━━━━━━━━\n👤 *User:* ${profile?.name || wallet?.userId || "-"}\n💰 *Balance:* ${money(wallet?.balance || 0)}\n🔒 *Withdrawal Hold:* ${money(walletHoldAmount(wallet))}\n✅ *Withdrawable:* ${money(withdrawAvailable(wallet))}`;
 }
 function withdrawalStatusText(wd){
   if(!wd) return "🧾 *WITHDRAWAL STATUS*\n━━━━━━━━━━━━━━━━━━━━\nAbhi koi withdrawal request nahi mili.";
@@ -2767,12 +2764,9 @@ function withdrawalsHistoryText(state, userId){
   return `🧾 *WITHDRAWAL HISTORY*\n━━━━━━━━━━━━━━━━━━━━\n${lines.join("\n")}\n━━━━━━━━━━━━━━━━━━━━\nLatest 5 withdrawals shown.`;
 }
 function userSummaryText(state, userId, profile, wallet){
-  const today = todayISO();
-  const entriesToday = (Array.isArray(state?.entries) ? state.entries : []).filter(e => e && e.userId === userId && String(e.date || "").slice(0,10) === today);
-  const totalEntry = entriesToday.reduce((sum,e) => sum + Number(e.total || 0), 0);
   const paymentsPending = (Array.isArray(state?.payments) ? state.payments : []).filter(p => p && p.userId === userId && String(p.status || "pending").toLowerCase() === "pending").length;
   const withdrawalsActive = (Array.isArray(state?.withdrawals) ? state.withdrawals : []).filter(w => w && w.userId === userId && ["pending","approved"].includes(String(w.status || "pending").toLowerCase())).length;
-  return `📊 *TODAY SUMMARY*\n━━━━━━━━━━━━━━━━━━━━\n👤 *User:* ${profile?.name || userId}\n📅 *Date:* ${today}\n🎮 *Entries Today:* ${entriesToday.length}\n💵 *Entry Load:* ${money(totalEntry)}\n💰 *Wallet:* ${money(wallet?.balance || 0)}\n🔒 *Hold:* ${money(walletHoldAmount(wallet || {}))}\n💳 *Pending Payments:* ${paymentsPending}\n🧾 *Active Withdrawals:* ${withdrawalsActive}`;
+  return `📊 *TODAY SUMMARY*\n━━━━━━━━━━━━━━━━━━━━\n👤 *User:* ${profile?.name || userId}\n💰 *Wallet:* ${money(wallet?.balance || 0)}\n🔒 *Hold:* ${money(walletHoldAmount(wallet || {}))}\n💳 *Pending Payments:* ${paymentsPending}\n🧾 *Active Withdrawals:* ${withdrawalsActive}`;
 }
 async function handleSmartUserCommandMessage(m){
   try{
@@ -2798,7 +2792,7 @@ async function handleSmartUserCommandMessage(m){
     }
     let text = "";
     if(cmd === "profile") text = profileSmartText(profile, wallet, found.userId, found);
-    else if(cmd === "entries") text = entriesHistoryText(state, found.userId);
+    else if(cmd === "entries") { await replyToMessage(chatJid, "ℹ️ Entry/guessing system is disabled. Sirf payment, withdrawal, game information aur result services available hain.", m); return true; }
     else if(cmd === "payments") text = paymentStatusTextSmart(state, found.userId);
     else if(cmd === "deposit"){
       const depositAmount = parseDepositAmount(getMessageText(m));
@@ -3205,6 +3199,7 @@ async function handleIncomingWithdrawalMessage(m){
 }
 
 async function handleIncomingEntryMessage(m){
+  if(TITAN_BOOKIE_ONLY_MODE) return false;
   try{
     if(!m || m.key?.fromMe) return;
     const chatJid = m.key?.remoteJid || "";
@@ -5721,8 +5716,8 @@ async function resultTick(){
   try {
     if(!connected) return;
     const state = await fetchFirebaseState();
-    const ledgerAutoMark = applyLedgerAutoMarkAll(state, todayISO(), false);
-    const recoveryAfterMark = ledgerAutoMark.changed ? recomputeLedgerRecoveryAutoRates(state, todayISO(), "gateway_result_auto_mark_recovery") : {changed:false,count:0};
+      const ledgerAutoMark = {changed:false, marked:0, pass:0, fail:0, details:[]};
+      const recoveryAfterMark = {changed:false,count:0};
     gatewayHealth.lastLedgerAutoMark = {...ledgerAutoMark, recoveryAutoRate: recoveryAfterMark};
     if(ledgerAutoMark.changed || recoveryAfterMark.changed){
       if(ledgerAutoMark.changed) await saveGatewayAutoMarkNarrow(state, ledgerAutoMark);
@@ -5752,26 +5747,29 @@ async function resultTick(){
         pendingTargets.push(target);
       }
       if(!pendingTargets.length) continue;
-      let settlementOut = {changed:false, settlement:findSettlementRecord(state, date, job.market, job.stage)};
-      const sLock = await reserveSettlement(job);
-      if(sLock.ok){
-        settlementOut = settleResultInState(state, job);
-        if(settlementOut.changed){
-          await saveGatewaySettlementNarrow(state, date, settlementOut.settlement);
-          await markSettlementDone(job, settlementOut.settlement);
-        } else if(settlementOut.alreadySettled && settlementOut.settlement){
-          await markSettlementDone(job, settlementOut.settlement);
+      let settlementOut = {changed:false, settlement:null};
+      if(!TITAN_BOOKIE_ONLY_MODE){
+        settlementOut = {changed:false, settlement:findSettlementRecord(state, date, job.market, job.stage)};
+        const sLock = await reserveSettlement(job);
+        if(sLock.ok){
+          settlementOut = settleResultInState(state, job);
+          if(settlementOut.changed){
+            await saveGatewaySettlementNarrow(state, date, settlementOut.settlement);
+            await markSettlementDone(job, settlementOut.settlement);
+          } else if(settlementOut.alreadySettled && settlementOut.settlement){
+            await markSettlementDone(job, settlementOut.settlement);
+          }
+        } else if(sLock.done){
+          settlementOut = {changed:false, alreadySettled:true, settlement:findSettlementRecord(state, date, job.market, job.stage)};
+        } else {
+          console.log(`🛡️ Settlement locked by another worker: ${job.market} ${job.stage}`);
         }
-      } else if(sLock.done){
-        settlementOut = {changed:false, alreadySettled:true, settlement:findSettlementRecord(state, date, job.market, job.stage)};
-      } else {
-        console.log(`🛡️ Settlement locked by another worker: ${job.market} ${job.stage}`);
       }
       let messageText = formatResultMessage(job.market, job.result);
       const sSettings = settlementSettings(state);
       const settlement = settlementOut.settlement;
-      if(sSettings.enabled && sSettings.includeSummaryInResultMessage && settlement) messageText += settlementSummaryText(settlement);
-      if(sSettings.enabled && sSettings.includeHitMissInResultMessage && settlement) messageText += "\n\n" + formatHitMissDetailedText(settlement, { maxRows: 60 });
+      if(!TITAN_BOOKIE_ONLY_MODE && sSettings.enabled && sSettings.includeSummaryInResultMessage && settlement) messageText += settlementSummaryText(settlement);
+      if(!TITAN_BOOKIE_ONLY_MODE && sSettings.enabled && sSettings.includeHitMissInResultMessage && settlement) messageText += "\n\n" + formatHitMissDetailedText(settlement, { maxRows: 60 });
       console.log(`🏆 RESULT ${job.stage.toUpperCase()}: ${job.market} ${job.result} -> ${pendingTargets.length}/${allTargets.length} pending target(s)${settlement ? ` | settlement hit:${settlement.hitCount} payout:${settlement.payoutTotal}` : ""}`);
       const results = [];
       for(const target of pendingTargets) results.push(await sendText(target, messageText, {type:"result_declaration", market:job.market, stage:job.stage, result:job.result}));
@@ -6322,9 +6320,9 @@ const multiSessionManager = new TitanMultiSessionManager({
   },
   handlers:{
     finance_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleIncomingDepositScreenshotMessage(m))return true;return handleIncomingWithdrawalMessage(m);}),
-    game_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleSmartUserCommandMessage(m))return true;if(await handleSpamGuardMessage(m))return true;return handleIncomingEntryMessage(m);}),
+    game_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleSmartUserCommandMessage(m))return true;if(await handleSpamGuardMessage(m))return true;return TITAN_BOOKIE_ONLY_MODE ? false : handleIncomingEntryMessage(m);}),
     result_bot:(m,ctx)=>/^#declare\b/i.test(ctx.text)?withRoleSocket(ctx.socket,()=>handleBotCommandMessage(m)):false,
-    ledger_bot:(m,ctx)=>/^(?:[#!\/]?(?:ledger|schedule|audit|accounting))\b/i.test(ctx.text)?withRoleSocket(ctx.socket,()=>handleBotCommandMessage(m)):false
+    ledger_bot:()=>false
   }
 });
 multiSessionManager.registerRoutes(app,gatewayAuthMiddleware);
@@ -6564,10 +6562,10 @@ app.get("/status", async (req,res)=>{
     counts.firebaseReadError = e.response ? `HTTP ${e.response.status}` : e.message;
   }
   res.json({
-    status:"success", connected, user:sock?.user || null, firebase:FIREBASE_URL, timezone:APP_TZ, now:nowHHMM(), date:todayISO(), cache:targetsCache.updatedAt,
+    status:"success", connected, user:sock?.user || null, firebase:TITAN_SQLITE_MODE ? "disabled_in_sqlite_mode" : FIREBASE_URL, storageMode:TITAN_STORAGE_MODE, bookieOnlyMode:TITAN_BOOKIE_ONLY_MODE, timezone:APP_TZ, now:nowHHMM(), date:todayISO(), cache:targetsCache.updatedAt,
     waLogin:{qrAvailable:!!lastQR, qrAt:lastQRAt, authDir:AUTH_DIR, resetCount:whatsappResetCount, lastSessionResetAt},
-    resultScrape:{enabled:RESULT_SCRAPE_ENABLED && adminEnabled, envEnabled:RESULT_SCRAPE_ENABLED, adminEnabled, intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:RESULT_SOURCE_URL},
-    configCleanup:gatewayConfigReport(), paymentOutbox:true, loadForwarder:true, spamGuard:true, whatsappSafetyGuard:true, durability:{version:GATEWAY_DURABILITY_VERSION, firebaseLocks:true, owner:GATEWAY_LOCK_OWNER, localFallbackFiles:{sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE}}, counts, health:gatewayHealth
+    resultScrape:{enabled:!TITAN_BOOKIE_ONLY_MODE && RESULT_SCRAPE_ENABLED && adminEnabled, envEnabled:RESULT_SCRAPE_ENABLED, adminEnabled:!TITAN_BOOKIE_ONLY_MODE && adminEnabled, intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:TITAN_BOOKIE_ONLY_MODE ? [] : RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:TITAN_BOOKIE_ONLY_MODE ? "" : RESULT_SOURCE_URL},
+    configCleanup:gatewayConfigReport(), paymentOutbox:true, loadForwarder:!TITAN_BOOKIE_ONLY_MODE, spamGuard:true, whatsappSafetyGuard:true, durability:{version:GATEWAY_DURABILITY_VERSION, firebaseLocks:true, owner:GATEWAY_LOCK_OWNER, localFallbackFiles:{sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE}}, counts, health:gatewayHealth
   });
 });
 app.get(["/health", "/api/health"], async (req,res)=>{
@@ -6579,9 +6577,9 @@ app.get(["/health", "/api/health"], async (req,res)=>{
       status:"success", connected, user:sock?.user || null, timezone:APP_TZ, now:nowHHMM(), date:todayISO(),
       waLogin:{qrAvailable:!!lastQR, qrAt:lastQRAt, authDir:AUTH_DIR, resetCount:whatsappResetCount, lastSessionResetAt, lastWhatsAppEvent:gatewayHealth.lastWhatsAppEvent || "", lastDisconnectCode:gatewayHealth.lastDisconnectCode || ""},
       targets:{ contacts:(targetsCache.contacts||[]).length, groups:(targetsCache.groups||[]).length, updatedAt:targetsCache.updatedAt, lastSyncError:targetsCache.lastSyncError || "", syncVersion:WHATSAPP_TARGET_SYNC_VERSION, syncIntervalMs:WHATSAPP_TARGET_SYNC_INTERVAL_MS },
-      scrape:{ enabled: RESULT_SCRAPE_ENABLED && firebaseAutoScrapeEnabled(state), envEnabled: RESULT_SCRAPE_ENABLED, adminEnabled: firebaseAutoScrapeEnabled(state), intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:RESULT_SOURCE_URL },
-      queue:{ paymentPending:Array.isArray(state.paymentOutbox)?state.paymentOutbox.filter(x=>x&&x.status==="pending").length:0, loadForwardPending:Array.isArray(state.loadForwarderOutbox)?state.loadForwarderOutbox.filter(x=>x&&x.status==="pending").length:0 },
-      modules:{ entryParser: state.entrySettings?.entryParserEnabled !== false, settlement: state.settlementSettings?.enabled !== false, loadForwarder: lf.enabled === true, spamGuard: sg.enabled !== false, whatsappSafetyGuard: state.whatsappSafetySettings?.enabled !== false },
+       scrape:{ enabled: !TITAN_BOOKIE_ONLY_MODE && RESULT_SCRAPE_ENABLED && firebaseAutoScrapeEnabled(state), envEnabled: RESULT_SCRAPE_ENABLED, adminEnabled: !TITAN_BOOKIE_ONLY_MODE && firebaseAutoScrapeEnabled(state), intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:TITAN_BOOKIE_ONLY_MODE ? [] : RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:TITAN_BOOKIE_ONLY_MODE ? "" : RESULT_SOURCE_URL },
+       queue:{ paymentPending:Array.isArray(state.paymentOutbox)?state.paymentOutbox.filter(x=>x&&x.status==="pending").length:0, loadForwardPending:0 },
+       modules:{ entryParser: !TITAN_BOOKIE_ONLY_MODE && state.entrySettings?.entryParserEnabled !== false, settlement: !TITAN_BOOKIE_ONLY_MODE && state.settlementSettings?.enabled !== false, loadForwarder: false, resultPublisher:true, payments:true, whatsappGameFormat:true, spamGuard: sg.enabled !== false, whatsappSafetyGuard: state.whatsappSafetySettings?.enabled !== false },
       configCleanup:gatewayConfigReport(), observability:gatewayObservabilityStatus(), durability:{version:GATEWAY_DURABILITY_VERSION, firebaseLocks:true, owner:GATEWAY_LOCK_OWNER},
       health: gatewayHealth
     });
@@ -7110,14 +7108,14 @@ if(TITAN_SKIP_WHATSAPP_START){
   multiSessionManager.startAll().catch(e => console.error("Multi-session start error", e));
 }
 managedInterval("whatsapp_target_sync", async () => { if(connected) await syncTargets({periodic:true}); }, WHATSAPP_TARGET_SYNC_INTERVAL_MS);
-managedInterval("schedule_tick", scheduleTick, TITAN_SCHEDULE_POLL_MS);
+if(!TITAN_BOOKIE_ONLY_MODE) managedInterval("schedule_tick", scheduleTick, TITAN_SCHEDULE_POLL_MS);
 managedInterval("result_tick", resultTick, TITAN_RESULT_POLL_MS);
-managedInterval("result_scrape_tick", resultScrapeTick, RESULT_SCRAPE_INTERVAL_MS);
+if(!TITAN_BOOKIE_ONLY_MODE) managedInterval("result_scrape_tick", resultScrapeTick, RESULT_SCRAPE_INTERVAL_MS);
 managedInterval("payment_outbox_tick", paymentOutboxTick, TITAN_PAYMENT_OUTBOX_POLL_MS);
-managedInterval("load_forwarder_tick", loadForwarderTick, TITAN_LOAD_FORWARDER_POLL_MS);
-managedTimeout("result_scrape_bootstrap", resultScrapeTick, 2000);
+if(!TITAN_BOOKIE_ONLY_MODE) managedInterval("load_forwarder_tick", loadForwarderTick, TITAN_LOAD_FORWARDER_POLL_MS);
+if(!TITAN_BOOKIE_ONLY_MODE) managedTimeout("result_scrape_bootstrap", resultScrapeTick, 2000);
 managedTimeout("payment_outbox_bootstrap", paymentOutboxTick, 5000);
-managedTimeout("load_forwarder_bootstrap", loadForwarderTick, 7000);
+if(!TITAN_BOOKIE_ONLY_MODE) managedTimeout("load_forwarder_bootstrap", loadForwarderTick, 7000);
 managedInterval("target_sync", () => syncTargets(), 10*60*1000);
 managedInterval("local_retention_cleanup", () => runLocalRetentionCleanup(), 60*60*1000);
 managedTimeout("local_retention_cleanup_bootstrap", () => runLocalRetentionCleanup(), 15000);

@@ -34,6 +34,7 @@
   }
 
   setDefault("TITAN_STORAGE_MODE", "sqlite");
+  setDefault("TITAN_BOOKIE_ONLY_MODE", "1");
   setDefault("TITAN_BACKEND_URL", process.env.FLASK_URL || process.env.BACKEND_URL || "http://127.0.0.1:5000");
   if (!["sqlite", "local", "local_sqlite"].includes(String(process.env.TITAN_STORAGE_MODE || "").toLowerCase())) {
     setDefault("FIREBASE_URL", "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json");

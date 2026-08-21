@@ -81,6 +81,8 @@ TITAN_SECURITY_MISCONFIGURED = False
 TITAN_SECURITY_STRICT = False
 TITAN_COOKIE_SECURE = str(os.environ.get("TITAN_COOKIE_SECURE", "0")).strip().lower() in ("1", "true", "yes", "on")
 TITAN_ALLOW_QUERY_TOKEN = str(os.environ.get("TITAN_ALLOW_QUERY_TOKEN", "0")).strip().lower() in ("1", "true", "yes", "on")
+# Bookie-only product mode: payment, WhatsApp game-format replies, results and admin activity remain.
+TITAN_BOOKIE_ONLY_MODE = str(os.environ.get("TITAN_BOOKIE_ONLY_MODE", "1")).strip().lower() in ("1", "true", "yes", "on")
 FIREBASE_LAST_LOAD_META = {"status": "unchecked", "message": "not loaded yet"}
 
 @app.after_request
@@ -287,9 +289,24 @@ document.getElementById('tok').addEventListener('keydown',e=>{if(e.key==='Enter'
 </script></body></html>"""
 
 
+BOOKIE_DISABLED_ROUTE_RE = re.compile(
+    r"^(?:/bot_schedule(?:/|$)|/api/(?:entries(?:/|$)|entry_settings(?:/|$)|save_entry_safety(?:/|$)|risk_settings(?:/|$)|ledger(?:_|/|$).*|schedule(?:_|/|$).*|bot_schedule(?:/|$)|load(?:_|/|$).*|scrape(?:_|/|$).*|gateway_scrape_results(?:/|$)|market_source_scan(?:/|$)|market_import_from_website(?:/|$)|send_hitmiss_report(?:/|$)|clear_invalid_auto_results(?:/|$)))",
+    re.IGNORECASE,
+)
+
 @app.before_request
 def _security_lockdown_before_request():
     # Direct-open mode intentionally leaves dashboard and API routes accessible.
+    return None
+
+@app.before_request
+def _bookie_only_feature_guard():
+    if TITAN_BOOKIE_ONLY_MODE and BOOKIE_DISABLED_ROUTE_RE.match(request.path or ""):
+        return jsonify({
+            "status": "disabled",
+            "feature": "bookie_only_mode",
+            "message": "Ledger, entries, schedule, guessing, digits, load and scraping features are disabled in Bookie-only mode."
+        }), 410
     return None
 
 
@@ -299,6 +316,9 @@ def api_security_status():
         "status": "success",
         "securityLockdown": False,
         "directOpen": True,
+        "bookieOnlyMode": TITAN_BOOKIE_ONLY_MODE,
+        "productModules": ["whatsapp_game_format", "payments", "results", "admin_activity", "whatsapp_gateway"],
+        "disabledModules": ["ledger", "ledger_cards", "schedule", "guessing", "digits", "scraping"] if TITAN_BOOKIE_ONLY_MODE else [],
         "version": SECURITY_LOCKDOWN_VERSION,
         "adminTokenConfigured": False,
         "enforced": False,
@@ -790,6 +810,9 @@ def _client_app_config():
     return {
         "version": CONFIG_CLEANUP_VERSION,
         "storageMode": TITAN_STORAGE_MODE,
+        "bookieOnlyMode": TITAN_BOOKIE_ONLY_MODE,
+        "activeModules": ["whatsapp_game_format", "payments", "results", "admin_activity", "whatsapp_gateway"],
+        "disabledModules": ["ledger", "ledger_cards", "schedule", "guessing", "digits", "entries", "scraping"] if TITAN_BOOKIE_ONLY_MODE else [],
         "storageLabel": "SQLite local database" if _sqlite_enabled() else "Firebase Realtime Database",
         "storagePathConfigured": bool(TITAN_SQLITE_PATH) if _sqlite_enabled() else bool(get_firebase_url()),
         "uploadEndpoint": "/api/upload_image",
@@ -8930,7 +8953,8 @@ HTML_TEMPLATE = """
         function titanApplyStartupToolRoute(){
             try{
                 const requestedTab = String(TITAN_LITE_QUERY.get('tab') || '').trim();
-                if(requestedTab) mainNav = requestedTab;
+                const bookieOnly = !!(TITAN_APP_CONFIG && TITAN_APP_CONFIG.bookieOnlyMode);
+                if(requestedTab) mainNav = (bookieOnly && ['ledger','entries','markets','forward','setup','smart'].includes(requestedTab)) ? 'finance' : requestedTab;
                 const requestedSub = String(TITAN_LITE_QUERY.get('sub') || '').trim();
                 if(requestedSub && ['ank','jodi','pannel'].includes(requestedSub)) activeTab = requestedSub;
             }catch(e){}
@@ -9452,7 +9476,8 @@ HTML_TEMPLATE = """
 
         refreshMarketArrays();
 
-        let mainNav = 'ledger';
+        const TITAN_BOOKIE_ONLY_MODE = !!(TITAN_APP_CONFIG && TITAN_APP_CONFIG.bookieOnlyMode);
+        let mainNav = TITAN_BOOKIE_ONLY_MODE ? 'finance' : 'ledger';
         let financeSubTab = 'summary';
         let activeTab = 'ank';
         let weeklyTabType = 'ank';
@@ -9772,7 +9797,7 @@ HTML_TEMPLATE = """
             if (window.targetPickerOpen) { closeTargetPicker(true); }
             else if (window.shareModalOpen) { closeShareModal(true); }
             else if (IS_MASTER && appState.activeId !== 'admin1') { appState.activeId = 'admin1'; state = appState.profiles['admin1']; setMainNav('clients'); }
-            else if (mainNav !== 'ledger') { setMainNav('ledger'); }
+            else if (mainNav !== (TITAN_BOOKIE_ONLY_MODE ? 'finance' : 'ledger')) { setMainNav(TITAN_BOOKIE_ONLY_MODE ? 'finance' : 'ledger'); }
         });
 
         function backToMasterUI() {
@@ -9930,7 +9955,7 @@ HTML_TEMPLATE = """
 
                             let activeTag = document.activeElement ? document.activeElement.tagName : '';
                             let isTyping = (activeTag === 'INPUT' || activeTag === 'TEXTAREA');
-                            let isSafeTab = (mainNav === 'ledger' || mainNav === 'audit');
+                            let isSafeTab = (mainNav === 'ledger' || mainNav === 'audit' || mainNav === 'finance' || mainNav === 'results' || mainNav === 'guard' || mainNav === 'health');
 
                             if (isSafeTab && !isTyping) {
                                 render(true);
@@ -12775,11 +12800,14 @@ withdraw status</pre>
         function handleGlobalSearch(event) {
             if(event.key !== 'Enter') return;
             const query = String(event.target.value || '').trim().toLowerCase();
-            const routes = IS_MASTER ? {
+            const routes = IS_MASTER ? (TITAN_BOOKIE_ONLY_MODE ? {
+                dashboard:'finance', wallet:'finance', transaction:'finance', payment:'finance',
+                user:'clients', vip:'clients', result:'results', whatsapp:'guard', bot:'guard', security:'guard', device:'guard'
+            } : {
                 dashboard:'ledger', ledger:'ledger', user:'clients', vip:'clients', wallet:'finance',
                 transaction:'finance', payment:'finance', market:'markets', result:'results',
                 whatsapp:'forward', bot:'forward', security:'guard', device:'guard', setting:'setup'
-            } : { dashboard:'ledger', market:'ledger', wallet:'membership', profile:'settings', vip:'membership' };
+            }) : { dashboard:'ledger', market:'ledger', wallet:'membership', profile:'settings', vip:'membership' };
             const match = Object.keys(routes).find(key => query.includes(key));
             if(match) {
                 setMainNav(routes[match]);
@@ -12792,12 +12820,18 @@ withdraw status</pre>
 
         function renderBottomNav() {
             let navHtml = '';
-            const navItems = [
+            const navItems = TITAN_BOOKIE_ONLY_MODE ? [
+                { id: 'finance', icon: 'fa-wallet', label: 'Finance' },
+                { id: 'results', icon: 'fa-trophy', label: 'Results' },
+                { id: 'audit', icon: 'fa-chart-pie', label: 'Activity' },
+                { id: 'guard', icon: 'fa-shield-halved', label: 'Bots' },
+                { id: 'clients', icon: 'fa-users', label: 'Users' }
+            ] : [
                 { id: 'ledger', icon: 'fa-chart-line', label: 'Dashboard' },
                 { id: 'audit', icon: 'fa-chart-pie', label: 'Audit' }
             ];
 
-            if(IS_MASTER) {
+            if(IS_MASTER && !TITAN_BOOKIE_ONLY_MODE) {
                 if(appState.activeId === 'admin1') {
                     navItems.splice(1, 0, { id: 'clients', icon: 'fa-users', label: 'VIPs' });
                     navItems.splice(2, 0, { id: 'finance', icon: 'fa-wallet', label: 'Finance' });
@@ -12825,8 +12859,8 @@ withdraw status</pre>
             const sidebarNav = document.getElementById('sidebar-links-container');
             if(sidebarNav) {
                 const management = navItems.map(item => `<button onclick="setMainNav('${item.id}')" class="side-link-btn ${mainNav === item.id ? 'active' : ''}"><i class="fas ${item.icon}"></i><span>${item.label}</span></button>`).join('');
-                const resources = chartLinks.slice(0, 5).map(link => `<a href="${link.l}" target="_blank" rel="noopener" class="side-link-btn"><i class="fas fa-arrow-up-right-from-square"></i><span>${link.n}</span></a>`).join('');
-                sidebarNav.innerHTML = `<div class="sidebar-section-label">Workspace</div>${management}<div class="sidebar-section-label">Market charts</div>${resources}`;
+                const resources = TITAN_BOOKIE_ONLY_MODE ? '' : chartLinks.slice(0, 5).map(link => `<a href="${link.l}" target="_blank" rel="noopener" class="side-link-btn"><i class="fas fa-arrow-up-right-from-square"></i><span>${link.n}</span></a>`).join('');
+                sidebarNav.innerHTML = `<div class="sidebar-section-label">Workspace</div>${management}${resources ? `<div class="sidebar-section-label">Market charts</div>${resources}` : ''}`;
             }
             const activeItem = navEl.querySelector('.nav-item.active');
             if(activeItem) {
@@ -12901,6 +12935,9 @@ withdraw status</pre>
         function toggleMarketVis(visType, bmName, isChecked) { ensureDataStruct(); state.dayRecords[currentDate][visType][bmName] = isChecked; titanSaveAdminSettingsNow(); render(true); }
         function toggleAllMarkets(visType, isChecked) { ensureDataStruct(); const arr = visType === 'visJodi' ? baseMarkets : markets; arr.forEach(m => { state.dayRecords[currentDate][visType][m.n] = isChecked; }); titanSaveAdminSettingsNow(); render(true); }
         function setMainNav(nav) {
+            if(TITAN_BOOKIE_ONLY_MODE && ['ledger','entries','markets','forward','setup','smart'].includes(String(nav || ''))){
+                nav = nav === 'entries' ? 'finance' : 'finance';
+            }
             if(['wallets','withdrawals','payments'].includes(nav)){
                 financeSubTab = (nav === 'wallets') ? 'wallets' : (nav === 'withdrawals' ? 'withdrawals' : 'payments');
                 mainNav = 'finance';
@@ -14210,9 +14247,39 @@ withdraw status</pre>
             </div>`;
         }
 
+        function renderBookieResultsTab() {
+            if(!IS_MASTER) return '';
+            ensureResultStruct();
+            const records = appState.resultRecords[currentDate] || {};
+            const targetCount = appState.resultTargets.length;
+            let html = `<div class="px-3 py-4">
+                <p class="sec-header">Bookie Result Publisher</p>
+                <div class="native-card p-4 mb-3" style="border-color:rgba(0,194,111,0.22);background:rgba(0,194,111,0.04)">
+                    <h3 class="text-white font-black text-[14px]">Manual WhatsApp Result System</h3>
+                    <p class="text-[10px] text-[var(--text-muted)] leading-relaxed mt-1">Admin yahan result declare karega. Website scraping, ledger settlement, guessing aur auto PASS/FAIL disabled hain.</p>
+                    <div class="mt-3 bg-[var(--surface-light)] border border-[var(--border)] rounded-xl p-3 text-[10px]">Targets: <b class="text-[var(--green)]">${targetCount} saved</b></div>
+                    <button onclick="openResultTargetPicker()" class="w-full mt-3 bg-[rgba(42,171,238,0.15)] text-[var(--primary)] border border-[rgba(42,171,238,0.25)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-list-check mr-1"></i> Pick WhatsApp Result Targets</button>
+                    <button onclick="retryResultDeclarations()" class="w-full mt-2 bg-[rgba(42,171,238,0.12)] text-[var(--primary)] border border-[rgba(42,171,238,0.25)] py-3 rounded-xl font-black text-[10px] uppercase active:scale-95"><i class="fas fa-rotate mr-1"></i> Retry Result Send</button>
+                </div>
+                <p class="sec-header">Declare Result</p>`;
+            html += resultBaseMarkets.map((m, i) => {
+                const rec = records[m.n] || {};
+                const view = resultDisplayView(rec);
+                const currentVal = view.close || view.open || '';
+                return `<div class="native-card p-4 mb-2">
+                    <div class="flex items-start justify-between gap-3 mb-3">
+                        <div class="min-w-0"><h3 class="text-white font-black text-[13px] uppercase truncate">${m.n}</h3><p class="text-[9px] text-[var(--text-muted)] mt-1">Open: <span class="text-[var(--primary)]">${view.open || 'Pending'}</span> · Close: <span class="text-[var(--amber)]">${view.close || 'Pending'}</span></p></div>
+                    </div>
+                    <div class="flex gap-2"><input id="result-input-${i}" class="native-input text-sm py-3 flex-1" placeholder="123-4 / 123-45-678" value="${currentVal}"><button onclick="saveMarketResult(${i})" class="bg-[var(--primary)] text-white px-4 rounded-xl font-black text-[10px] uppercase active:scale-95 shrink-0"><i class="fas fa-paper-plane mr-1"></i>Declare</button></div>
+                </div>`;
+            }).join('');
+            return html + `<div class="native-card p-3 mb-8 text-[10px] text-[var(--text-muted)] leading-relaxed"><b class="text-white">Bookie-only rule:</b> Sirf manually declared open/close results WhatsApp targets ko bheje jayenge.</div></div>`;
+        }
+
         function renderResultsTab() {
             if(!IS_MASTER) return '';
             ensureResultStruct();
+            if(TITAN_BOOKIE_ONLY_MODE) return renderBookieResultsTab();
             const targetCount = appState.resultTargets.length;
             const records = appState.resultRecords[currentDate] || {};
             const autoScrapeOn = !(appState.resultSettings && appState.resultSettings.autoScrapeEnabled === false);
