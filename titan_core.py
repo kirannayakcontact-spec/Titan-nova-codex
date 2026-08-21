@@ -13,6 +13,7 @@
 from flask import Flask, render_template_string, request, jsonify, make_response, redirect, has_request_context
 import json
 import os
+import sqlite3
 import uuid
 import datetime
 import io
@@ -229,7 +230,8 @@ def _gateway_request(method, path, **kwargs):
 
 def _startup_config_warnings():
     warnings = []
-    if not (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL")):
+    storage_mode = str(os.environ.get("TITAN_STORAGE_MODE", "sqlite")).strip().lower()
+    if storage_mode not in ("sqlite", "local", "local_sqlite") and not (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL")):
         warnings.append("FIREBASE_URL/FIREBASE_DB_URL is missing; using local compatibility default Firebase URL.")
     if re.search(r"https?://(127\.0\.0\.1|localhost)(:|/|$)", GATEWAY_URL, re.I):
         warnings.append("GATEWAY_URL is using localhost; this is OK for local Termux but not for split-host deployments.")
@@ -419,6 +421,9 @@ FULL_AUDIT_PHASE4_PRODUCTION_DIAGNOSTICS = True
 RUNTIME_SELF_HEALING_VERSION = "2026-06-30-phase3-runtime-self-healing-v1"
 PRODUCTION_DIAGNOSTICS_VERSION = "2026-06-30-phase4-production-diagnostics-v1"
 TITAN_STATE_DIR = os.environ.get("TITAN_STATE_DIR", BASE_DIR).strip() or BASE_DIR
+# Local-first storage: set TITAN_STORAGE_MODE=firebase only when Firebase is intentionally used.
+TITAN_STORAGE_MODE = str(os.environ.get("TITAN_STORAGE_MODE", "sqlite")).strip().lower() or "sqlite"
+TITAN_SQLITE_PATH = os.path.abspath(os.environ.get("TITAN_SQLITE_PATH", os.path.join(TITAN_STATE_DIR, "titan_nova.sqlite3")))
 STATE_BACKUP_DIR = os.path.join(TITAN_STATE_DIR, "titan_state_backups")
 LAST_KNOWN_GOOD_FILE = os.path.join(STATE_BACKUP_DIR, "last_known_good.json")
 MAX_STATE_BACKUPS = int(os.environ.get("TITAN_MAX_STATE_BACKUPS", "30"))
@@ -645,6 +650,110 @@ def _redact_config_value(value, keep=8):
         return "***"
     return s[:keep] + "…" + str(len(s)) + "chars"
 
+def _sqlite_enabled():
+    return TITAN_STORAGE_MODE in ("sqlite", "local", "local_sqlite")
+
+def _sqlite_connect():
+    os.makedirs(os.path.dirname(TITAN_SQLITE_PATH) or ".", exist_ok=True)
+    conn = sqlite3.connect(TITAN_SQLITE_PATH, timeout=15)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("CREATE TABLE IF NOT EXISTS app_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    return conn
+
+def _sqlite_load_state():
+    global FIREBASE_LAST_LOAD_META
+    try:
+        with _sqlite_connect() as conn:
+            row = conn.execute("SELECT state_json, updated_at FROM app_state WHERE id = 1").fetchone()
+        if not row:
+            FIREBASE_LAST_LOAD_META = {"status": "empty", "storage": "sqlite", "message": "SQLite state database is initialized but has no state row", "path": TITAN_SQLITE_PATH}
+            return None
+        state = json.loads(row["state_json"])
+        if not isinstance(state, dict):
+            raise ValueError("SQLite state row is not a JSON object")
+        FIREBASE_LAST_LOAD_META = {"status": "success", "storage": "sqlite", "message": "loaded", "updatedAt": row["updated_at"], "path": TITAN_SQLITE_PATH}
+        try:
+            _rt_cache_set(state, "sqlite_get")
+        except Exception:
+            pass
+        return state
+    except Exception as exc:
+        FIREBASE_LAST_LOAD_META = {"status": "exception", "storage": "sqlite", "message": str(exc)[:200], "path": TITAN_SQLITE_PATH}
+        _obs_exception("sqlite_load_error", exc)
+        return None
+
+def _sqlite_save_state(state, backup_label="sqlite_save"):
+    if not isinstance(state, dict):
+        return False
+    payload = json.dumps(state, ensure_ascii=False, default=str, separators=(",", ":"))
+    stamp = _now_iso_local() if "_now_iso_local" in globals() else datetime.datetime.now().isoformat(timespec="seconds")
+    try:
+        with _sqlite_connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("INSERT INTO app_state(id, state_json, updated_at) VALUES(1, ?, ?) ON CONFLICT(id) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at", (payload, stamp))
+            conn.commit()
+        FIREBASE_LAST_LOAD_META.update({"status": "success", "storage": "sqlite", "updatedAt": stamp, "path": TITAN_SQLITE_PATH})
+        try:
+            _rt_cache_set(state, "sqlite_save")
+        except Exception:
+            pass
+        return True
+    except Exception as exc:
+        _obs_exception("sqlite_save_error", exc, {"backupLabel": backup_label})
+        return False
+
+def _sqlite_get_path(state, parts):
+    cur = state
+    for part in parts:
+        if not isinstance(cur, dict) or str(part) not in cur:
+            return None
+        cur = cur[str(part)]
+    return cur
+
+def _sqlite_set_path(state, parts, value, merge=False):
+    if not parts:
+        if isinstance(value, dict):
+            state.clear(); state.update(value)
+        return
+    cur = state
+    for part in parts[:-1]:
+        key = str(part)
+        if not isinstance(cur.get(key), dict):
+            cur[key] = {}
+        cur = cur[key]
+    key = str(parts[-1])
+    if merge and isinstance(cur.get(key), dict) and isinstance(value, dict):
+        cur[key].update(value)
+    else:
+        cur[key] = value
+
+def _sqlite_delete_path(state, parts):
+    if not parts:
+        state.clear(); return
+    cur = state
+    for part in parts[:-1]:
+        if not isinstance(cur, dict) or str(part) not in cur:
+            return
+        cur = cur[str(part)]
+    if isinstance(cur, dict):
+        cur.pop(str(parts[-1]), None)
+
+def _sqlite_child_get(parts):
+    state = _sqlite_load_state() or {}
+    return _sqlite_get_path(state, parts)
+
+def _sqlite_child_write(parts, value, mode="put"):
+    state = _sqlite_load_state() or {}
+    if mode == "delete":
+        _sqlite_delete_path(state, parts)
+    else:
+        _sqlite_set_path(state, parts, value, merge=(mode == "patch"))
+    if not _sqlite_save_state(state, "child_" + mode):
+        raise RuntimeError("SQLite state write failed")
+    return True
+
 def get_firebase_url():
     url = FIREBASE_DB_URL.strip().rstrip('/')
     if not url.endswith('.json'):
@@ -654,6 +763,9 @@ def get_firebase_url():
 def _client_app_config():
     return {
         "version": CONFIG_CLEANUP_VERSION,
+        "storageMode": TITAN_STORAGE_MODE,
+        "storageLabel": "SQLite local database" if _sqlite_enabled() else "Firebase Realtime Database",
+        "storagePathConfigured": bool(TITAN_SQLITE_PATH) if _sqlite_enabled() else bool(get_firebase_url()),
         "uploadEndpoint": "/api/upload_image",
         "imageUploadProxy": True,
         "imgbbConfigured": bool(IMGBB_API_KEY),
@@ -668,7 +780,7 @@ def _client_app_config():
 def _config_migration_report():
     warnings = []
     using_default_firebase = not (os.environ.get("FIREBASE_URL") or os.environ.get("FIREBASE_DB_URL"))
-    if using_default_firebase:
+    if using_default_firebase and not _sqlite_enabled():
         warnings.append("FIREBASE_URL/FIREBASE_DB_URL env not set; compatibility default database URL is in use.")
     if not IMGBB_API_KEY:
         warnings.append("IMGBB_API_KEY env not set; image uploads will use inline data-URL storage instead of ImgBB hosting.")
@@ -690,6 +802,9 @@ def _config_migration_report():
             "cookieSecure": bool(TITAN_COOKIE_SECURE),
         },
         "storage": {
+            "mode": TITAN_STORAGE_MODE,
+            "label": "SQLite local database" if _sqlite_enabled() else "Firebase Realtime Database",
+            "sqlitePath": _redact_config_value(TITAN_SQLITE_PATH, 32) if _sqlite_enabled() else "",
             "stateDir": _redact_config_value(TITAN_STATE_DIR, 24),
             "backupDir": _redact_config_value(STATE_BACKUP_DIR, 24),
         },
@@ -702,11 +817,13 @@ def _config_migration_report():
         "startupWarnings": STARTUP_CONFIG_WARNINGS,
         "clientConfig": _client_app_config(),
         "warnings": warnings,
-        "envRequiredRecommended": ["FIREBASE_URL", "TITAN_ADMIN_TOKEN", "TITAN_GATEWAY_TOKEN", "TITAN_FLASK_SECRET", "IMGBB_API_KEY"],
+        "envRequiredRecommended": (["TITAN_STORAGE_MODE=sqlite", "TITAN_SQLITE_PATH", "TITAN_FLASK_SECRET", "IMGBB_API_KEY"] if _sqlite_enabled() else ["FIREBASE_URL", "TITAN_ADMIN_TOKEN", "TITAN_GATEWAY_TOKEN", "TITAN_FLASK_SECRET", "IMGBB_API_KEY"]),
     }
 
 def load_from_firebase():
     global FIREBASE_LAST_LOAD_META
+    if _sqlite_enabled():
+        return _sqlite_load_state()
     try:
         force = False
         try:
@@ -1098,6 +1215,8 @@ def _safe_save_to_firebase_put(data):
     return True
 
 def save_to_firebase(data, backup_label="manual_overwrite"):
+    if _sqlite_enabled():
+        return _sqlite_save_state(data, backup_label)
     """Guarded Firebase root save.
 
     Full-root saves are kept for compatibility with the current UI, but they now
@@ -1144,6 +1263,8 @@ def _firebase_child_url(*parts):
     return base + '/' + '/'.join(clean) + '.json'
 
 def _firebase_put_child(parts, value, timeout=10):
+    if _sqlite_enabled():
+        return _sqlite_child_write(parts, value, "put")
     started = time.time()
     res = requests.put(_firebase_child_url(*parts), json=value, timeout=timeout)
     if getattr(res, 'status_code', 500) >= 400:
@@ -1153,6 +1274,8 @@ def _firebase_put_child(parts, value, timeout=10):
     return True
 
 def _firebase_patch_child(parts, value, timeout=10):
+    if _sqlite_enabled():
+        return _sqlite_child_write(parts, value, "patch")
     started = time.time()
     res = requests.patch(_firebase_child_url(*parts), json=value, timeout=timeout)
     if getattr(res, 'status_code', 500) >= 400:
@@ -1162,6 +1285,8 @@ def _firebase_patch_child(parts, value, timeout=10):
     return True
 
 def _firebase_delete_child(parts, timeout=10):
+    if _sqlite_enabled():
+        return _sqlite_child_write(parts, None, "delete")
     started = time.time()
     res = requests.delete(_firebase_child_url(*parts), timeout=timeout)
     if getattr(res, 'status_code', 500) >= 400:
@@ -1171,6 +1296,8 @@ def _firebase_delete_child(parts, timeout=10):
     return True
 
 def _firebase_get_child(parts, timeout=10):
+    if _sqlite_enabled():
+        return _sqlite_child_get(parts)
     started = time.time()
     res = requests.get(_firebase_child_url(*parts), timeout=timeout)
     if getattr(res, 'status_code', 500) >= 400:
@@ -1215,6 +1342,8 @@ def _money_error(message, status_code=400, **extra):
 
 
 def _firebase_get_root_with_etag(timeout=10):
+    if _sqlite_enabled():
+        return (_sqlite_load_state() or {}, "sqlite")
     started = time.time()
     res = requests.get(get_firebase_url(), headers={"X-Firebase-ETag": "true"}, timeout=timeout)
     if getattr(res, 'status_code', 500) >= 400:
@@ -1229,6 +1358,8 @@ def _firebase_get_root_with_etag(timeout=10):
 
 
 def _firebase_put_root_if_match(state_obj, etag, timeout=12):
+    if _sqlite_enabled():
+        return _sqlite_save_state(state_obj, "sqlite_root_if_match")
     # Patch 2: normal money/wallet mutations no longer root-PUT Firebase.
     # The caller still reads with ETag for conflict awareness, then writes changed
     # collections through top-level child PUTs to avoid replacing the full app root.
@@ -3397,7 +3528,9 @@ def migrate_and_get_state():
         state_from_backup.setdefault('firebaseDataGuard', {})['servedFromBackupBecauseFirebaseEmptyAt'] = _now_iso_local()
         _obs_event('firebase_default_init_blocked_backup_served_v36', 'critical', 'Firebase empty/unreadable; served last known good backup without writing root', {'file': backup.get('file'), 'loadMeta': FIREBASE_LAST_LOAD_META})
         return state_from_backup
-    if _firebase_allow_empty_init():
+    if _sqlite_enabled():
+        _sqlite_save_state(default_state, "initial_sqlite_state")
+    elif _firebase_allow_empty_init():
         save_to_firebase(default_state, 'initial_default_state_allowed')
     else:
         _obs_event('firebase_default_init_blocked_v36', 'critical', 'Firebase empty/unreadable; default state not auto-written during load', {'loadMeta': FIREBASE_LAST_LOAD_META})
@@ -8729,7 +8862,14 @@ HTML_TEMPLATE = """
             })
             .catch((err) => {
                 // v4/v8: master ledger must not be restored from browser local JSON.
-                if(IS_MASTER) return showRealNotification('⚠️ Firebase/Auth Sync', 'Firebase state load nahi hua ya admin token missing hai. Ledger local cache se restore nahi kiya gaya.', 'warning');
+                if(IS_MASTER) {
+                    const localStorageMode = String(TITAN_APP_CONFIG.storageMode || '').toLowerCase() === 'sqlite';
+                    const title = localStorageMode ? '⚠️ SQLite Local Sync' : '⚠️ Firebase/Auth Sync';
+                    const message = localStorageMode
+                        ? 'Local SQLite database se state load nahi hui. Database path aur app process permissions check karein.'
+                        : 'Remote Firebase state load nahi hua. Firebase URL/network configuration check karein.';
+                    return showRealNotification(title, message, 'warning');
+                }
                 let cached = localStorage.getItem(LOCAL_KEY);
                 if(cached) {
                     try {

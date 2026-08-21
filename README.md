@@ -52,7 +52,11 @@ cd ~/github && python scripts/single_source_audit.py --result-source-only && pyt
 - `titan_core.py` — dashboard, API and business logic core.
 - `whatsapp_multi_session.js` — WhatsApp sessions, schedules and result automation.
 - `deploy.sh` — update, dependency repair, checks and background restart.
-- `termux.env.example` — direct-open local environment template and Firebase/WhatsApp settings.
+- `termux.env.example` — direct-open local environment template, SQLite storage, and WhatsApp settings.
 - Result website is locked to `https://dpbosss.net.in/`.
 
-Runtime data, WhatsApp auth, logs and generated cache files are intentionally not stored in Git.
+Runtime data, WhatsApp auth, logs, generated cache files, and the local SQLite database are intentionally not stored in Git.
+
+## Storage mode
+
+The runtime now defaults to **local SQLite**. The full application state is stored transactionally in `titan_nova.sqlite3` under `TITAN_STATE_DIR`; Firebase is not contacted in SQLite mode, and the dashboard no longer reports Firebase/Auth Sync warnings. Set `TITAN_STORAGE_MODE=firebase` and provide `FIREBASE_URL` only if remote Firebase storage is intentionally required. To use an existing local database at a custom location, set `TITAN_SQLITE_PATH` to its absolute path before starting Flask.
