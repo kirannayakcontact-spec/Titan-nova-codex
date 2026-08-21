@@ -1,28 +1,28 @@
-# Bookie-only mode
+# Bookie-only product
 
-## Product scope
+Titan Nova is permanently a WhatsApp-first bookie system. The admin dashboard contains only Finance, Results, Activity, Bots and Users operations.
 
-Titan Nova now defaults to a bookie-only product mode. Users interact through WhatsApp; the admin uses the dashboard for payment operations, result publishing, bot status and user approvals.
+## Active workflow
 
-| Active | Behavior |
-|---|---|
-| WhatsApp game-format replies | `/help`, `/format`, `/status`, profile, wallet, payment status and withdrawal status replies remain available. |
-| Deposit | WhatsApp payment instructions, screenshot/UTR intake, duplicate-proof checks and admin notification remain available. |
-| Withdrawal | WhatsApp request intake, wallet hold, admin approve/reject/pay actions and user status replies remain available. |
-| Results | Admin manually declares open/close results; configured WhatsApp targets receive the result. |
-| Admin activity | Finance, Results, Activity, Bots and Users dashboard areas remain available. |
+Incoming WhatsApp messages are handled by the bot. Payment messages support deposit proof/UTR intake and withdrawal requests. The bot sends acknowledgement and status replies, while the admin reviews activity and approves or rejects financial actions from Finance.
 
-## Disabled scope
+Results have two supported sources. The Gateway polls the configured result website when `RESULT_SCRAPE_ENABLED=1`, applies market and freshness validation, saves accepted results and sends them to configured WhatsApp targets. The admin can also manually declare open and close results from the Results tab. Both paths share the same strict open/close validation, duplicate-safe storage and outbound delivery pipeline.
 
-Ledger, ledger cards, schedules, guessing/entries, digits, load-forwarder and website result scraping are disabled by default. Their legacy data is not deleted. Flask routes for these modules return HTTP `410` with a `bookie_only_mode` response, and the Gateway does not start their polling/background jobs.
+## Physically removed modules
+
+The source no longer contains the legacy Ledger UI, ledger-card editing, schedule sender, guessing/entry parser, digit/trick editor, load-forwarder or ledger settlement/auto-marking routes and jobs. Old SQLite records are retained for data safety but are not rendered or processed by the active product. Since the product is permanently bookie-only, there is no legacy-mode environment switch.
 
 ## Runtime configuration
 
-`TITAN_BOOKIE_ONLY_MODE=1` is the default in the Node Gateway, Flask app configuration, preflight patch and Termux environment template. Automatic website result scraping is also disabled with `RESULT_SCRAPE_ENABLED=0`. Manual result declarations continue to use the existing strict open/close validation and WhatsApp delivery pipeline.
+```bash
+export TITAN_STORAGE_MODE="sqlite"
+export RESULT_SCRAPE_ENABLED="1"
+export RESULT_SOURCE_NAME="Dpbosss Net In"
+export RESULT_SOURCE_URL="https://dpbosss.net.in/"
+export RESULT_SCRAPE_URLS="https://dpbosss.net.in/"
+```
 
-## Verification
-
-The implementation was checked with JavaScript syntax checks, Python compilation, Node regression tests, Python regression tests, source architecture checks and an isolated Flask HTTP smoke test. The smoke test confirmed that disabled routes return `410`, while security status, payment activity and results routes remain accessible. No WhatsApp QR login or real-money transaction was performed in the sandbox.
+Use a trusted result source and verify its page format before production use. Keep Flask and Gateway on localhost/private LAN because the dashboard is direct-open and does not enforce an HTTP token layer.
 
 ## Termux update
 
@@ -30,11 +30,7 @@ The implementation was checked with JavaScript syntax checks, Python compilation
 cd ~/Titan-nova-codex
 git pull origin main
 export TITAN_STORAGE_MODE="sqlite"
-export TITAN_BOOKIE_ONLY_MODE="1"
-export RESULT_SCRAPE_ENABLED="0"
-export TITAN_SQLITE_PATH="$HOME/Titan-nova-codex/titan_nova.sqlite3"
+export RESULT_SCRAPE_ENABLED="1"
 bash deploy.sh stop
 bash deploy.sh restart
 ```
-
-Keep Flask and the Gateway on localhost/private LAN only because the project is configured for direct-open access without an HTTP token layer.

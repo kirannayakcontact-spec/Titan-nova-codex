@@ -6,7 +6,6 @@
 // ============================================================
 
 process.env.TITAN_STORAGE_MODE = String(process.env.TITAN_STORAGE_MODE || "sqlite").trim().toLowerCase();
-process.env.TITAN_BOOKIE_ONLY_MODE = String(process.env.TITAN_BOOKIE_ONLY_MODE || "1").trim().toLowerCase();
 process.env.TITAN_BACKEND_URL = process.env.TITAN_BACKEND_URL || process.env.FLASK_URL || process.env.BACKEND_URL || "http://127.0.0.1:5000";
 process.env.FIREBASE_URL = process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || "https://odisha-17fa5-default-rtdb.firebaseio.com/titan_master_data.json";
 process.env.FIREBASE_DB_URL = process.env.FIREBASE_DB_URL || process.env.FIREBASE_URL;
@@ -592,7 +591,6 @@ const DEFAULT_FIREBASE_URL = "https://titan-bbbc4-default-rtdb.firebaseio.com/ti
 const FIREBASE_URL = (process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL || DEFAULT_FIREBASE_URL).replace(/\/$/, "");
 const FIREBASE_URL_FROM_ENV = !!(process.env.FIREBASE_URL || process.env.FIREBASE_DB_URL);
 const TITAN_STORAGE_MODE = String(process.env.TITAN_STORAGE_MODE || "sqlite").trim().toLowerCase();
-const TITAN_BOOKIE_ONLY_MODE = ["1", "true", "yes", "on"].includes(String(process.env.TITAN_BOOKIE_ONLY_MODE || "1").trim().toLowerCase());
 const TITAN_SQLITE_MODE = ["sqlite", "local", "local_sqlite"].includes(TITAN_STORAGE_MODE);
 const TITAN_BACKEND_URL = String(process.env.TITAN_BACKEND_URL || "http://127.0.0.1:5000").replace(/\/$/, "");
 const TITAN_STATE_DIR = process.env.TITAN_STATE_DIR || process.cwd();
@@ -684,7 +682,7 @@ const TITAN_GATEWAY_SECURITY_MISCONFIGURED = false;
 const TITAN_GATEWAY_AUTH_ENFORCED = false;
 // Auto result scraper: set RESULT_SCRAPE_ENABLED=0 to disable.
 // RESULT_SCRAPE_URLS can be comma-separated fallback live result pages.
-const RESULT_SCRAPE_ENABLED = !TITAN_BOOKIE_ONLY_MODE && String(process.env.RESULT_SCRAPE_ENABLED || "1") !== "0";
+const RESULT_SCRAPE_ENABLED = String(process.env.RESULT_SCRAPE_ENABLED || "1") !== "0";
 const RESULT_SCRAPE_INTERVAL_MS = Math.max(Number(process.env.RESULT_SCRAPE_INTERVAL_MS || 5000), 2000);
 const TITAN_SCHEDULE_POLL_MS = Math.max(Number(process.env.TITAN_SCHEDULE_POLL_MS || 2000), 1000);
 const TITAN_RESULT_POLL_MS = Math.max(Number(process.env.TITAN_RESULT_POLL_MS || 2000), 1000);
@@ -725,8 +723,6 @@ const FULL_AUDIT_LOCKED_FEATURES = [
 const SAFE_UPDATE_PROTECTED_MARKERS = [
   {key:"whatsapp_login", markers:["/wa_login_status", "/wa_reset_session", "lastQR"], critical:true},
   {key:"auto_profile_admin_approval", markers:["autoCreatePendingProfiles", "profile_pending_approval", "approvalStatus"], critical:true},
-  {key:"ledger_daily_repeat", markers:["ledgerSchedules", "collectSchedules", "scheduleTick"], critical:true},
-  {key:"ledger_duplicate_lock", markers:["scheduleTickRunning", "scheduleTargetLogKey", "markScheduleTargetSent"], critical:true},
   {key:"withdrawal_flow", markers:["withdrawalSettings", "approvalNotified", "paidNotified"], critical:true},
   {key:"result_source", markers:[RESULT_SOURCE_URL, RESULT_SOURCE_NAME, "LIVE MATKA RESULT"], critical:true},
   {key:"strict_open_close", markers:["fresh_open_missing_strict_2_stage", "strict 2-stage", "close_open_mismatch"], critical:true},
@@ -759,8 +755,7 @@ function gatewayConfigReport(){
     version:CONFIG_CLEANUP_VERSION,
     firebase:{configuredFromEnv:FIREBASE_URL_FROM_ENV, urlRedacted:redactConfigValue(FIREBASE_URL), pathLooksJson:FIREBASE_URL.endsWith('.json')},
     security:{gatewayTokenConfigured:false, enforced:false, authDisabled:true, directOpen:true},
-    product:{mode:TITAN_BOOKIE_ONLY_MODE ? "bookie_only" : "full", active:["whatsapp_game_format", "payments", "results", "admin_activity", "whatsapp_gateway"], disabled:TITAN_BOOKIE_ONLY_MODE ? ["ledger", "ledger_cards", "schedule", "guessing", "digits", "entries", "load_forwarder", "scraping"] : []},
-    resultSource:{name:RESULT_SOURCE_NAME, url:RESULT_SOURCE_URL, urls:TITAN_BOOKIE_ONLY_MODE ? [] : RESULT_SCRAPE_URLS},
+    resultSource:{name:RESULT_SOURCE_NAME, url:RESULT_SOURCE_URL, urls:RESULT_SCRAPE_URLS},
     storage:{mode:TITAN_STORAGE_MODE, label:TITAN_SQLITE_MODE ? "SQLite local database" : "Firebase Realtime Database", backendUrl:redactConfigValue(TITAN_BACKEND_URL, 24), stateDir:redactConfigValue(TITAN_STATE_DIR, 24), authDir:redactConfigValue(AUTH_DIR, 24)},
     localFallbackFiles:{targetCache:TARGET_CACHE_FILE, sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE, safety:WHATSAPP_SAFETY_STATE_FILE},
     warnings
@@ -1047,9 +1042,7 @@ let whatsappSafetyLocalState = loadJson(WHATSAPP_SAFETY_STATE_FILE, { fingerprin
 let processedMessageCache = loadJson(PROCESSED_MESSAGE_CACHE_FILE, { items:{}, updatedAt:"" });
 let resultTickRunning = false;
 let resultScrapeTickRunning = false;
-let scheduleTickRunning = false;
 let paymentOutboxTickRunning = false;
-let loadForwarderTickRunning = false;
 let gatewayHealth = {
   startedAt: new Date().toISOString(),
   lastWhatsAppEvent: "starting",
@@ -2792,7 +2785,6 @@ async function handleSmartUserCommandMessage(m){
     }
     let text = "";
     if(cmd === "profile") text = profileSmartText(profile, wallet, found.userId, found);
-    else if(cmd === "entries") { await replyToMessage(chatJid, "ℹ️ Entry/guessing system is disabled. Sirf payment, withdrawal, game information aur result services available hain.", m); return true; }
     else if(cmd === "payments") text = paymentStatusTextSmart(state, found.userId);
     else if(cmd === "deposit"){
       const depositAmount = parseDepositAmount(getMessageText(m));
@@ -3198,36 +3190,6 @@ async function handleIncomingWithdrawalMessage(m){
   }
 }
 
-async function handleIncomingEntryMessage(m){
-  if(TITAN_BOOKIE_ONLY_MODE) return false;
-  try{
-    if(!m || m.key?.fromMe) return;
-    const chatJid = m.key?.remoteJid || "";
-    if(!chatJid || chatJid === "status@broadcast") return;
-    const text = getMessageText(m);
-    if(!String(text || "").trim()) return;
-    const stateLite = await fetchFirebaseState();
-    ensureMarketRegistry(stateLite);
-    const settings = entrySettings(stateLite);
-    const template = settings.entryFormatTemplate || DEFAULT_ENTRY_FORMAT_TEMPLATE;
-    const parsed = parseEntryCardDynamic(text, template, stateLite);
-    if(parsed.silent) return;
-    trackIncomingMessage(m, "entry_card");
-    if(!settings.entryParserEnabled) return;
-    if(settings.groupsOnly && !chatJid.endsWith("@g.us")) return;
-    if(!parsed.ok){ await replyToMessage(chatJid, rejectedEntryText(parsed.message || parsed.reason || "Invalid entry."), m); return; }
-    const targetCheck = validateEntrySourceTarget(stateLite, parsed, chatJid);
-    if(!targetCheck.ok){ await replyToMessage(chatJid, rejectedEntryText(targetCheck.message || "Entry target not allowed."), m); return; }
-    const senderCandidates = senderCandidatesFromMessage(m, chatJid);
-    const senderJid = chatJid.endsWith("@g.us") ? (senderCandidates[0] || m.key?.participant || "") : chatJid;
-    const saved = await saveAcceptedEntryToFirebase(parsed, { chatJid, senderJid, senderCandidates, pushName:m.pushName || m.verifiedBizName || "", messageKey:messageUniqueKey(m) });
-    if(!saved.ok){ await replyToMessage(chatJid, rejectedEntryText(saved.message || saved.reason || "Entry rejected."), m); return; }
-    await replyToMessage(chatJid, acceptedEntryText(saved.entry), m);
-    console.log(`🧾 Entry accepted ${saved.entry.id}: ${saved.entry.market} ${saved.entry.gameType} ${saved.entry.total}`);
-  } catch(e){
-    console.log("Entry parser error:", e.response ? `HTTP ${e.response.status}` : e.message);
-  }
-}
 function cleanResult(v){ return String(v || "").trim().replace(/\s+/g, ""); }
 function resultStage(v){
   const t = cleanResult(v);
@@ -5644,71 +5606,6 @@ async function resultScrapeTick(){
   }
 }
 
-async function scheduleTick(){
-  if(scheduleTickRunning) return;
-  scheduleTickRunning = true;
-  gatewayHealth.lastScheduleTickAt = nowIso();
-  try {
-    if(!connected) return;
-    const state = await fetchFirebaseState();
-    const recoveryPreflight = recomputeLedgerRecoveryAutoRates(state, todayISO(), "gateway_schedule_preflight_recovery");
-    if(recoveryPreflight.changed){
-      await saveGatewayAutoMarkNarrow(state, recoveryPreflight);
-      console.log(`🛡️ Schedule preflight recovery auto-rate refreshed ${recoveryPreflight.count} card(s)`);
-    }
-    const schedules = collectSchedules(state);
-    const hhmm = nowHHMM();
-    const date = todayISO();
-    const inRunSent = new Set();
-    for(const job of schedules){
-      if(!isDueNow(job.time, hhmm)) continue;
-      const key = `schedule_${job.id}_${job.time}`;
-      const allTargets = dedupeTargetsByResolvedKey(job.targets);
-      if(!allTargets.length) continue;
-      // Target-aware daily lock: a ledger schedule can be sent once per date/card/time/target only.
-      // This blocks duplicate sends caused by recovery-window polling, duplicate target values,
-      // repeated saved day/persistent schedules, or a slow send overlapping the next tick.
-      const pendingTargets = [];
-      for(const target of allTargets){
-        const tk = scheduleTargetLogKey(target);
-        const runKey = `${key}|${date}|${tk}`;
-        if(!tk || inRunSent.has(runKey) || isScheduleTargetAlreadySent(key, date, target)) continue;
-        const durable = await reserveScheduleTarget(key, date, target);
-        if(!durable.ok){
-          if(durable.done) markScheduleTargetSent(key, date, target);
-          continue;
-        }
-        inRunSent.add(runKey);
-        pendingTargets.push(target);
-      }
-      if(!pendingTargets.length) continue;
-      console.log(`⏰ HIT ${job.time}: ${job.market} -> ${pendingTargets.length}/${allTargets.length} pending target(s)`);
-      const results = [];
-      for(const target of pendingTargets) results.push(await sendText(target, job.message, {type:"ledger_schedule", market:job.market, jobId:job.id}));
-      const okCount = results.filter(r => r.ok).length;
-      for(const r of results){
-        // Mark successful sends only. Failed targets can retry inside the recovery window.
-        if(r.ok){
-          markScheduleTargetSent(key, date, r.rawTarget || r.target || "");
-          try { await markScheduleTargetDoneDurable(key, date, r.rawTarget || r.target || "", r.id || ""); } catch(e){ console.log("⚠️ schedule durable done mark failed:", e.response ? `HTTP ${e.response.status}` : e.message); }
-        } else {
-          try { await markScheduleTargetErrorDurable(key, date, r.rawTarget || r.target || "", r.error || "send_failed"); } catch(e){ console.log("⚠️ schedule durable error mark failed:", e.response ? `HTTP ${e.response.status}` : e.message); }
-        }
-      }
-      if(okCount > 0) saveJson(SENT_LOG_FILE, sentLog);
-      gatewayHealth.lastScheduleSendAt = nowIso();
-      gatewayHealth.lastScheduleDelivery = results.slice(-20);
-      console.log(`✅ Auto sent ${job.market}:`, results.map(r => r.ok ? "OK" : "FAIL:"+r.error).join(" | "));
-    }
-  } catch(e) {
-    gatewayHealth.lastScheduleError = e.response ? `HTTP ${e.response.status}` : e.message;
-    console.log("Schedule poll error:", e.response ? `HTTP ${e.response.status}` : e.message);
-    console.log("👉 Firebase direct mode hai. FIREBASE_URL check karo if repeated error.");
-  } finally {
-    scheduleTickRunning = false;
-  }
-}
-
 async function resultTick(){
   if(resultTickRunning) return;
   resultTickRunning = true;
@@ -5748,28 +5645,10 @@ async function resultTick(){
       }
       if(!pendingTargets.length) continue;
       let settlementOut = {changed:false, settlement:null};
-      if(!TITAN_BOOKIE_ONLY_MODE){
-        settlementOut = {changed:false, settlement:findSettlementRecord(state, date, job.market, job.stage)};
-        const sLock = await reserveSettlement(job);
-        if(sLock.ok){
-          settlementOut = settleResultInState(state, job);
-          if(settlementOut.changed){
-            await saveGatewaySettlementNarrow(state, date, settlementOut.settlement);
-            await markSettlementDone(job, settlementOut.settlement);
-          } else if(settlementOut.alreadySettled && settlementOut.settlement){
-            await markSettlementDone(job, settlementOut.settlement);
-          }
-        } else if(sLock.done){
-          settlementOut = {changed:false, alreadySettled:true, settlement:findSettlementRecord(state, date, job.market, job.stage)};
-        } else {
-          console.log(`🛡️ Settlement locked by another worker: ${job.market} ${job.stage}`);
-        }
-      }
       let messageText = formatResultMessage(job.market, job.result);
       const sSettings = settlementSettings(state);
       const settlement = settlementOut.settlement;
-      if(!TITAN_BOOKIE_ONLY_MODE && sSettings.enabled && sSettings.includeSummaryInResultMessage && settlement) messageText += settlementSummaryText(settlement);
-      if(!TITAN_BOOKIE_ONLY_MODE && sSettings.enabled && sSettings.includeHitMissInResultMessage && settlement) messageText += "\n\n" + formatHitMissDetailedText(settlement, { maxRows: 60 });
+
       console.log(`🏆 RESULT ${job.stage.toUpperCase()}: ${job.market} ${job.result} -> ${pendingTargets.length}/${allTargets.length} pending target(s)${settlement ? ` | settlement hit:${settlement.hitCount} payout:${settlement.payoutTotal}` : ""}`);
       const results = [];
       for(const target of pendingTargets) results.push(await sendText(target, messageText, {type:"result_declaration", market:job.market, stage:job.stage, result:job.result}));
@@ -5795,195 +5674,6 @@ async function resultTick(){
     console.log("Result poll error:", e.response ? `HTTP ${e.response.status}` : e.message);
   } finally {
     resultTickRunning = false;
-  }
-}
-
-function normalizeLoadGameTypes(types){
-  const order = ["ANK", "PENEL", "JODI"];
-  if(!types) return order.slice();
-  if(!Array.isArray(types)) types = String(types).split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);
-  const out = [];
-  for(const t of types){
-    let typ = String(t || "").trim().toUpperCase();
-    if(typ === "PANEL" || typ === "PANNEL") typ = "PENEL";
-    if(order.includes(typ) && !out.includes(typ)) out.push(typ);
-  }
-  return order.filter(x => out.includes(x)).length ? order.filter(x => out.includes(x)) : order.slice();
-}
-
-function loadForwarderSettings(state){
-  const lf = state?.loadForwarder || {};
-  return {
-    enabled: lf.enabled === true,
-    scheduleTime: normalizeTime(lf.scheduleTime || "18:00") || "18:00",
-    selectedMarket: normalizeEntryMarketText(lf.selectedMarket || ""),
-    targets: targetList(lf.targets || []),
-    gameTypes: normalizeLoadGameTypes(lf.gameTypes || ["ANK", "PENEL", "JODI"]),
-    maxRowsPerType: Math.max(5, Math.min(300, Number(lf.maxRowsPerType || 80))),
-    includeEmptyTypes: lf.includeEmptyTypes === true,
-    lastSentKey: lf.lastSentKey || ""
-  };
-}
-function loadEntryDigits(entry){
-  const d = entry?.digits;
-  if(Array.isArray(d)) return d.map(x => String(x).trim()).filter(Boolean);
-  return String(d || "").replace(/[.\s]+/g, ",").split(",").map(x => x.trim()).filter(Boolean);
-}
-function buildLoadReport(state, date, market, maxRowsPerType, includeEmptyTypes, gameTypes){
-  date = date || todayISO();
-  market = normalizeEntryMarketText(market || "");
-  const selectedTypes = normalizeLoadGameTypes(gameTypes || ["ANK", "PENEL", "JODI"]);
-  const entries = (Array.isArray(state?.entries) ? state.entries : []).filter(e => {
-    if(!e || e.status !== "accepted" || e.date !== date) return false;
-    if(market && normalizeEntryMarketText(e.market || "") !== market) return false;
-    return true;
-  });
-  const grouped = new Map();
-  let grandTotal = 0;
-  let includedCount = 0;
-  const typeTotals = {};
-  const typeEntryCounts = {};
-  for(const t of selectedTypes){ typeTotals[t] = 0; typeEntryCounts[t] = 0; }
-  for(const e of entries){
-    const mk = normalizeEntryMarketText(e.market || "UNKNOWN") || "UNKNOWN";
-    let typ = String(e.gameType || e.type || "ANK").toUpperCase();
-    if(typ === "PANEL" || typ === "PANNEL") typ = "PENEL";
-    if(!["ANK","JODI","PENEL"].includes(typ)) typ = "ANK";
-    if(!selectedTypes.includes(typ)) continue;
-    const rate = Number(e.parDigit || e.rate || 0) || 0;
-    const total = Number(e.total || 0) || 0;
-    grandTotal += total;
-    includedCount += 1;
-    typeTotals[typ] = Math.round((Number(typeTotals[typ] || 0) + total) * 100) / 100;
-    typeEntryCounts[typ] = Number(typeEntryCounts[typ] || 0) + 1;
-    for(let digit of loadEntryDigits(e)){
-      digit = String(digit).trim();
-      if(typ === "JODI") digit = digit.padStart(2,"0");
-      const key = `${mk}|${typ}|${digit}`;
-      const old = grouped.get(key) || { market:mk, type:typ, digit, amount:0, entryCount:0, users:new Set() };
-      old.amount += rate;
-      old.entryCount += 1;
-      old.users.add(String(e.userId || e.senderJid || e.userName || "user"));
-      grouped.set(key, old);
-    }
-  }
-  const markets = [...new Set([...grouped.values()].map(x => x.market).concat(market ? [market] : []))].filter(Boolean).sort();
-  const out = { date, market, gameTypes:selectedTypes, entryCount:includedCount, grandTotal:Math.round(grandTotal*100)/100, typeTotals, typeEntryCounts, markets:[] };
-  for(const mk of markets){
-    const mObj = { market:mk, overallTotal:0, types:[] };
-    for(const typ of selectedTypes){
-      const items = [...grouped.values()].filter(x => x.market === mk && x.type === typ)
-        .map(x => ({ digit:x.digit, amount:Math.round(x.amount*100)/100, entryCount:x.entryCount, userCount:x.users.size }))
-        .sort((a,b) => (b.amount - a.amount) || String(a.digit).localeCompare(String(b.digit)))
-        .slice(0, maxRowsPerType || 80);
-      if(items.length || includeEmptyTypes){
-        const typeTotal = Math.round(items.reduce((s,x)=>s+x.amount,0)*100)/100;
-        mObj.overallTotal = Math.round((mObj.overallTotal + typeTotal)*100)/100;
-        mObj.types.push({ type:typ, overallTotal:typeTotal, items });
-      }
-    }
-    out.markets.push(mObj);
-  }
-  return out;
-}
-
-function formatLoadReportText(report){
-  const money = (v) => `₹${Number(v || 0).toLocaleString("en-IN", {maximumFractionDigits:2})}`;
-  const lines = [
-    "📊 *TITAN NOVA LOAD REPORT*",
-    "━━━━━━━━━━━━━━━━━━━━",
-    `📅 *DATE:* ${report.date}`,
-    `🔥 *MARKET:* ${report.market || "ALL MARKETS"}`,
-    `🧾 *ENTRIES:* ${report.entryCount || 0}`,
-    `💰 *TOTAL LOAD:* ${money(report.grandTotal || 0)}`,
-    `🎮 *GAMES:* ${(report.gameTypes || ["ANK", "PENEL", "JODI"]).join(", ")}`,
-    "━━━━━━━━━━━━━━━━━━━━"
-  ];
-  if(report.typeTotals){
-    lines.push("", "*GAME TYPE TOTALS*");
-    for(const gt of (report.gameTypes || ["ANK", "PENEL", "JODI"])) lines.push(`${gt}: ${money(report.typeTotals[gt] || 0)} | Entries: ${(report.typeEntryCounts || {})[gt] || 0}`);
-  }
-  if(!report.markets || !report.markets.length){
-    lines.push("Aaj is market me accepted entry load nahi hai.");
-    return lines.join("\n");
-  }
-  for(const mk of report.markets){
-    lines.push(`\n🔥 *${mk.market}*`);
-    if(!mk.types || !mk.types.length){ lines.push("No load."); continue; }
-    for(const typ of mk.types){
-      lines.push(`\n*${typ.type} LOAD*`);
-      if(!typ.items || !typ.items.length) lines.push("No load.");
-      else for(const it of typ.items) lines.push(`${it.digit} = ${money(it.amount)} | Users: ${it.userCount || 0} | Entries: ${it.entryCount || 0}`);
-      lines.push(`${typ.type} Overall: ${money(typ.overallTotal || 0)}`);
-    }
-    lines.push(`📌 Market Overall: ${money(mk.overallTotal || 0)}`);
-  }
-  return lines.join("\n").trim();
-}
-async function sendLoadReportToTargets(targets, text){
-  const results = [];
-  for(const target of targetList(targets)) results.push(await sendText(target, text, {type:"load_report"}));
-  return results;
-}
-async function loadForwarderTick(){
-  if(loadForwarderTickRunning) return;
-  loadForwarderTickRunning = true;
-  gatewayHealth.lastLoadForwarderTickAt = nowIso();
-  try{
-    if(!connected) return;
-    const state = await fetchFirebaseState();
-    let changed = false;
-    // 1) Dashboard send-now outbox
-    const outbox = Array.isArray(state.loadForwarderOutbox) ? state.loadForwarderOutbox : [];
-    for(const msg of outbox){
-      if(!msg || msg.status !== "pending") continue;
-      const attempts = Number(msg.attempts || 0);
-      if(attempts >= 5){ msg.status = "failed"; msg.lastError = msg.lastError || "max attempts"; changed = true; continue; }
-      if(!msg.text || !arr(msg.targets).length){ msg.status = "failed"; msg.lastError = "missing text/targets"; changed = true; continue; }
-      const results = await sendLoadReportToTargets(msg.targets, msg.text);
-      msg.attempts = attempts + 1;
-      msg.lastTriedAt = nowIso();
-      msg.delivery = results;
-      const okCount = results.filter(x => x.ok).length;
-      if(okCount > 0){ msg.status = "sent"; msg.sentAt = nowIso(); }
-      else { msg.lastError = results.map(x => x.error).filter(Boolean).join(" | ") || "send failed"; }
-      changed = true;
-      console.log(`📊 Load report outbox ${msg.id || ""}: ${okCount}/${results.length} sent`);
-    }
-    if(outbox.length > 300){ state.loadForwarderOutbox = outbox.slice(-300); changed = true; }
-
-    // 2) Daily scheduled load report
-    const lf = loadForwarderSettings(state);
-    if(lf.enabled && lf.targets.length){
-      const now = nowHHMM();
-      if(isDueNow(lf.scheduleTime, now)){
-        const date = todayISO();
-        const key = `${date}_${lf.scheduleTime}_${lf.selectedMarket || "ALL"}`;
-        state.loadForwarder = state.loadForwarder || {};
-        if(state.loadForwarder.lastSentKey !== key){
-          const report = buildLoadReport(state, date, lf.selectedMarket, lf.maxRowsPerType, lf.includeEmptyTypes, lf.gameTypes);
-          const text = formatLoadReportText(report);
-          const forwardRoleTargets = marketRoleTargetsForMarket(state, lf.selectedMarket, "forward");
-          const bookieRoleTargets = collectBookieAdminTargets(state, lf.selectedMarket);
-          const deliveryTargets = forwardRoleTargets.length ? forwardRoleTargets : (bookieRoleTargets.length ? bookieRoleTargets : lf.targets);
-          const results = await sendLoadReportToTargets(deliveryTargets, text);
-          const okCount = results.filter(x => x.ok).length;
-          state.loadForwarder.lastSentKey = key;
-          state.loadForwarder.lastSentAt = nowIso();
-          state.loadForwarder.lastDelivery = results;
-          state.loadForwarder.lastReportSummary = { date, market:lf.selectedMarket, entryCount:report.entryCount, total:report.grandTotal, okCount, targetCount:results.length };
-          changed = true;
-          gatewayHealth.lastLoadForwarderSendAt = nowIso();
-          console.log(`📊 Scheduled load report ${lf.selectedMarket || "ALL"}: ${okCount}/${results.length} sent`);
-        }
-      }
-    }
-    if(changed) await saveGatewayLoadForwarderNarrow(state);
-  }catch(e){
-    gatewayHealth.lastLoadForwarderError = e.response ? `HTTP ${e.response.status}` : e.message;
-    console.log("Load forwarder error:", e.response ? `HTTP ${e.response.status}` : e.message);
-  }finally{
-    loadForwarderTickRunning = false;
   }
 }
 
@@ -6320,9 +6010,8 @@ const multiSessionManager = new TitanMultiSessionManager({
   },
   handlers:{
     finance_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleIncomingDepositScreenshotMessage(m))return true;return handleIncomingWithdrawalMessage(m);}),
-    game_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleSmartUserCommandMessage(m))return true;if(await handleSpamGuardMessage(m))return true;return TITAN_BOOKIE_ONLY_MODE ? false : handleIncomingEntryMessage(m);}),
+    game_bot:(m,ctx)=>withRoleSocket(ctx.socket,async()=>{if(await handleSmartUserCommandMessage(m))return true;if(await handleSpamGuardMessage(m))return true;return false;}),
     result_bot:(m,ctx)=>/^#declare\b/i.test(ctx.text)?withRoleSocket(ctx.socket,()=>handleBotCommandMessage(m)):false,
-    ledger_bot:()=>false
   }
 });
 multiSessionManager.registerRoutes(app,gatewayAuthMiddleware);
@@ -6562,10 +6251,10 @@ app.get("/status", async (req,res)=>{
     counts.firebaseReadError = e.response ? `HTTP ${e.response.status}` : e.message;
   }
   res.json({
-    status:"success", connected, user:sock?.user || null, firebase:TITAN_SQLITE_MODE ? "disabled_in_sqlite_mode" : FIREBASE_URL, storageMode:TITAN_STORAGE_MODE, bookieOnlyMode:TITAN_BOOKIE_ONLY_MODE, timezone:APP_TZ, now:nowHHMM(), date:todayISO(), cache:targetsCache.updatedAt,
+    status:"success", connected, user:sock?.user || null, firebase:TITAN_SQLITE_MODE ? "disabled_in_sqlite_mode" : FIREBASE_URL, storageMode:TITAN_STORAGE_MODE, timezone:APP_TZ, now:nowHHMM(), date:todayISO(), cache:targetsCache.updatedAt,
     waLogin:{qrAvailable:!!lastQR, qrAt:lastQRAt, authDir:AUTH_DIR, resetCount:whatsappResetCount, lastSessionResetAt},
-    resultScrape:{enabled:!TITAN_BOOKIE_ONLY_MODE && RESULT_SCRAPE_ENABLED && adminEnabled, envEnabled:RESULT_SCRAPE_ENABLED, adminEnabled:!TITAN_BOOKIE_ONLY_MODE && adminEnabled, intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:TITAN_BOOKIE_ONLY_MODE ? [] : RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:TITAN_BOOKIE_ONLY_MODE ? "" : RESULT_SOURCE_URL},
-    configCleanup:gatewayConfigReport(), paymentOutbox:true, loadForwarder:!TITAN_BOOKIE_ONLY_MODE, spamGuard:true, whatsappSafetyGuard:true, durability:{version:GATEWAY_DURABILITY_VERSION, firebaseLocks:true, owner:GATEWAY_LOCK_OWNER, localFallbackFiles:{sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE}}, counts, health:gatewayHealth
+    resultScrape:{enabled:RESULT_SCRAPE_ENABLED && adminEnabled, envEnabled:RESULT_SCRAPE_ENABLED, adminEnabled, intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:RESULT_SOURCE_URL},
+    configCleanup:gatewayConfigReport(), paymentOutbox:true, spamGuard:true, whatsappSafetyGuard:true, durability:{version:GATEWAY_DURABILITY_VERSION, firebaseLocks:true, owner:GATEWAY_LOCK_OWNER, localFallbackFiles:{sentLog:SENT_LOG_FILE, processedMessages:PROCESSED_MESSAGE_CACHE_FILE}}, counts, health:gatewayHealth
   });
 });
 app.get(["/health", "/api/health"], async (req,res)=>{
@@ -6577,9 +6266,9 @@ app.get(["/health", "/api/health"], async (req,res)=>{
       status:"success", connected, user:sock?.user || null, timezone:APP_TZ, now:nowHHMM(), date:todayISO(),
       waLogin:{qrAvailable:!!lastQR, qrAt:lastQRAt, authDir:AUTH_DIR, resetCount:whatsappResetCount, lastSessionResetAt, lastWhatsAppEvent:gatewayHealth.lastWhatsAppEvent || "", lastDisconnectCode:gatewayHealth.lastDisconnectCode || ""},
       targets:{ contacts:(targetsCache.contacts||[]).length, groups:(targetsCache.groups||[]).length, updatedAt:targetsCache.updatedAt, lastSyncError:targetsCache.lastSyncError || "", syncVersion:WHATSAPP_TARGET_SYNC_VERSION, syncIntervalMs:WHATSAPP_TARGET_SYNC_INTERVAL_MS },
-       scrape:{ enabled: !TITAN_BOOKIE_ONLY_MODE && RESULT_SCRAPE_ENABLED && firebaseAutoScrapeEnabled(state), envEnabled: RESULT_SCRAPE_ENABLED, adminEnabled: !TITAN_BOOKIE_ONLY_MODE && firebaseAutoScrapeEnabled(state), intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:TITAN_BOOKIE_ONLY_MODE ? [] : RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:TITAN_BOOKIE_ONLY_MODE ? "" : RESULT_SOURCE_URL },
-       queue:{ paymentPending:Array.isArray(state.paymentOutbox)?state.paymentOutbox.filter(x=>x&&x.status==="pending").length:0, loadForwardPending:0 },
-       modules:{ entryParser: !TITAN_BOOKIE_ONLY_MODE && state.entrySettings?.entryParserEnabled !== false, settlement: !TITAN_BOOKIE_ONLY_MODE && state.settlementSettings?.enabled !== false, loadForwarder: false, resultPublisher:true, payments:true, whatsappGameFormat:true, spamGuard: sg.enabled !== false, whatsappSafetyGuard: state.whatsappSafetySettings?.enabled !== false },
+       scrape:{ enabled: RESULT_SCRAPE_ENABLED && firebaseAutoScrapeEnabled(state), envEnabled: RESULT_SCRAPE_ENABLED, adminEnabled: firebaseAutoScrapeEnabled(state), intervalMs:RESULT_SCRAPE_INTERVAL_MS, confirmCount:RESULT_SCRAPE_CONFIRM_COUNT, urls:RESULT_SCRAPE_URLS, sourceName:RESULT_SOURCE_NAME, sourceUrl:RESULT_SOURCE_URL },
+       queue:{ paymentPending:Array.isArray(state.paymentOutbox)?state.paymentOutbox.filter(x=>x&&x.status==="pending").length:0 },
+       modules:{ resultPublisher:true, payments:true, whatsappGameFormat:true, autoResultScraper:RESULT_SCRAPE_ENABLED, spamGuard: sg.enabled !== false, whatsappSafetyGuard: state.whatsappSafetySettings?.enabled !== false },
       configCleanup:gatewayConfigReport(), observability:gatewayObservabilityStatus(), durability:{version:GATEWAY_DURABILITY_VERSION, firebaseLocks:true, owner:GATEWAY_LOCK_OWNER},
       health: gatewayHealth
     });
@@ -7108,14 +6797,11 @@ if(TITAN_SKIP_WHATSAPP_START){
   multiSessionManager.startAll().catch(e => console.error("Multi-session start error", e));
 }
 managedInterval("whatsapp_target_sync", async () => { if(connected) await syncTargets({periodic:true}); }, WHATSAPP_TARGET_SYNC_INTERVAL_MS);
-if(!TITAN_BOOKIE_ONLY_MODE) managedInterval("schedule_tick", scheduleTick, TITAN_SCHEDULE_POLL_MS);
 managedInterval("result_tick", resultTick, TITAN_RESULT_POLL_MS);
-if(!TITAN_BOOKIE_ONLY_MODE) managedInterval("result_scrape_tick", resultScrapeTick, RESULT_SCRAPE_INTERVAL_MS);
+managedInterval("result_scrape_tick", resultScrapeTick, RESULT_SCRAPE_INTERVAL_MS);
 managedInterval("payment_outbox_tick", paymentOutboxTick, TITAN_PAYMENT_OUTBOX_POLL_MS);
-if(!TITAN_BOOKIE_ONLY_MODE) managedInterval("load_forwarder_tick", loadForwarderTick, TITAN_LOAD_FORWARDER_POLL_MS);
-if(!TITAN_BOOKIE_ONLY_MODE) managedTimeout("result_scrape_bootstrap", resultScrapeTick, 2000);
+managedTimeout("result_scrape_bootstrap", resultScrapeTick, 2000);
 managedTimeout("payment_outbox_bootstrap", paymentOutboxTick, 5000);
-if(!TITAN_BOOKIE_ONLY_MODE) managedTimeout("load_forwarder_bootstrap", loadForwarderTick, 7000);
 managedInterval("target_sync", () => syncTargets(), 10*60*1000);
 managedInterval("local_retention_cleanup", () => runLocalRetentionCleanup(), 60*60*1000);
 managedTimeout("local_retention_cleanup_bootstrap", () => runLocalRetentionCleanup(), 15000);
